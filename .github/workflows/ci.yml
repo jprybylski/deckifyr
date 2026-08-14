@@ -63,9 +63,20 @@ jobs:
         with:
           enable-cache: true
 
+      # setup-uv only installs the `uv` binary -- it doesn't provision a
+      # venv. pyro::get_venv_uv_paths() (R/run-python.R) looks for an
+      # already-provisioned .venv/ and errors rather than creating one,
+      # so without this step every test in test-wiring.R fails outright
+      # (confirmed against a real CI run) instead of skipping. `uv sync`
+      # is enough -- pyro is satisfied by a plain `uv run`-created venv,
+      # no `pyro::initialize_python()` call needed; see test-wiring.R's
+      # own comment.
+      - name: Provision the Python venv pyro will look for
+        run: uv sync --extra dev
+
       # tests/testthat/test-wiring.R invokes the real pyro/Python bridge
-      # and skip()s cleanly if uv or pyro aren't available -- this step
-      # exists so that path is actually exercised in CI rather than
+      # and skip()s cleanly if uv/pyro/.venv aren't available -- this
+      # step exists so that path is actually exercised in CI rather than
       # always skipped.
       - name: Run testthat suite
         run: |
