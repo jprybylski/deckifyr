@@ -2,10 +2,10 @@
 
 `deckifyr.pptx.compose` expands a resolved plan (`deckifyr.plan`) into an
 in-memory `python-pptx` `Presentation` and a build manifest (spec section
-14), for `text`/`markdown`/`image` elements -- `deckifyr build` (see
-`deckifyr.cli`'s `build` subcommand) calls `compose_and_write` after
-validating and planning a project. `table`/`shape`/`group`/`quarto`/
-`reportifyr` elements aren't composed yet; `deckifyr.plan` rejects them
+14), for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`
+elements -- `deckifyr build` (see `deckifyr.cli`'s `build` subcommand)
+calls `compose_and_write` after validating and planning a project.
+`quarto` elements aren't composed yet; `deckifyr.plan` rejects them
 before this package ever sees them (see deckifyr-specification.md
 section 18).
 

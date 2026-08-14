@@ -59,12 +59,15 @@ test_that("deck_build() builds the richer demo-deck example end to end", {
   project_dir <- file.path(tempdir(), "deckifyr-wiring-demo-deck")
   unlink(project_dir, recursive = TRUE)
   dir.create(project_dir)
-  for (entry in c("design.yaml", "layouts.yaml", "presentation.yaml", "OUTPUTS", "assets")) {
+  for (entry in c(
+    "design.yaml", "layouts.yaml", "presentation.yaml", "standard_footnotes.yaml",
+    "OUTPUTS", "assets"
+  )) {
     file.copy(file.path(demo_deck, entry), project_dir, recursive = TRUE)
   }
 
   result <- deck_build(file.path(project_dir, "presentation.yaml"))
   expect_true(file.exists(result$output))
   expect_true(file.exists(result$manifest))
-  expect_equal(result$slide_count, 3)
+  expect_equal(result$slide_count, 4)
 })

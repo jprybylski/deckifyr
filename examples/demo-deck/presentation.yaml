@@ -5,12 +5,13 @@
 # (scripts/01_analysis.R, the same Theoph-derived concentration-time
 # figure that report's own `.qmd` fills via a `{rpfy}:` magic string).
 #
-# deckifyr's reportifyr resolver isn't implemented yet (spec section 9,
-# Phase 2), so this deck references that PNG as a plain local `image`
-# element (`source: OUTPUTS/figures/...`, resolved by
-# `deckifyr.resolvers.LocalFileResolver`) instead of
-# `{rpfy}:conc-time.png` -- see README.md in this directory for exactly
-# what would change once that resolver lands.
+# The `figure` element below resolves `{rpfy}:conc-time.png` through
+# `deckifyr.resolvers.ReportifyrResolver` (spec section 9) against
+# `OUTPUTS/figures/` and its metadata sidecar, and renders that
+# sidecar's footnote content as a footer beneath the figure (the
+# default `footer_placement: below` -- see this repo's
+# deckifyr-specification.md section 9.1 and standard_footnotes.yaml in
+# this directory for where the footer text comes from).
 #
 # OUTPUTS/tables/pk-summary.csv is a per-subject summary (weight, dose,
 # Cmax, Tmax) derived from that same Theoph dataset, exercising the
@@ -31,6 +32,8 @@ build:
   output: build/demo-deck.pptx
   manifest: build/demo-deck.manifest.json
   previews: false
+  reportifyr:
+    standard_footnotes: standard_footnotes.yaml
 
 slides:
   - id: title
@@ -59,8 +62,8 @@ slides:
       title:
         value: Concentration-Time Profile
       figure:
-        type: image
-        source: OUTPUTS/figures/conc-time.png
+        type: reportifyr
+        value: "{rpfy}:conc-time.png"
         fit: contain
         alt_text: >-
           Line plot of theophylline serum concentration over time for each

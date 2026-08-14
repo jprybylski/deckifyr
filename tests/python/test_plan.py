@@ -146,6 +146,121 @@ def test_table_element_is_supported():
     assert element.source == "data.csv"
 
 
+def test_reportifyr_element_is_supported():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="fig",
+                type="reportifyr",
+                value="{rpfy}:conc-time.png",
+                alt_text="a plot",
+                box=_box(),
+            )
+        ],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.type == "reportifyr"
+    assert element.value == "{rpfy}:conc-time.png"
+
+
+def test_reportifyr_element_footer_placement_defaults_to_below():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="fig",
+                type="reportifyr",
+                value="{rpfy}:conc-time.png",
+                alt_text="a plot",
+                box=_box(),
+            )
+        ],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.footer_placement == "below"
+
+
+def test_reportifyr_footer_placement_notes_is_honored():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="fig",
+                type="reportifyr",
+                value="{rpfy}:conc-time.png",
+                alt_text="a plot",
+                box=_box(),
+                footer_placement="notes",
+            )
+        ],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.footer_placement == "notes"
+
+
+def test_rpfy_sourced_table_footer_placement_defaults_to_below():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(id="tbl", type="table", source="{rpfy}:pk-summary.csv", box=_box())
+        ],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.footer_placement == "below"
+
+
+def test_footer_placement_rejected_on_plain_image_element():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="bg",
+                type="image",
+                source="bg.png",
+                alt_text="bg",
+                box=_box(),
+                footer_placement="below",
+            )
+        ],
+    )
+    with pytest.raises(ContentValidationError):
+        expand_slide(slide, None, design, strict=True)
+
+
+def test_footer_placement_rejected_on_plain_local_table():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="tbl",
+                type="table",
+                source="data.csv",
+                box=_box(),
+                footer_placement="below",
+            )
+        ],
+    )
+    with pytest.raises(ContentValidationError):
+        expand_slide(slide, None, design, strict=True)
+
+
 def test_style_token_resolves_font_and_color():
     design = _design()
     slide = Slide(

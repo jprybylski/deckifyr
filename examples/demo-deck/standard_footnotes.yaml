@@ -1,0 +1,21 @@
+# A minimal `standard_footnotes.yaml` (spec section 9.1) -- trimmed to
+# just the entries this deck's own reportifyr metadata sidecar
+# (OUTPUTS/figures/conc-time_png_metadata.json) actually references.
+# Both entries are copied verbatim from reportifyr's own bundled
+# standard_footnotes.yaml (a2-ai/reportifyr's `inst/extdata/`), not
+# invented for this demo.
+abbreviations:
+  PK: pharmacokinetic
+
+figure_footnotes:
+  conc-time-trajectories: >-
+    This plot shows individual concentration-time trajectories for
+    subjects in the study. The x-axis represents time (hours) and the
+    y-axis shows drug concentration (ng/mL). Each line corresponds to a
+    subject's concentration profile, illustrating variability in
+    pharmacokinetics across the population. Key points like peak
+    concentration (Cmax) and time to peak (Tmax) can be identified
+    visually. No aggregation or smoothing has been applied, preserving
+    the raw individual data
+
+table_footnotes: {}

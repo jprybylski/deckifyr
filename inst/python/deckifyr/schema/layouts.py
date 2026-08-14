@@ -31,6 +31,14 @@ FitMode = Literal["contain", "cover", "stretch", "none"]
 OverflowMode = Literal["error", "shrink", "clip", "continue"]
 RenderMode = Literal["native", "svg", "png", "auto"]
 
+# Where a reportifyr artifact's footnote content (spec section 9.1) is
+# placed. Only meaningful on a `reportifyr` element or a `table` element
+# whose `source` is a `{rpfy}:` magic string -- `deckifyr.plan` rejects
+# it set anywhere else rather than silently ignoring it. Named
+# `footer_placement`, not `footer`, to avoid colliding with this file's
+# own unrelated, still-unimplemented `"footnotes"` element type above.
+FooterPlacement = Literal["below", "notes", "none"]
+
 # The autoshape kinds a `shape` element may draw (spec section 7.7's `type`
 # enum). Deliberately a small, named subset of python-pptx's much larger
 # `MSO_SHAPE` enum -- `deckifyr.pptx.compose`'s `_SHAPE_KIND_MAP` maps each
@@ -94,6 +102,7 @@ class Element(BaseModel):
     alt_text: str | None = None
     remove: bool = False
     required: bool = False
+    footer_placement: FooterPlacement | None = None
     # `shape`-only: which autoshape to draw (spec section 7.7).
     shape_kind: ShapeKind | None = None
     # `group`-only: child elements, keyed by id or listed with their own

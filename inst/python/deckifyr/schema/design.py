@@ -70,6 +70,15 @@ class Defaults(BaseModel):
     overflow: Literal["error", "shrink", "clip", "continue"] = "error"
     image_fit: Literal["contain", "cover", "stretch", "none"] = "contain"
     rotation: float = 0
+    # A `reportifyr`/rpfy-sourced `table` element's `footer_placement:
+    # below` box (spec section 9.1's footnote content), placed directly
+    # beneath the element's own box.
+    footer_height: str = "0.4in"
+    # `text_styles` name the footer falls back to when the element itself
+    # has no `style` set -- unset means `deckifyr.pptx.compose`'s own
+    # small built-in default, same "token or bare literal" convention
+    # `TextStyle`'s own fields use.
+    footer_style: str | None = None
 
 
 class StatusFurniture(BaseModel):

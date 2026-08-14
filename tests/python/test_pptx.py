@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -10,12 +11,14 @@ from deckifyr.plan import expand_presentation
 from deckifyr.pptx.compose import _compute_image_placement, compose_and_write
 from deckifyr.schema.design import (
     BrandingFurniture,
+    Defaults,
     DesignDocument,
     Fonts,
     Furniture,
     PageNumberFurniture,
     SlideSize,
     StatusFurniture,
+    TextStyle,
 )
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
@@ -24,6 +27,7 @@ from deckifyr.schema.presentation import (
     DesignRef,
     Metadata,
     PresentationDocument,
+    ReportifyrConfig,
     Slide,
 )
 
@@ -347,3 +351,214 @@ def test_table_source_not_found_raises(project):
 def test_table_source_outside_project_root_raises(project):
     with pytest.raises(ContentValidationError):
         _build(project, _table_presentation(source="../outside/data.csv"), _design())
+
+
+# ---------------------------------------------------------------------------
+# Reportifyr figures + footers
+# ---------------------------------------------------------------------------
+
+
+def _write_reportifyr_figure_fixture(project):
+    figures = project / "OUTPUTS" / "figures"
+    figures.mkdir(parents=True)
+    Image.new("RGB", (400, 200), color="blue").save(figures / "conc-time.png")
+    metadata = {
+        "source_meta": {"path": "scripts/01_analysis.R", "latest_time": "2026-08-11 22:28:55"},
+        "object_meta": {
+            "meta_type": "conc-time-trajectories",
+            "footnotes": {
+                "notes": ["Data are from the built-in Theoph dataset."],
+                "abbreviations": ["PK"],
+            },
+        },
+    }
+    (figures / "conc-time_png_metadata.json").write_text(json.dumps(metadata))
+
+    standard_footnotes = {
+        "figure_footnotes": {
+            "conc-time-trajectories": "This plot shows individual concentration-time trajectories."
+        },
+        "table_footnotes": {},
+        "abbreviations": {"PK": "pharmacokinetic"},
+    }
+    (project / "standard_footnotes.yaml").write_text(yaml.safe_dump(standard_footnotes))
+
+
+def _reportifyr_presentation(*, footer_placement: str | None = None) -> PresentationDocument:
+    element_kwargs = dict(
+        id="fig",
+        type="reportifyr",
+        value="{rpfy}:conc-time.png",
+        alt_text="a concentration-time plot",
+        box=Box(x="0in", y="0in", width="4in", height="2in"),
+    )
+    if footer_placement is not None:
+        element_kwargs["footer_placement"] = footer_placement
+    return PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(
+            output="build/out.pptx",
+            manifest="build/out.manifest.json",
+            reportifyr=ReportifyrConfig(standard_footnotes="standard_footnotes.yaml"),
+        ),
+        slides=[Slide(id="s1", layout=None, elements=[Element(**element_kwargs)])],
+    )
+
+
+def test_reportifyr_element_resolves_and_places_a_picture(project):
+    _write_reportifyr_figure_fixture(project)
+    result = _build(project, _reportifyr_presentation(footer_placement="none"), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (picture,) = list(slide.shapes)
+    assert picture.name == "fig"
+
+    manifest = json.loads(result.manifest_path.read_text())
+    (element_entry,) = manifest["elements"]
+    assert element_entry["type"] == "reportifyr"
+    assert element_entry["editability"] == "rendered_graphic"
+    assert element_entry["resolved_path"].endswith("conc-time.png")
+
+
+def test_reportifyr_footer_below_places_a_shape_beneath_the_box(project):
+    _write_reportifyr_figure_fixture(project)
+    result = _build(project, _reportifyr_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    picture, footer = list(slide.shapes)
+    assert footer.name == "fig__footer"
+    assert footer.top == picture.top + picture.height
+
+    footer_text = footer.text_frame.text
+    assert footer_text.startswith("Source: scripts/01_analysis.R")
+    assert "Notes: This plot shows individual concentration-time trajectories." in footer_text
+    assert "Abbreviations: PK: pharmacokinetic." in footer_text
+    assert slide.has_notes_slide is False
+
+
+def test_reportifyr_footer_inherits_every_field_of_a_named_style(project):
+    _write_reportifyr_figure_fixture(project)
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        text_styles={
+            "loud-footnote": TextStyle(
+                font="body", size="9pt", bold=True, italic=True, color="#FF0000"
+            )
+        },
+        defaults=Defaults(footer_style="loud-footnote"),
+    )
+    result = _build(project, _reportifyr_presentation(), design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    _picture, footer = list(slide.shapes)
+    run = footer.text_frame.paragraphs[0].runs[0]
+    assert run.font.bold is True
+    assert run.font.italic is True
+    assert run.font.size.pt == 9
+    assert run.font.color.rgb == RGBColor.from_string("FF0000")
+
+
+def test_reportifyr_footer_notes_appends_to_slide_notes(project):
+    _write_reportifyr_figure_fixture(project)
+    result = _build(project, _reportifyr_presentation(footer_placement="notes"), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (picture,) = list(slide.shapes)
+    assert picture.name == "fig"
+    assert "Abbreviations: PK: pharmacokinetic." in slide.notes_slide.notes_text_frame.text
+
+
+def test_reportifyr_footer_none_skips_footer_entirely(project):
+    _write_reportifyr_figure_fixture(project)
+    result = _build(project, _reportifyr_presentation(footer_placement="none"), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    assert len(list(slide.shapes)) == 1
+    assert slide.has_notes_slide is False
+
+
+def test_reportifyr_missing_sidecar_raises(project):
+    figures = project / "OUTPUTS" / "figures"
+    figures.mkdir(parents=True)
+    Image.new("RGB", (400, 200), color="blue").save(figures / "conc-time.png")
+    (project / "standard_footnotes.yaml").write_text(yaml.safe_dump({"abbreviations": {}}))
+
+    with pytest.raises(ContentValidationError):
+        _build(project, _reportifyr_presentation(), _design())
+
+
+def test_reportifyr_element_requires_alt_text(project):
+    _write_reportifyr_figure_fixture(project)
+    presentation = _reportifyr_presentation(footer_placement="none")
+    presentation.slides[0].elements[0].alt_text = None
+    with pytest.raises(ContentValidationError):
+        _build(project, presentation, _design())
+
+
+def _rpfy_table_presentation() -> PresentationDocument:
+    return PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(
+            output="build/out.pptx",
+            manifest="build/out.manifest.json",
+            reportifyr=ReportifyrConfig(standard_footnotes="standard_footnotes.yaml"),
+        ),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="tbl",
+                        type="table",
+                        source="{rpfy}:pk-summary.csv",
+                        box=Box(x="0in", y="0in", width="4in", height="2in"),
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_rpfy_sourced_table_builds_and_footers_from_table_footnotes(project):
+    tables = project / "OUTPUTS" / "tables"
+    tables.mkdir(parents=True)
+    (tables / "pk-summary.csv").write_text("name,score\nAda,10\n")
+    metadata = {
+        "object_meta": {
+            "meta_type": "univariate",
+            "footnotes": {"notes": [], "abbreviations": []},
+        }
+    }
+    (tables / "pk-summary_csv_metadata.json").write_text(json.dumps(metadata))
+    standard_footnotes = {
+        "table_footnotes": {"univariate": "The p-value is from the likelihood ratio test."},
+        "figure_footnotes": {},
+        "abbreviations": {},
+    }
+    (project / "standard_footnotes.yaml").write_text(yaml.safe_dump(standard_footnotes))
+
+    result = _build(project, _rpfy_table_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    graphic_frame, footer = list(slide.shapes)
+    assert graphic_frame.table.rows[1].cells[0].text == "Ada"
+    assert footer.text_frame.text == "Notes: The p-value is from the likelihood ratio test."
+
+    manifest = json.loads(result.manifest_path.read_text())
+    (element_entry,) = manifest["elements"]
+    assert element_entry["resolved_path"].endswith("pk-summary.csv")

@@ -23,11 +23,11 @@ from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_POINT, parse_length
 
 # Element types this slice's compositor can actually place on a slide.
-# Everything else in spec section 7.7's `type` enum (quarto, reportifyr)
-# is later-phase work (deckifyr-specification.md section 18) -- raising
-# a clear error here keeps that boundary explicit instead of silently
+# Everything else in spec section 7.7's `type` enum (quarto) is
+# later-phase work (deckifyr-specification.md section 18) -- raising a
+# clear error here keeps that boundary explicit instead of silently
 # dropping content (spec section 20 warning 7).
-SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group", "table"}
+SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group", "table", "reportifyr"}
 
 # Reserved ids for `design.yaml`'s `furniture` block (spec section 7.8),
 # synthesized fresh per slide by `_furniture_layout` below. The
@@ -99,6 +99,7 @@ class ResolvedElement:
     render_mode: str
     alt_text: str | None
     required: bool
+    footer_placement: str | None = None
     shape_kind: str | None = None
     shape_style: ResolvedShapeStyle | None = None
     # `group`-only: already-resolved children, sorted by paint order the
@@ -116,9 +117,17 @@ class ResolvedSlide:
     notes: str | None = None
 
 
-def _resolve_text_style(
+def resolve_text_style(
     design: DesignDocument, style_name: str | None
 ) -> ResolvedTextStyle | None:
+    """Resolve a `design.yaml` `text_styles` name to literal font/size/
+    color/bold/italic values. Public (not `_`-prefixed) because
+    `deckifyr.pptx.compose` reuses it verbatim to resolve a reportifyr
+    footer's style -- one resolver for every field a named style
+    carries, so a future field added to `TextStyle`/`ResolvedTextStyle`
+    is automatically inherited everywhere a style name is resolved,
+    footers included, without a second place to remember to update.
+    """
     if style_name is None:
         return None
     style = design.text_styles.get(style_name)
@@ -330,7 +339,7 @@ def _resolve_element(
         )
 
     style = (
-        _resolve_text_style(design, merged.get("style"))
+        resolve_text_style(design, merged.get("style"))
         if element_type in ("text", "markdown", "table")
         else None
     )
@@ -357,6 +366,25 @@ def _resolve_element(
     overflow = merged.get("overflow")
     render_mode = merged.get("render_mode")
 
+    # `footer_placement` (spec section 9.1's reportifyr footnote content)
+    # is only meaningful on a `reportifyr` element (its magic string is
+    # its `value`, per spec section 7.6's own example) or a `table`
+    # element whose `source` is itself a `{rpfy}:` magic string --
+    # rejected elsewhere rather than silently ignored, same as any other
+    # field that doesn't apply to a given element type.
+    source = merged.get("source")
+    is_rpfy_table = element_type == "table" and isinstance(source, str) and source.startswith("{rpfy}:")
+    footer_applicable = element_type == "reportifyr" or is_rpfy_table
+    footer_placement = merged.get("footer_placement")
+    if footer_placement is not None and not footer_applicable:
+        raise ContentValidationError(
+            f"slide {slide_id!r}, element {element_id!r}: footer_placement is "
+            "only valid on a 'reportifyr' element or a 'table' element whose "
+            "source is a {rpfy}: magic string"
+        )
+    if footer_applicable and footer_placement is None:
+        footer_placement = "below"
+
     return ResolvedElement(
         id=element_id,
         type=element_type,
@@ -375,6 +403,7 @@ def _resolve_element(
         render_mode=render_mode if render_mode is not None else "native",
         alt_text=merged.get("alt_text"),
         required=required,
+        footer_placement=footer_placement,
         shape_kind=merged.get("shape_kind"),
         shape_style=shape_style,
         children=children,

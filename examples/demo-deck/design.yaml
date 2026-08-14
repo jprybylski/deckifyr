@@ -41,6 +41,10 @@ defaults:
   overflow: error
   image_fit: contain
   rotation: 0
+  # A reportifyr footer (spec section 9.1) reuses the same small, muted
+  # style the demo already uses for the table -- no separate footer
+  # typography convention to invent.
+  footer_style: footnote
 
 # Document furniture (spec section 7.8): a branding label and running
 # page number, composed on every slide without hand-placing either one --

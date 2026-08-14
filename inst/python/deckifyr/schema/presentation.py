@@ -32,6 +32,25 @@ class Metadata(BaseModel):
     status: str | None = None
 
 
+class ReportifyrConfig(BaseModel):
+    """Where/how to resolve `{rpfy}:` magic strings (spec section 9.1),
+    project-relative paths. `standard_footnotes` is required only
+    lazily -- a build with no `reportifyr`/rpfy-sourced element never
+    reads it; `deckifyr.pptx.compose` raises a `ContentValidationError`
+    if one exists and this is unset.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outputs_dir: str = "OUTPUTS"
+    standard_footnotes: str | None = None
+    # Mirrors reportifyr's own `add_footnotes()` R parameter of the same
+    # name and default -- reportifyr has no `config.yaml`-level
+    # equivalent (it's a call-time argument there too), so this is
+    # deckifyr's own project-level home for the same choice.
+    fail_on_missing_metadata: bool = True
+
+
 class BuildConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -39,6 +58,7 @@ class BuildConfig(BaseModel):
     output: str
     manifest: str | None = None
     previews: bool = False
+    reportifyr: ReportifyrConfig | None = None
 
 
 class Slide(BaseModel):

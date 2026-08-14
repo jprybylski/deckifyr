@@ -25,9 +25,8 @@ real `reportifyr` artifact rather than placeholder content.
 
 ## Where the figure comes from
 
-`OUTPUTS/figures/conc-time.png` (and its reportifyr metadata sidecar,
-`conc-time_png_metadata.json`, kept alongside it for provenance even
-though nothing here reads it yet) are copied straight from
+`OUTPUTS/figures/conc-time.png` and its reportifyr metadata sidecar,
+`conc-time_png_metadata.json`, are copied straight from
 [quartifyr's `examples/demo-report/scripts/01_analysis.R`](https://github.com/jprybylski/quartifyr/blob/main/examples/demo-report/scripts/01_analysis.R)
 -- the same run that generates the concentration-time figure that
 report's own `.qmd` fills via a `{rpfy}:conc-time.png` magic string. Base
@@ -36,15 +35,20 @@ concentrations after a single oral dose) is the underlying data in both
 places. `assets/logo.png` is likewise copied from that same demo
 project's `assets/`.
 
-**This deck references that PNG as a plain local file, not a `{rpfy}:`
-reference.** `deckifyr.resolvers`' reportifyr magic-string resolver
-(spec section 9) isn't implemented yet -- see `CLAUDE.md`'s status
-table -- so `concentration-time`'s `figure` element uses
-`source: OUTPUTS/figures/conc-time.png`, resolved by the plain
-`LocalFileResolver` that *is* implemented. Once the reportifyr resolver
-lands (Phase 2), the only change needed here is that one `source:` value
-becoming `source: "{rpfy}:conc-time.png"`; everything else -- geometry,
-fit mode, alt text, the rest of the deck -- stays as-is.
+**This deck resolves that figure through a real `{rpfy}:conc-time.png`
+reference**, not a plain local file: `concentration-time`'s `figure`
+element uses `type: reportifyr`, `value: "{rpfy}:conc-time.png"`,
+resolved by `deckifyr.resolvers.ReportifyrResolver` (spec section 9)
+against `OUTPUTS/figures/` and that metadata sidecar. The sidecar's
+`meta_type` (`conc-time-trajectories`) and `abbreviations` (`PK`) are
+looked up in this directory's own `standard_footnotes.yaml` -- a
+two-entry excerpt of reportifyr's own bundled file -- to build a footer
+placed beneath the figure by default
+(`footer_placement: below`, `design.yaml`'s `defaults.footer_style:
+footnote`). `presentation.yaml`'s `build.reportifyr.standard_footnotes`
+points at that file; without it, a `{rpfy}:`-sourced element with a
+footer to show fails the build with a clear error rather than silently
+skipping it.
 
 ## Where the table comes from
 

@@ -1,7 +1,8 @@
 """End-to-end coverage for examples/demo-deck (see its README.md): a
-four-slide deck built from a real reportifyr-produced figure and a
-derived CSV table, not placeholder content. This is a regression test
-for the whole plan -> compose pipeline against a richer project than
+four-slide deck built from a real reportifyr-produced figure (resolved
+via a real `{rpfy}:` magic string, spec section 9) and a derived CSV
+table, not placeholder content. This is a regression test for the whole
+plan -> compose pipeline against a richer project than
 inst/examples/minimal-deck's text/markdown-only fixture -- in
 particular, it's the only test that builds a project with a multi-zone
 layout, `rotation`, `z_index`, and a `table` element all at once.
@@ -54,7 +55,7 @@ def test_demo_deck_builds_four_slides_with_expected_shapes(demo_deck_dir, tmp_pa
     shape_names_per_slide = [{shape.name for shape in slide.shapes} for slide in slides]
     assert shape_names_per_slide == [
         {"deck-title", "deck-subtitle"} | furniture,
-        {"title", "figure", "note"} | furniture,
+        {"title", "figure", "figure__footer", "note"} | furniture,
         {"table-title", "pk-table"} | furniture,
         {"closing-title", "closing-note", "logo"} | furniture,
     ]
@@ -68,6 +69,18 @@ def test_demo_deck_figure_is_a_picture_with_alt_text(demo_deck_dir, tmp_path, ca
     figure = next(shape for shape in plot_slide.shapes if shape.name == "figure")
     assert figure.shape_type == 13  # MSO_SHAPE_TYPE.PICTURE
     assert "Theoph" in _alt_text(figure)
+
+
+def test_demo_deck_figure_footer_reflects_the_real_metadata_sidecar(demo_deck_dir, tmp_path, capsys):
+    output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
+    prs = Presentation(output["output"])
+    _title_slide, plot_slide, _pk_slide, _closing_slide = list(prs.slides)
+
+    footer = next(shape for shape in plot_slide.shapes if shape.name == "figure__footer")
+    footer_text = footer.text_frame.text
+    assert footer_text.startswith("Source: scripts/01_analysis.R")
+    assert "Theoph dataset" in footer_text
+    assert "Abbreviations: PK: pharmacokinetic." in footer_text
 
 
 def test_demo_deck_pk_table_is_a_native_table_from_csv(demo_deck_dir, tmp_path, capsys):
@@ -118,14 +131,15 @@ def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path
     figure_entry = next(
         e for e in manifest["elements"] if e["slide_id"] == "concentration-time" and e["element_id"] == "figure"
     )
-    assert figure_entry["type"] == "image"
+    assert figure_entry["type"] == "reportifyr"
     assert figure_entry["editability"] == "rendered_graphic"
     resolved_path = Path(figure_entry["resolved_path"])
     assert resolved_path.is_file()
     assert figure_entry["sha256"] == _sha256(resolved_path)
-    # The whole point of this fixture: the resolved figure is the actual
-    # reportifyr-produced PNG shipped in examples/demo-deck/OUTPUTS/figures/,
-    # not a placeholder generated for the test.
+    # The whole point of this fixture: `{rpfy}:conc-time.png` resolves to
+    # the actual reportifyr-produced PNG shipped in
+    # examples/demo-deck/OUTPUTS/figures/, not a placeholder generated
+    # for the test.
     assert figure_entry["sha256"] == _sha256(demo_deck_dir / "OUTPUTS" / "figures" / "conc-time.png")
 
     table_entry = next(

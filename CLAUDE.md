@@ -30,20 +30,20 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table` elements and `Slide.notes`; `quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 done, Phase 2 (§18) starting |
-| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, and `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra) are real; reportifyr/Quarto resolvers are not implemented -- Phase 2 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr` elements, `Slide.notes`, and reportifyr footers (§9.1); `quarto` raises a clear `ContentValidationError` (`deckifyr.plan` rejects it before composition) -- Phase 1 done, Phase 2 (§18) underway |
+| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), and `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1) are real; the Quarto resolver is not implemented -- Phase 2 |
 | `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
 the same way, then plans and composes a real `.pptx` + manifest for
-projects that use `text`/`markdown`/`image`/`shape`/`group`/`table`
-elements -- a project using `quarto`/`reportifyr` elements still fails
+projects that use `text`/`markdown`/`image`/`shape`/`group`/`table`/
+`reportifyr` elements -- a project using `quarto` elements still fails
 with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
 than silently dropping that content. `table` elements resolve their
 `source` (a `.csv` or `.parquet` file, project-relative like an image's
@@ -76,9 +76,44 @@ slide element -- no box/style/z_index, no design-token resolution --
 that `deckifyr.plan.expand_slide` carries straight through onto
 `ResolvedSlide.notes` and `deckifyr.pptx.compose` writes to the native
 PowerPoint notes page (`slide.notes_slide.notes_text_frame`) via
-`python-pptx`, not through the ordinary element pipeline. Don't assume
+`python-pptx`, not through the ordinary element pipeline. The
+reportifyr magic-string resolver (spec §9.1, Phase 2's first slice) is
+real: a `type: reportifyr` element's `value` (or a `table` element's
+`source`) may be a `{rpfy}:name.ext` reference, resolved by
+`deckifyr.resolvers.ReportifyrResolver` against
+`build.reportifyr.outputs_dir` (default `OUTPUTS`, searched recursively)
+and that artifact's `<name>_<ext>_metadata.json` sidecar --
+`{rpfy}:[a, b, ...]` multi-figure references use only the first entry
+and record a build warning for the rest (basic multi-figure tiling is
+still an open design question, spec §21), and a resolved artifact with
+no metadata sidecar fails the build unless
+`build.reportifyr.fail_on_missing_metadata: false`. The sidecar's
+`meta_type`/`abbreviations` are looked up in
+`build.reportifyr.standard_footnotes` (a project-relative
+`standard_footnotes.yaml`, required only once some element actually
+needs it) to build a plain `Source`/`Notes`/`Abbreviations` footer --
+this is deckifyr's own PPTX-native footer format, not a port of
+reportifyr's private, config-driven Word-footnote formatting (see
+`deckifyr.resolvers.reportifyr`'s module docstring for what was checked
+before deciding that). `footer_placement` (`below`, the default;
+`notes`; or `none`) controls whether that footer becomes a text shape
+beneath the element's box (`design.yaml`'s `defaults.footer_height` for
+geometry) or gets appended to the slide's speaker notes instead --
+valid only on a `reportifyr` element or an `{rpfy}:`-sourced `table`,
+rejected elsewhere. Footer typography (`defaults.footer_style`) reuses
+`deckifyr.plan.resolve_text_style` -- the same function
+`text`/`markdown`/`table` styling already goes through -- rather than a
+footer-specific subset of fields, so every field a `text_styles` entry
+carries (font, size, color, bold, italic, and anything added later)
+is inherited by a footer automatically; `deckifyr.pptx.compose`'s
+`_resolve_footer_style` only supplies the built-in fallback
+(`Arial Narrow`/10pt/`colors.muted`) when `footer_style` is unset, as a
+complete `ResolvedTextStyle` of its own so both branches are the same
+shape. Don't reintroduce a hand-picked tuple of footer font fields here
+-- that was tried once and quietly dropped `bold`/`italic`. Don't assume
 any command beyond `init`/`validate`/`build`/`schema` does real work
-without checking `inst/python/deckifyr/cli.py` first.
+without checking
+`inst/python/deckifyr/cli.py` first.
 
 ## Components
 
@@ -87,7 +122,7 @@ without checking `inst/python/deckifyr/cli.py` first.
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, `initialize_deck_project()`, ...) delegating to the bundled Python CLI via pyro. `R/run-python.R` is the single bridge point every other `R/*.R` file calls through. | R |
 | `inst/python/deckifyr/` | The canonical engine. Bundled unmodified into the R package (`inst/python`) and also the source directory for the standalone Python wheel (spec §5.3) -- never fork this tree for one facade or the other. | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. Ships inside the R package/Python wheel (it's under `inst/`). | YAML |
-| `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a three-slide deck using a real `reportifyr`-produced figure copied from quartifyr's `examples/demo-report`, a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates and why it doesn't use `{rpfy}:` yet. | YAML |
+| `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a four-slide deck resolving a real `reportifyr`-produced figure via a real `{rpfy}:conc-time.png` reference (with a footer built from its metadata sidecar + this directory's own `standard_footnotes.yaml`), a `table` element, a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates. | YAML |
 | `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes, plan expansion, PPTX composition -- plus `test_demo_deck.py`, an end-to-end build of `examples/demo-deck/`. | Python |
 | `tests/testthat/` | R tests, including `test-wiring.R`, the only test that exercises the real R -> pyro -> Python round trip end-to-end (not just function signatures). Skips cleanly without `uv`/`pyro`. | R |
 | `.github/workflows/ci.yml` | `python-tests` (pytest matrix) + `full-pipeline` (the real R -> pyro -> Python integration proof, `tests/testthat/` run directly against the checkout). | YAML |
@@ -200,8 +235,35 @@ pass 2 (fill via `reportifyr`) is for `.docx`; deckifyr's own pass 1
 (plan/shell) / pass 2 (resolve/compose) is for `.pptx` and does not call
 `reportifyr`'s DOCX fill pipeline at all (spec §9.1) -- only its
 documented `{rpfy}:` magic-string contract and metadata sidecars, via
-deckifyr's own resolver (not yet implemented; see
-`deckifyr.resolvers`'s module docstring).
+`deckifyr.resolvers.ReportifyrResolver` (real, spec §9.1/9.2).
+
+**Reportifyr integration reads its data contract, not its internals --
+checked, not assumed.** Before building `ReportifyrResolver`, I checked
+whether reportifyr exposes a real, exported API deckifyr could depend on
+instead of reimplementing anything (the same way quartifyr's own
+`render_report()` calls `reportifyr::build_report()` directly, R to R --
+`Imports: reportifyr` in quartifyr's `DESCRIPTION`). It doesn't, for
+what deckifyr needs: `reportipyr` (reportifyr's bundled Python engine)
+declares `__all__ = []` -- no exported Python API, only a docx-mutating
+CLI -- and reportifyr's real R `NAMESPACE` exports `get_meta_type()`/
+`get_meta_abbrevs()` (list the *keys* in `standard_footnotes.yaml`, not
+resolvers) and `add_footnotes()` (a whole-`.docx`-in/`.docx`-out
+mutator), none of which return one artifact's footer text as data with
+no docx side effect -- and this repo's pyro wiring only goes R to
+Python, so even those R exports aren't reachable from
+`deckifyr.pptx.compose` without new infrastructure. So
+`ReportifyrResolver`/`build_footer_lines` in
+`deckifyr/resolvers/reportifyr.py` read reportifyr's real, documented
+*data* contract instead -- the `{rpfy}:` magic-string grammar and the
+metadata JSON sidecar schema (produced by reportifyr's exported
+`write_object_metadata()`) -- and build deckifyr's own plain
+`Source`/`Notes`/`Abbreviations` footer format from those fields, not a
+port of `reportipyr`'s private, config-driven Word-footnote formatting
+(`footnote_order`, `wrap_path_in_[]`, etc. -- Word-specific rendering
+choices, not part of the contract). If reportifyr ever exports a
+docx-free "resolve this artifact's footer text" function, that's the
+real fix to revisit this against -- not a reason to guess at its
+internals in the meantime.
 
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**

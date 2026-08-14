@@ -37,8 +37,19 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
 
 from deckifyr import __version__ as DECKIFYR_VERSION
-from deckifyr.plan import ResolvedElement, ResolvedSlide
-from deckifyr.resolvers import BuildContext, LocalFileResolver, TableData, TableResolver
+from deckifyr.plan import ResolvedElement, ResolvedSlide, ResolvedTextStyle, resolve_text_style
+from deckifyr.resolvers import (
+    BuildContext,
+    LocalFileResolver,
+    ReportifyrArtifact,
+    ReportifyrResolver,
+    TableData,
+    TableResolver,
+    build_footer_lines,
+    load_standard_footnotes,
+    split_scripts,
+)
+from deckifyr.resolvers.reportifyr import MAGIC_PREFIX
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.presentation import PresentationDocument
@@ -64,7 +75,25 @@ _EDITABILITY = {
     "shape": "fully_editable",
     "group": "fully_editable",
     "table": "fully_editable",
+    "reportifyr": "rendered_graphic",
 }
+
+# Footer text fallback (spec section 9.1) used when `design.yaml`'s
+# `defaults.footer_style` names no `text_styles` entry -- a small,
+# unobtrusive default rather than the ordinary body-text size, matching
+# the kind of size a Word document's own footnotes use. A complete
+# `ResolvedTextStyle`, not a hand-picked subset of fields, so it's a
+# drop-in stand-in for a real named style -- see `_resolve_footer_style`.
+_DEFAULT_FOOTER_FONT_NAME = "Arial Narrow"
+_DEFAULT_FOOTER_FONT_SIZE_PT = 10.0
+_DEFAULT_FOOTER_COLOR = "#5F6368"
+_DEFAULT_FOOTER_STYLE = ResolvedTextStyle(
+    font=_DEFAULT_FOOTER_FONT_NAME,
+    size_pt=_DEFAULT_FOOTER_FONT_SIZE_PT,
+    bold=False,
+    italic=False,
+    color=_DEFAULT_FOOTER_COLOR,
+)
 
 # `deckifyr.schema.layouts.ShapeKind`'s values, mapped to their
 # `MSO_SHAPE` member. Keep in sync with that Literal -- schema validation
@@ -100,6 +129,64 @@ class BuildResult:
     manifest_path: Path | None
     slide_count: int
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ReportifyrBuildContext:
+    """Assembled once per build from `presentation.build.reportifyr`
+    (spec section 9.1), not re-read per element. `standard_footnotes`
+    is `None` when the project hasn't configured one -- distinct from
+    `{}` (configured, but the file happens to define nothing) so a
+    reportifyr-sourced element that actually needs a footer can raise a
+    clear "you haven't set build.reportifyr.standard_footnotes" error
+    rather than a confusing "meta_type not found in {}" one.
+    """
+
+    outputs_dir: str = "OUTPUTS"
+    fail_on_missing_metadata: bool = True
+    standard_footnotes: dict[str, Any] | None = None
+    footer_style: ResolvedTextStyle = field(default_factory=lambda: _DEFAULT_FOOTER_STYLE)
+
+
+def _resolve_footer_style(design: DesignDocument) -> ResolvedTextStyle:
+    """The complete style a reportifyr footer renders with -- every field
+    `resolve_text_style` returns (font, size, color, bold, italic), not a
+    hand-picked subset, so a `TextStyle` field added later is inherited
+    by footers automatically rather than needing a second update here.
+    `design.yaml`'s `defaults.footer_style` names the `text_styles` entry
+    to use; unset falls back to `_DEFAULT_FOOTER_STYLE`, itself a
+    complete `ResolvedTextStyle` so both branches are the same shape.
+    """
+    style_name = design.defaults.footer_style
+    if style_name is not None:
+        return resolve_text_style(design, style_name)
+    return ResolvedTextStyle(
+        font=_DEFAULT_FOOTER_STYLE.font,
+        size_pt=_DEFAULT_FOOTER_STYLE.size_pt,
+        bold=_DEFAULT_FOOTER_STYLE.bold,
+        italic=_DEFAULT_FOOTER_STYLE.italic,
+        color=design.colors.get("muted", _DEFAULT_FOOTER_COLOR),
+    )
+
+
+def _build_reportifyr_context(
+    presentation: PresentationDocument, design: DesignDocument, *, project_root: Path
+) -> ReportifyrBuildContext:
+    footer_style = _resolve_footer_style(design)
+    config = presentation.build.reportifyr
+    if config is None:
+        return ReportifyrBuildContext(footer_style=footer_style)
+    standard_footnotes = (
+        load_standard_footnotes(project_root / config.standard_footnotes)
+        if config.standard_footnotes
+        else None
+    )
+    return ReportifyrBuildContext(
+        outputs_dir=config.outputs_dir,
+        fail_on_missing_metadata=config.fail_on_missing_metadata,
+        standard_footnotes=standard_footnotes,
+        footer_style=footer_style,
+    )
 
 
 def _hex_to_rgbcolor(value: str) -> RGBColor:
@@ -290,20 +377,12 @@ def _compute_image_placement(
     raise ValueError(f"unhandled fit mode: {fit!r}")  # "none" is handled by the caller
 
 
-def _add_image_shape(
-    slide: Any, element: ResolvedElement, *, project_root: Path
-) -> tuple[Any, dict[str, str]]:
-    if not element.alt_text:
-        raise ContentValidationError(
-            f"element {element.id!r}: images require alt_text (spec section "
-            "13's content validation: \"missing required alt text\")"
-        )
-
-    resolver = LocalFileResolver()
-    context = BuildContext(project_root=str(project_root))
-    resolved = resolver.resolve(str(element.source), context)
-    image_path: Path = resolved.value
-
+def _place_picture(slide: Any, element: ResolvedElement, image_path: Path) -> Any:
+    """The actual `add_picture` placement, shared by `image` and
+    `reportifyr` elements (spec section 9.1's figures are just images
+    with a `{rpfy}:`-resolved source) -- everything except how
+    `image_path` itself gets resolved.
+    """
     if element.fit == "none":
         # No scaling: python-pptx sizes the picture from the image's own
         # DPI metadata, anchored at the box's top-left corner.
@@ -328,9 +407,149 @@ def _add_image_shape(
 
     shape.name = element.id
     shape.rotation = element.rotation
-    _set_alt_text(shape, element.alt_text)
+    if element.alt_text:
+        _set_alt_text(shape, element.alt_text)
 
+    return shape
+
+
+def _add_image_shape(
+    slide: Any, element: ResolvedElement, *, project_root: Path
+) -> tuple[Any, dict[str, str]]:
+    if not element.alt_text:
+        raise ContentValidationError(
+            f"element {element.id!r}: images require alt_text (spec section "
+            "13's content validation: \"missing required alt text\")"
+        )
+
+    resolver = LocalFileResolver()
+    context = BuildContext(project_root=str(project_root))
+    image_path: Path = resolver.resolve(str(element.source), context).value
+
+    shape = _place_picture(slide, element, image_path)
     return shape, {"resolved_path": str(image_path), "sha256": _sha256_file(image_path)}
+
+
+# ---------------------------------------------------------------------------
+# Reportifyr figures + footers
+# ---------------------------------------------------------------------------
+
+
+def _set_baseline(run: Any, script: str) -> None:
+    """Subscript/superscript (spec section 20 warning 7's "don't
+    silently degrade content", applied to `standard_footnotes.yaml`'s
+    own `_{...}`/`^{...}` notation). `python-pptx` exposes no public
+    subscript/superscript API, so -- like `_set_alt_text` above -- this
+    sets the OOXML `baseline` attribute directly, confined to this one
+    function.
+    """
+    if script == "sub":
+        run.font._rPr.set("baseline", "-25000")
+    elif script == "sup":
+        run.font._rPr.set("baseline", "30000")
+
+
+def _add_footer_shape(
+    slide: Any,
+    element: ResolvedElement,
+    lines: list[str],
+    design: DesignDocument,
+    style: ResolvedTextStyle,
+) -> Any:
+    height = parse_length(design.defaults.footer_height, strict=True)
+
+    shape = slide.shapes.add_textbox(
+        Emu(element.x), Emu(element.y + element.height), Emu(element.width), Emu(height)
+    )
+    shape.name = f"{element.id}__footer"
+
+    text_frame = shape.text_frame
+    text_frame.word_wrap = True
+    text_frame.margin_left = text_frame.margin_right = Emu(0)
+    text_frame.margin_top = text_frame.margin_bottom = Emu(0)
+
+    font_rgb = _hex_to_rgbcolor(style.color)
+    for index, line in enumerate(lines):
+        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        for segment in split_scripts(line):
+            run = paragraph.add_run()
+            run.text = segment.text
+            # Every field `style` carries is applied, not a hand-picked
+            # subset -- see `_resolve_footer_style`'s docstring.
+            run.font.name = style.font
+            run.font.size = Pt(style.size_pt)
+            run.font.bold = style.bold
+            run.font.italic = style.italic
+            run.font.color.rgb = font_rgb
+            _set_baseline(run, segment.script)
+
+    return shape
+
+
+def _apply_footer(
+    slide: Any,
+    element: ResolvedElement,
+    artifact_type: str,
+    metadata: dict[str, Any] | None,
+    reportifyr_ctx: ReportifyrBuildContext,
+    design: DesignDocument,
+) -> str | None:
+    """Builds footer text for a reportifyr-sourced element and, per
+    `footer_placement`, either places it as a shape (`"below"`, this
+    slice's default) or returns it for the caller to append to the
+    slide's speaker notes (`"notes"`) -- `None` either when there's
+    nothing to show or when it was already placed as a shape.
+    """
+    if element.footer_placement is None or element.footer_placement == "none":
+        return None
+    if metadata is None:
+        # A missing sidecar only reaches here when
+        # `fail_on_missing_metadata: false` let resolution succeed
+        # anyway (already recorded as a build warning) -- there's simply
+        # no footnote content to show.
+        return None
+    if reportifyr_ctx.standard_footnotes is None:
+        raise ContentValidationError(
+            f"element {element.id!r}: a reportifyr footer requires "
+            "build.reportifyr.standard_footnotes to be set in "
+            "presentation.yaml (or set footer_placement: none to skip it)"
+        )
+
+    lines = build_footer_lines(metadata, artifact_type, reportifyr_ctx.standard_footnotes)
+    if not lines:
+        return None
+    if element.footer_placement == "below":
+        _add_footer_shape(slide, element, lines, design, reportifyr_ctx.footer_style)
+        return None
+    return "\n".join(lines)
+
+
+def _add_reportifyr_shape(
+    slide: Any,
+    element: ResolvedElement,
+    reportifyr_ctx: ReportifyrBuildContext,
+    design: DesignDocument,
+    *,
+    project_root: Path,
+) -> tuple[Any, dict[str, str], list[str], str | None]:
+    if not element.alt_text:
+        raise ContentValidationError(
+            f"element {element.id!r}: reportifyr figures require alt_text "
+            "(spec section 13's content validation: \"missing required alt text\")"
+        )
+
+    resolver = ReportifyrResolver(
+        outputs_dir=reportifyr_ctx.outputs_dir,
+        fail_on_missing_metadata=reportifyr_ctx.fail_on_missing_metadata,
+    )
+    context = BuildContext(project_root=str(project_root))
+    artifact: ReportifyrArtifact = resolver.resolve(str(element.value), context).value
+
+    shape = _place_picture(slide, element, artifact.path)
+    footer_note = _apply_footer(slide, element, "figure", artifact.metadata, reportifyr_ctx, design)
+
+    source_manifest = {"resolved_path": str(artifact.path), "sha256": _sha256_file(artifact.path)}
+    return shape, source_manifest, list(artifact.warnings), footer_note
 
 
 # ---------------------------------------------------------------------------
@@ -339,18 +558,46 @@ def _add_image_shape(
 
 
 def _add_table_shape(
-    slide: Any, element: ResolvedElement, design: DesignDocument, *, project_root: Path
-) -> tuple[Any, dict[str, str]]:
+    slide: Any,
+    element: ResolvedElement,
+    design: DesignDocument,
+    reportifyr_ctx: ReportifyrBuildContext,
+    *,
+    project_root: Path,
+) -> tuple[Any, dict[str, str], list[str], str | None]:
     context = BuildContext(project_root=str(project_root))
-    # Two resolves of the same `source`, deliberately: `LocalFileResolver`
-    # gives the path this function needs for the manifest's
-    # `resolved_path`/`sha256` (the same fields every other file-backed
-    # element records), while `TableResolver` gives the parsed content --
-    # mirroring the resolver-per-concern split spec section 9.2 lays out
-    # rather than having `TableResolver` reach back into path bookkeeping
-    # that isn't its job.
-    table_path: Path = LocalFileResolver().resolve(str(element.source), context).value
-    data: TableData = TableResolver().resolve(str(element.source), context).value
+    source = str(element.source)
+    warnings: list[str] = []
+    metadata: dict[str, Any] | None = None
+
+    if source.startswith(MAGIC_PREFIX):
+        # A `{rpfy}:`-sourced table: resolve the magic string to a
+        # concrete path/sidecar first, then hand that path to the same
+        # CSV/Parquet `TableResolver` logic a plain local `source` uses
+        # -- `TableResolver` itself only knows project-relative strings,
+        # so re-derive one from the already-resolved, already-verified-
+        # inside-the-project absolute path (mirroring the existing
+        # double-resolve pattern below for a plain local source).
+        resolver = ReportifyrResolver(
+            outputs_dir=reportifyr_ctx.outputs_dir,
+            fail_on_missing_metadata=reportifyr_ctx.fail_on_missing_metadata,
+        )
+        artifact: ReportifyrArtifact = resolver.resolve(source, context).value
+        table_path = artifact.path
+        metadata = artifact.metadata
+        warnings.extend(artifact.warnings)
+        relative_source = str(table_path.relative_to(project_root))
+        data: TableData = TableResolver().resolve(relative_source, context).value
+    else:
+        # Two resolves of the same `source`, deliberately: `LocalFileResolver`
+        # gives the path this function needs for the manifest's
+        # `resolved_path`/`sha256` (the same fields every other file-backed
+        # element records), while `TableResolver` gives the parsed content --
+        # mirroring the resolver-per-concern split spec section 9.2 lays out
+        # rather than having `TableResolver` reach back into path bookkeeping
+        # that isn't its job.
+        table_path = LocalFileResolver().resolve(source, context).value
+        data = TableResolver().resolve(source, context).value
 
     if not data.headers:
         raise ContentValidationError(
@@ -405,7 +652,10 @@ def _add_table_shape(
     if element.alt_text:
         _set_alt_text(graphic_frame, element.alt_text)
 
-    return graphic_frame, {"resolved_path": str(table_path), "sha256": _sha256_file(table_path)}
+    footer_note = _apply_footer(slide, element, "table", metadata, reportifyr_ctx, design)
+
+    source_manifest = {"resolved_path": str(table_path), "sha256": _sha256_file(table_path)}
+    return graphic_frame, source_manifest, warnings, footer_note
 
 
 # ---------------------------------------------------------------------------
@@ -418,38 +668,54 @@ def _compose_element(
     slide_id: str,
     element: ResolvedElement,
     design: DesignDocument,
+    reportifyr_ctx: ReportifyrBuildContext,
     *,
     project_root: Path,
-) -> tuple[Any, list[dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]], list[str], list[str]]:
     """Place one resolved element on `slide` and return `(shape,
-    manifest_entries)`. Recursive for `group`: each child is composed the
-    same way, directly on `slide` (group children share the slide's own
-    absolute coordinate space -- spec section 7.3 -- rather than a
-    group-relative one), then `add_group_shape` reparents the already-
-    placed child shapes under a new group shape, per python-pptx's own
-    documented pattern for building a group from existing shapes.
+    manifest_entries, warnings, footer_notes)`. Recursive for `group`:
+    each child is composed the same way, directly on `slide` (group
+    children share the slide's own absolute coordinate space -- spec
+    section 7.3 -- rather than a group-relative one), then
+    `add_group_shape` reparents the already-placed child shapes under a
+    new group shape, per python-pptx's own documented pattern for
+    building a group from existing shapes.
     """
     source_manifest: dict[str, str] = {}
     manifest_entries: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    footer_notes: list[str] = []
 
     if element.type in ("text", "markdown"):
         shape = _add_text_shape(slide, element, design)
     elif element.type == "image":
         shape, source_manifest = _add_image_shape(slide, element, project_root=project_root)
+    elif element.type == "reportifyr":
+        shape, source_manifest, elem_warnings, footer_note = _add_reportifyr_shape(
+            slide, element, reportifyr_ctx, design, project_root=project_root
+        )
+        warnings.extend(elem_warnings)
+        if footer_note:
+            footer_notes.append(footer_note)
     elif element.type == "shape":
         shape = _add_autoshape(slide, element)
     elif element.type == "table":
-        shape, source_manifest = _add_table_shape(
-            slide, element, design, project_root=project_root
+        shape, source_manifest, elem_warnings, footer_note = _add_table_shape(
+            slide, element, design, reportifyr_ctx, project_root=project_root
         )
+        warnings.extend(elem_warnings)
+        if footer_note:
+            footer_notes.append(footer_note)
     elif element.type == "group":
         child_shapes = []
         for child in element.children:
-            child_shape, child_entries = _compose_element(
-                slide, slide_id, child, design, project_root=project_root
+            child_shape, child_entries, child_warnings, child_footer_notes = _compose_element(
+                slide, slide_id, child, design, reportifyr_ctx, project_root=project_root
             )
             child_shapes.append(child_shape)
             manifest_entries.extend(child_entries)
+            warnings.extend(child_warnings)
+            footer_notes.extend(child_footer_notes)
         shape = slide.shapes.add_group_shape(child_shapes)
         shape.name = element.id
         shape.rotation = element.rotation
@@ -472,7 +738,7 @@ def _compose_element(
             **source_manifest,
         }
     )
-    return shape, manifest_entries
+    return shape, manifest_entries, warnings, footer_notes
 
 
 def compose(
@@ -481,29 +747,36 @@ def compose(
     resolved_slides: list[ResolvedSlide],
     *,
     project_root: Path,
-) -> tuple[PptxPresentation, list[dict[str, Any]]]:
+) -> tuple[PptxPresentation, list[dict[str, Any]], list[str]]:
     prs = PptxPresentation()
     prs.slide_width = Emu(parse_length(design.slide.width, strict=True))
     prs.slide_height = Emu(parse_length(design.slide.height, strict=True))
     blank_layout = _find_blank_layout(prs)
 
+    reportifyr_ctx = _build_reportifyr_context(presentation, design, project_root=project_root)
+
     element_manifest: list[dict[str, Any]] = []
+    warnings: list[str] = []
 
     for resolved_slide in resolved_slides:
         slide = prs.slides.add_slide(blank_layout)
         slide.background.fill.solid()
         slide.background.fill.fore_color.rgb = _hex_to_rgbcolor(design.slide.background)
 
-        if resolved_slide.notes:
-            slide.notes_slide.notes_text_frame.text = resolved_slide.notes
+        notes_parts = [resolved_slide.notes] if resolved_slide.notes else []
 
         for element in resolved_slide.elements:
-            _shape, entries = _compose_element(
-                slide, resolved_slide.id, element, design, project_root=project_root
+            _shape, entries, elem_warnings, elem_footer_notes = _compose_element(
+                slide, resolved_slide.id, element, design, reportifyr_ctx, project_root=project_root
             )
             element_manifest.extend(entries)
+            warnings.extend(elem_warnings)
+            notes_parts.extend(elem_footer_notes)
 
-    return prs, element_manifest
+        if notes_parts:
+            slide.notes_slide.notes_text_frame.text = "\n\n".join(notes_parts)
+
+    return prs, element_manifest, warnings
 
 
 def compose_and_write(
@@ -517,7 +790,7 @@ def compose_and_write(
     layouts_path: Path,
 ) -> BuildResult:
     started_at = datetime.now(timezone.utc)
-    prs, element_manifest = compose(
+    prs, element_manifest, warnings = compose(
         presentation, design, resolved_slides, project_root=project_root
     )
 
@@ -544,7 +817,7 @@ def compose_and_write(
         "slide_count": len(resolved_slides),
         "elements": element_manifest,
         "output": {"path": str(output_path), "sha256": _sha256_file(output_path)},
-        "warnings": [],
+        "warnings": warnings,
     }
 
     manifest_path: Path | None = None
@@ -557,5 +830,5 @@ def compose_and_write(
         output_path=output_path,
         manifest_path=manifest_path,
         slide_count=len(resolved_slides),
-        warnings=[],
+        warnings=warnings,
     )
