@@ -225,7 +225,7 @@ Both passes may run within one `deckifyr build` command. They should remain sepa
 
 | File | Responsibility |
 |---|---|
-| `design.yaml` | Slide dimensions, typography, colors, spacing, defaults, table styles, shape styles, and named tokens |
+| `design.yaml` | Slide dimensions, typography, colors, spacing, defaults, table styles, shape styles, named tokens, and document furniture (background image, status marker, branding, page numbers — planned, see [issue #1](https://github.com/jprybylski/deckifyr/issues/1)) |
 | `layouts.yaml` | Reusable logical slide structures composed of named elements |
 | `presentation.yaml` | Slide order, content references, geometry, overrides, notes, and build settings |
 
@@ -411,6 +411,59 @@ Common element fields should include:
 
 Named elements are essential. Array indices should never be the primary override mechanism.
 
+### 7.8 Document furniture (planned, issue #1)
+
+> **Status:** Not implemented. Tracked in [issue #1](https://github.com/jprybylski/deckifyr/issues/1);
+> the section below records the intended design so `deckifyr.schema.design` can grow into it
+> without a breaking schema change. Do not build against this until the issue is closed.
+
+Organization decks are typically identified by more than color tokens and typography: a
+background image, a draft/final status marker, an organization or department label, and a
+slide number are all conventionally part of the *design*, not something authors should have to
+place by hand on every slide. These belong in `design.yaml` as a `furniture` block, sitting
+alongside `slide:` in the merge precedence defined in §7.2, and expanding into reserved
+elements the same way `layouts.yaml`'s `footnotes` zone does (§7.5) rather than as a new
+compositor concept:
+
+```yaml
+slide:
+  width: 13.333in
+  height: 7.5in
+  background: "#FFFFFF"
+  background_image: null      # optional path/URI; renders behind all slide content
+  safe_area: 0.35in
+
+furniture:
+  status:
+    enabled: false             # e.g. true for draft decks, flipped off at release
+    text: DRAFT
+    box: {x: 0.5in, y: 6.9in, width: 3in, height: 0.35in}
+    style: footnote
+  branding:
+    text: "{organization} / {department}"
+    box: {x: 0.5in, y: 7.05in, width: 6in, height: 0.3in}
+    style: footnote
+  page_number:
+    enabled: true
+    format: "{page} / {total}"
+    box: {x: 12.6in, y: 7.05in, width: 0.7in, height: 0.3in}
+    style: footnote
+```
+
+Design notes for when this is implemented:
+
+- Furniture fields merge like any other `design.yaml` token (§7.2): an organization base can
+  set `branding.text` and enable `status`, and a project override can disable `status` for a
+  final deliverable, without redefining the whole block.
+- Furniture elements should be individually overridable or removable per slide using the same
+  `remove` mechanism as inherited layout elements (§7.7), for the rare slide (e.g. a title or
+  section divider) that needs different placement or no furniture at all.
+- `background_image` composes with `slide.background`; the color remains the fallback/letterbox
+  behind a non-covering image.
+- This does not introduce a new element `type`; furniture expands into ordinary `text`/`image`
+  elements during Pass 1 (§6), so it reuses existing validation, styling, and PPTX composition
+  rather than a parallel code path.
+
 ## 8. Quarto integration
 
 Quarto should be treated as a content execution and fragment-rendering engine, not as the final geometry compositor.
@@ -433,6 +486,37 @@ Recommended render modes:
 | `svg` | Strong visual fidelity and scaling | Limited editability and support variability |
 | `png` | Most predictable visual rendering | Rasterized and not editable |
 | `auto` | Convenient defaults by content type | Must be recorded in the manifest to avoid surprises |
+
+### 8.1 Per-element content-type routing (planned, issue #3)
+
+> **Status:** Not implemented as a routing rule; the `type: quarto` element already shown in
+> §7.6 is the schema anchor this will build on. Tracked in [issue #3](https://github.com/jprybylski/deckifyr/issues/3).
+
+Any individual slide section — not just a whole slide — should be able to opt into
+Quarto execution by declaring `type: quarto` with a `source: *.qmd` on that element, exactly as
+the `interpretation` element in §7.6's example does. This is content-type-driven at the element
+level (§7.7's `type` field), so a single slide can mix a native `text` title, a `reportifyr`
+figure, and a `quarto` fragment side by side, each resolved by its own `ContentResolver` (§9.2).
+
+This is the intended route for content that is otherwise unreasonable to express directly in
+YAML, most notably:
+
+- Equations and other LaTeX/math-bearing fragments.
+- R-generated tables (including `flextable`, `gt`, and similar) rendered through Quarto rather
+  than reproduced natively — see §9.3, which currently treats `flextable` fidelity as out of
+  scope for version 1 without this path.
+
+**Complexity limit.** A `type: quarto` element is a single fragment bound to one element's `box`,
+not a document. Version 1 should reject (in strict validation, §13) any `.qmd` source that:
+
+- Declares its own slide/section breaks (`---` in Reveal/PowerPoint sense) or otherwise tries to
+  emit more than one Deckifyr element's worth of content.
+- Exceeds a configured execution timeout or output size, to bound worst-case build latency and
+  keep the sandboxing story in §15 tractable.
+
+The exact limit (line count, execution timeout, disallowed Quarto directives) is an open
+decision (§21) to resolve alongside the Phase 2 Quarto fragment work, not a version 1
+commitment yet.
 
 > **Warning:** Running Quarto may execute arbitrary project code. It must not run inside an unisolated multi-user web request process.
 
@@ -485,6 +569,12 @@ Version 1 should either:
 2. Define an R-side conversion hook that materializes an intermediate representation before invoking the Python compositor.
 
 Attempting to reproduce arbitrary `flextable` formatting directly in Python should not be a version 1 commitment.
+
+The per-element Quarto routing described in §8.1 (planned, [issue #3](https://github.com/jprybylski/deckifyr/issues/3))
+is the intended shape of option 2: rendering an R table through a `.qmd` fragment to `svg`/`png`
+(or, later, `native`) sidesteps reproducing `flextable` formatting in Python entirely, at the
+cost of that table's editability per the render-mode tradeoffs in §8's table. It does not remove
+the CSV/Parquet path in option 1 for tables that don't need R-side formatting.
 
 ## 10. PowerPoint composition
 
@@ -569,6 +659,10 @@ R functions should:
 
 ## 12. Optional web application
 
+> **Status:** Architecture decided (below), nothing built yet — this is Phase 3 (§18). Tracked in
+> [issue #2](https://github.com/jprybylski/deckifyr/issues/2), which also resolves the
+> previously-open "local-only first version" decision from §21 in favor of the scope below.
+
 The web application should be an optional extra, such as `deckifyr[web]`, backed by FastAPI or another lightweight ASGI framework.
 
 Recommended initial capabilities:
@@ -594,6 +688,62 @@ GET  /api/schemas/{schema_name}
 The first web version should preferably be local and single-user. A multi-user deployment requires authentication, authorization, isolated workspaces, resource limits, and sandboxed code execution.
 
 > **Warning:** FastAPI background tasks are not a substitute for a durable or isolated rendering worker. Production builds should run in a queue-backed worker or isolated job container.
+
+### 12.1 Primary editor stack (planned, issue #2)
+
+The primary graphical editor is a dedicated browser frontend backed by the same Python core as
+the CLI and R package — not a Shiny application. A Pyro-based R package does not require Shiny
+to be the main UI, and implementing drag/resize/rotate/undo/redo/z-order/text-editing interaction
+in Shiny would still mean writing a custom JavaScript application underneath it, without gaining
+anything over a native browser frontend.
+
+```text
+React/TypeScript editor
+        |
+ normalized JSON/YAML model
+        |
+     FastAPI
+        |
+ Deckifyr Python core
+        |
+ PPTX + manifest + previews
+
+R package --Pyro--> same Deckifyr Python core
+```
+
+- **Frontend:** React + TypeScript.
+- **Canvas/scene graph:** React-Konva initially; evaluate Fabric.js if rich on-canvas text
+  editing turns out to dominate the interaction design. A short spike should compare both
+  against actual Deckifyr requirements (§18 open item) before locking the dependency.
+- **Backend:** FastAPI, per the endpoints above.
+- **Compiler:** the canonical Python engine (§5.1) — the web app is a third *consumer* of that
+  engine, not a third independent implementation of it. §5.1's "one engine, two facades"
+  invariant is unaffected: the web frontend has no presentation semantics of its own, only a
+  canvas-to-geometry mapping layer.
+- **Build execution:** an isolated subprocess or worker, not the API request process, per the
+  warning above and §20 warning 6.
+- **R entry point:** `deck_serve()` (§11.2) launches this Python service through the
+  Pyro-managed environment.
+- **Shiny's role:** optional and secondary — a lightweight R interface for selecting projects,
+  editing build parameters, starting builds, reviewing warnings, and downloading artifacts. It
+  should not own the graphical slide canvas.
+
+The normalized Deckifyr presentation model (§7) — not canvas-specific serialization — remains
+the durable source of truth. Every canvas interaction (drag, resize, rotate) must convert back
+into unit-aware Deckifyr geometry (§7.3) before it is persisted; no Konva/Fabric-specific state
+should leak into the schema.
+
+> **Warning:** Konva transforms commonly update `scaleX`/`scaleY` rather than canonical
+> width/height. On `transformend`, convert the result back into explicit slide geometry (§7.3)
+> and reset scale — otherwise round-tripping through the schema silently drifts from what the
+> canvas displays. Canvas pixels must be converted to slide units independently of zoom and
+> device pixel ratio for the same reason.
+
+Suggested initial scope for the editor spike, in order: render one normalized slide; select,
+drag, resize, rotate, and reorder text/image elements; zoom, snapping, undo, redo; text editing
+via a DOM overlay or the canvas library's own text system; round-trip to YAML with no
+canvas-specific leakage; validate through FastAPI using the same schema as the CLI; trigger a
+build and stream logs/status; launch via `deck_serve()`.
 
 ## 13. Validation and diagnostics
 
@@ -756,21 +906,27 @@ This section is a project-planning summary, not legal advice.
 - Deep merging.
 - Logical layouts.
 - Images, native text, basic shapes, notes, and footnotes.
+- Document furniture — background image, status marker, branding, page numbers (§7.8,
+  [issue #1](https://github.com/jprybylski/deckifyr/issues/1)).
 - Strict validation and manifest generation.
 - Reference PPTX support.
 
 ### Phase 2: content integrations
 
-- Quarto fragments.
+- Quarto fragments, routed per element by content-type with a complexity limit (§8.1,
+  [issue #3](https://github.com/jprybylski/deckifyr/issues/3)).
 - Reportifyr multi-figure references.
-- CSV/Parquet native tables.
+- CSV/Parquet native tables; R-table-via-Quarto as the `flextable` conversion path (§9.3,
+  issue #3).
 - Render-mode policies.
 - Caching and incremental rebuilds.
 
 ### Phase 3: preview and authoring
 
 - Slide preview renderer.
-- Local web application.
+- Local web application: React/TypeScript + FastAPI editor, per the architecture in §12.1
+  ([issue #2](https://github.com/jprybylski/deckifyr/issues/2)), including the React-Konva vs.
+  Fabric.js canvas spike.
 - YAML editor with schema completion.
 - Build logs and artifact downloads.
 
@@ -824,8 +980,17 @@ The following choices should be resolved during Phase 0 or early Phase 1:
 - Define the required Reportifyr metadata contract and compatibility fixtures.
 - Decide whether footnotes are explicit slide elements, automatically reserved zones, or both.
 - Decide whether schema files permit reusable variables and expressions beyond simple token references.
-- Decide whether the first web application is strictly local-only.
+- ~~Decide whether the first web application is strictly local-only.~~ Resolved by
+  [issue #2](https://github.com/jprybylski/deckifyr/issues/2): local/single-user first, React/TypeScript + FastAPI (§12.1).
 - Decide whether GPLv3 or AGPLv3 best reflects the intended hosted-service policy.
+- Define the exact `furniture` schema fields and per-slide override/removal semantics for
+  background image, status marker, branding, and page numbers (§7.8,
+  [issue #1](https://github.com/jprybylski/deckifyr/issues/1)).
+- Choose React-Konva or Fabric.js for the primary editor canvas, via the spike in §12.1
+  ([issue #2](https://github.com/jprybylski/deckifyr/issues/2)).
+- Define the precise complexity limit for a per-element `type: quarto` fragment — line/output
+  size, execution timeout, disallowed directives (§8.1,
+  [issue #3](https://github.com/jprybylski/deckifyr/issues/3)).
 
 ## 22. Recommendation
 
