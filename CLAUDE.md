@@ -60,6 +60,8 @@ checking `inst/python/deckifyr/cli.py` first.
 | `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a three-slide deck using a real `reportifyr`-produced figure copied from quartifyr's `examples/demo-report`, a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates and why it doesn't use `{rpfy}:` yet. | YAML |
 | `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes, plan expansion, PPTX composition -- plus `test_demo_deck.py`, an end-to-end build of `examples/demo-deck/`. | Python |
 | `tests/testthat/` | R tests, including `test-wiring.R`, the only test that exercises the real R -> pyro -> Python round trip end-to-end (not just function signatures). Skips cleanly without `uv`/`pyro`. | R |
+| `.github/workflows/ci.yml` | `python-tests` (pytest matrix) + `full-pipeline` (the real R -> pyro -> Python integration proof, `tests/testthat/` run directly against the checkout). | YAML |
+| `.github/workflows/R-CMD-check.yaml`, `test-coverage.yaml` | Standard, largely unmodified r-lib templates (`check-r-package`, `test-coverage`), modeled on quartifyr's own versions of the same two files -- package structure/docs/coverage only; `tests/testthat/`'s pyro-dependent tests skip cleanly under both by design (see CLAUDE.md's architecture notes). | YAML |
 
 ## Commands
 
@@ -82,9 +84,10 @@ deck_validate("inst/examples/minimal-deck/presentation.yaml")
 ```
 
 `NAMESPACE` and `man/*.Rd` are roxygen2-generated (`Rscript -e
-'roxygen2::roxygenise()'`) -- see `CONTRIBUTING.md`. CI's `r-check` job
-runs a real `R CMD check` (`r-lib/actions/check-r-package`), which fails
-if either is stale relative to `R/*.R`'s `#'` doc comments.
+'roxygen2::roxygenise()'`) -- see `CONTRIBUTING.md`. CI's
+`R-CMD-check.yaml` workflow runs a real `R CMD check`
+(`r-lib/actions/check-r-package`), which fails if either is stale
+relative to `R/*.R`'s `#'` doc comments.
 
 ## Architecture notes that span files
 
@@ -182,9 +185,9 @@ version check per model.
 took three attempts against real CI/clean-sandbox failures -- two
 plausible-looking fixes verifiably do not work.** quartifyr's CI adds
 that repo via the `RENV_CONFIG_REPOS_OVERRIDE` env var, but that's
-renv-specific; this repo's `r-check` job resolves deps via `pak`
-(`r-lib/actions/setup-r-dependencies`), which never reads it -- first
-attempt, failed on the first real push. DESCRIPTION's
+renv-specific; this repo's `full-pipeline` job (`ci.yml`) resolves deps
+via `pak` (`r-lib/actions/setup-r-dependencies`), which never reads it
+-- first attempt, failed on the first real push. DESCRIPTION's
 `Additional_repositories:` field looked like the fix next (it's the
 standard mechanism CRAN policy and `remotes::install_deps()` use for
 exactly this), but `pak`'s `deps::.` local solve doesn't consult it
@@ -202,6 +205,19 @@ confirmed against a clean-lib sandbox before it went into CI. `pyro` is
 deliberately *not* listed as an `any::pyro` extra package in `ci.yml`;
 it only needs to be resolvable via `deps::.` (DESCRIPTION's `Imports:`),
 same as any other real dependency.
+
+`R-CMD-check.yaml`/`test-coverage.yaml` (the standard r-lib workflows,
+modeled on quartifyr's own versions of the same two files) use a
+*different* mechanism for the same problem: an explicit step that reads
+DESCRIPTION's `Additional_repositories` field and appends an
+`options(repos=)` line to `~/.Rprofile` (the runner's home profile, not
+this repo's root one). This isn't redundant with the root `.Rprofile`
+above by mistake -- quartifyr's own two standard workflows carry the
+identical step despite that repo also having a root `.Rprofile`,
+so don't assume the repo-root file alone is sufficient for every
+job/OS combination `check-r-package`'s composite action steps run
+under; keep both mechanisms in sync with `Additional_repositories`
+rather than trying to consolidate them into one.
 
 **`deckifyr.renderers` and `deckifyr.web` are intentionally empty
 packages with only a docstring; `deckifyr.pptx` no longer is.** Each
@@ -238,28 +254,27 @@ hand a second time. If you're adding a new element type, its
 belong in `deckifyr/plan.py`; only the actual `python-pptx` shape
 construction belongs in `deckifyr/pptx/compose.py`.
 
-**`tests/testthat/test-wiring.R`'s integration tests silently skip
-under a real `R CMD check`/`covr::package_coverage()` run unless
-`DECKIFYR_DEV_VENV_ROOT` is set -- confirmed empirically, not just
-inferred.** `pyro::get_venv_uv_paths()` looks for `.venv/` at
-`getOption("venv_dir")`, falling back to `here::here()` when unset.
-`test_path("..", "..")` (what the test file used to rely on alone) and
-`here::here()` both resolve relative to *where the test file currently
-lives* -- fine when running `devtools::test()`/`testthat::test_dir()`
-directly against this checkout, but `R CMD check` and `covr` both first
-install the package into a *fresh, separate copy* and run
-`tests/testthat.R` against that copy instead. Neither mechanism can
-therefore ever find this checkout's `.venv/` (correctly excluded from
-the package by `.Rbuildignore`) by relative path alone -- there is no
-bug to fix in pyro or here::here() here, this is those tools' isolation
-working as intended. The fix, in `test-wiring.R`: read
-`Sys.getenv("DECKIFYR_DEV_VENV_ROOT")` (falling back to the old
-`test_path("..", "..")` when unset, for local `devtools::test()` runs)
-and pass it to `options(venv_dir = ...)` before any `deck_*()` call.
-`ci.yml`'s `r-check`/`r-coverage` jobs set it to `${{ github.workspace
-}}`. Without this, a real `R CMD check` reports the whole file skipped,
-and `covr::package_coverage()` reports a flat 0% for every `R/*.R`
-file -- both confirmed locally before this fix existed.
+**Three separate CI workflows cover R, on purpose, mirroring quartifyr's
+own split (see its CLAUDE.md).** `.github/workflows/ci.yml`'s
+`full-pipeline` job is the real R -> pyro -> Python integration proof:
+it runs directly against this checkout (after `uv sync --extra dev`
+provisions `.venv/`), so `tests/testthat/test-wiring.R`'s pyro-dependent
+tests actually execute. `.github/workflows/R-CMD-check.yaml` and
+`test-coverage.yaml` are the standard, largely unmodified r-lib
+templates (`r-lib/actions/check-r-package`, `r-lib/actions/
+test-coverage`) -- they validate package structure/documentation/
+NAMESPACE and produce coverage numbers, but both install the package
+into a *fresh, separate copy* and run `tests/testthat.R` against
+that copy, which has no `.venv/` (correctly excluded from the package
+by `.Rbuildignore`). `test-wiring.R`'s pyro-dependent tests therefore
+skip cleanly under both -- confirmed locally, and this is expected
+behavior, not a gap to engineer around with an env var pointing them
+back at this checkout. Don't add one; that was tried and reverted (see
+git history around the `R-CMD-check.yaml`/`test-coverage.yaml`
+introduction) specifically because `full-pipeline` already covers real
+integration, and a venv-forcing hack only complicates the standard
+workflows for no real benefit -- coverage numbers being lower because
+of this is honest, not a problem to hide.
 
 ## Testing strategy
 

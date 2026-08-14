@@ -1,0 +1,81 @@
+# Standard R CMD check, from https://github.com/r-lib/actions/tree/v2/examples
+# (see ../../quartifyr's own R-CMD-check.yaml -- the sibling project this was
+# modeled on, same pyro dependency and same a2-ai.r-universe.dev repo). This
+# checks the package itself (structure, documentation, NAMESPACE, tests/
+# testthat) -- it does NOT replace ci.yml's full-pipeline job, which is what
+# actually proves deck_build() produces a real .pptx via the R -> pyro ->
+# Python bridge end to end; see this repo's CLAUDE.md. tests/testthat/
+# test-wiring.R's pyro-dependent tests skip cleanly here (no .venv/ --
+# correctly excluded from the package by .Rbuildignore, and this job makes
+# no attempt to provision one) rather than actually running; that's expected
+# and by design, not a gap this workflow needs to work around.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+name: R-CMD-check.yaml
+
+permissions: read-all
+
+jobs:
+  R-CMD-check:
+    runs-on: ${{ matrix.config.os }}
+
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macos-latest,   r: 'release'}
+          - {os: windows-latest, r: 'release'}
+          - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
+          - {os: ubuntu-latest,   r: 'release'}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          http-user-agent: ${{ matrix.config.http-user-agent }}
+          use-public-rspm: true
+
+      # Runtime/build libraries pyro's own transitive dependencies (fs,
+      # gert) need against Ubuntu's binary R packages -- same list
+      # quartifyr's R-CMD-check.yaml/test-coverage.yaml use for the same
+      # dependency.
+      - name: Install R package system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libuv1-dev libgit2-dev libcurl4-openssl-dev libssl-dev libxml2-dev
+
+      - name: Add Additional_repositories from DESCRIPTION (pyro via a2-ai.r-universe.dev)
+        run: |
+          raw <- read.dcf("DESCRIPTION", fields = "Additional_repositories")[1, 1]
+          if (!is.na(raw) && nzchar(raw)) {
+            repos <- trimws(strsplit(raw, ",")[[1]])
+            cat(sprintf("options(repos = c(getOption('repos'), %s))\n", deparse(repos)),
+                file = path.expand("~/.Rprofile"), append = TRUE)
+          }
+        shell: Rscript {0}
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          upload-snapshots: true
+          build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+          args: 'c("--no-manual", "--as-cran")'

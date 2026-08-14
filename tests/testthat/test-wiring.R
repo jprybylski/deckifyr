@@ -6,39 +6,17 @@
 
 skip_if_not_installed("pyro")
 
-# `test_path("..", "..")` only resolves to the real repo checkout when
-# these tests run directly against the source tree (devtools::test(),
-# testthat::test_dir()). Under a real R CMD check or covr::
-# package_coverage() run, this test file executes from a freshly staged
-# copy of the package instead -- test_path() then resolves *inside* that
-# staged copy, which has no .venv/ (correctly excluded by
-# .Rbuildignore) and no examples/ (also excluded, dev-only content).
-# pyro::get_venv_uv_paths() falls back to here::here() when
-# options("venv_dir") is unset, which hits the exact same problem
-# (here::here() finds the staged copy's own DESCRIPTION). Confirmed
-# empirically: without this override, a real `R CMD check`/covr run
-# always reports this whole file as skipped, and covr::package_coverage()
-# reports 0% coverage for every R/*.R file -- not because the R -> pyro
-# -> Python bridge doesn't work, but because there's no way for a process
-# running from the staged copy to find the dev repo's .venv by relative
-# path alone. CI sets DECKIFYR_DEV_VENV_ROOT to the real checkout path
-# (see ci.yml) specifically so this test still exercises the real
-# bridge under both check-r-package and test-coverage; local runs fall
-# back to test_path() as before, unchanged.
-repo_root <- Sys.getenv("DECKIFYR_DEV_VENV_ROOT", unset = test_path("..", ".."))
-options(venv_dir = repo_root)
-
+repo_root <- test_path("..", "..")
 minimal_deck <- file.path(repo_root, "inst", "examples", "minimal-deck")
 demo_deck <- file.path(repo_root, "examples", "demo-deck")
 
 # pyro::get_venv_uv_paths() looks for an already-provisioned .venv/ at
-# `options("venv_dir")` (set above) -- it does not create one itself,
-# and it errors (not a skip-able condition on its own) if none exists.
-# `uv sync --extra dev` (see CONTRIBUTING.md/ci.yml) provisions it; this
-# is the same .venv/ the tests/python suite uses, not a separate
-# pyro-specific one, confirmed locally: pyro is satisfied by a plain
-# `uv run`-created venv with no `pyro::initialize_python()` call ever
-# having run.
+# the project root -- it does not create one itself, and it errors
+# (not a skip-able condition on its own) if none exists. `uv sync
+# --extra dev` (see CONTRIBUTING.md/ci.yml) provisions it; this is the
+# same .venv/ the tests/python suite uses, not a separate pyro-specific
+# one, confirmed locally: pyro is satisfied by a plain `uv run`-created
+# venv with no `pyro::initialize_python()` call ever having run.
 skip_if_not(
   dir.exists(file.path(repo_root, ".venv")),
   "repo .venv/ not provisioned (run `uv sync --extra dev` first)"

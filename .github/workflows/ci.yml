@@ -26,8 +26,15 @@ jobs:
       - name: Run tests/python pytest suite
         run: uv run --extra dev pytest tests/python -v
 
-  r-check:
-    name: R CMD check
+  # The real R -> pyro -> Python integration proof: runs directly against
+  # this checkout (not a staged/reinstalled copy, unlike R-CMD-check.yaml/
+  # test-coverage.yaml) so tests/testthat/test-wiring.R's pyro-dependent
+  # tests actually execute instead of skipping. Mirrors quartifyr's own
+  # ci.yml full-pipeline job / CLAUDE.md: R-CMD-check.yaml is package
+  # structure/documentation/NAMESPACE validation only, it does not replace
+  # this job.
+  full-pipeline:
+    name: R testthat (full R -> pyro -> Python pipeline)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,14 +59,11 @@ jobs:
       #     mechanism for tools like remotes::install_deps(), but pak's
       #     `deps::.` local solve does not consult it.
       # See CLAUDE.md's architecture notes before changing this.
-      # check-r-package's own README says it "assumes rcmdcheck has
-      # already been installed" -- that's what any::rcmdcheck is for.
-      # pyro/jsonlite (Imports) and testthat/covr (Suggests) come from
-      # DESCRIPTION itself via needs: check, no extra-packages needed
-      # for them.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          extra-packages: |
+            any::devtools
+            any::testthat
           needs: check
 
       - uses: astral-sh/setup-uv@v5
@@ -77,98 +81,10 @@ jobs:
       - name: Provision the Python venv pyro will look for
         run: uv sync --extra dev
 
-      - uses: r-lib/actions/check-r-package@v2
-        env:
-          # R CMD check runs tests/testthat.R against a freshly staged
-          # copy of the package, not this checkout -- so
-          # pyro::get_venv_uv_paths()'s default here::here()-based
-          # lookup resolves to that staged copy (which has no .venv/,
-          # correctly excluded by .Rbuildignore) instead of the real
-          # repo root. test-wiring.R reads this to point pyro at the
-          # .venv/ provisioned above instead; without it, every
-          # integration test in that file silently skips under a real
-          # R CMD check run (confirmed locally) rather than actually
-          # exercising the R -> pyro -> Python bridge. See that file's
-          # own comment for the full explanation.
-          DECKIFYR_DEV_VENV_ROOT: ${{ github.workspace }}
-        # Defaults (c("--no-manual", "--as-cran"), error-on "warning")
-        # are fine as-is: check-r-package itself sets
-        # _R_CHECK_CRAN_INCOMING_=false unless already set, so the
-        # "CRAN incoming feasibility" check -- which would otherwise
-        # permanently WARN for any package not actually submitted to
-        # CRAN (new-submission notice, non-CRAN pyro dependency, etc.)
-        # -- never runs. Confirmed locally: with that env var set the
-        # same way this action sets it, --as-cran passes with 1 NOTE
-        # (LICENSE not mentioned in DESCRIPTION, same harmless NOTE
-        # quartifyr's own License field + LICENSE file combination
-        # would get).
-
-  r-coverage:
-    name: R code coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: "release"
-
-      # Same a2-ai.r-universe.dev resolution as r-check above, via this
-      # repo's root .Rprofile -- see that job's comment.
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: any::covr, any::xml2
-          needs: coverage
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      # Same reasoning as r-check above: pyro::get_venv_uv_paths() needs
-      # an already-provisioned .venv/.
-      - name: Provision the Python venv pyro will look for
-        run: uv sync --extra dev
-
-      - name: Test coverage
-        env:
-          # covr::package_coverage() installs the package to a fresh
-          # location and runs tests/testthat.R against *that* copy, not
-          # this checkout -- the exact same problem r-check's own
-          # DECKIFYR_DEV_VENV_ROOT works around (see that job's
-          # comment and test-wiring.R's). Confirmed locally: without
-          # this, covr reports a flat 0% for every R/*.R file, not
-          # because the R -> pyro -> Python bridge doesn't work, but
-          # because the staged copy running the tests can't find this
-          # checkout's .venv/ by relative path alone.
-          DECKIFYR_DEV_VENV_ROOT: ${{ github.workspace }}
+      # tests/testthat/test-wiring.R invokes the real pyro/Python bridge
+      # and skip()s cleanly if uv/pyro/.venv aren't available -- this
+      # step exists so that path is actually exercised in CI rather than
+      # always skipped.
+      - name: Run testthat suite
         run: |
-          cov <- covr::package_coverage(
-            quiet = FALSE,
-            clean = FALSE,
-            install_path = file.path(normalizePath(Sys.getenv("RUNNER_TEMP"), winslash = "/"), "package")
-          )
-          print(cov)
-          covr::to_cobertura(cov)
-        shell: Rscript {0}
-
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        with:
-          files: ./cobertura.xml
-          plugins: noop
-          disable_search: true
-          token: ${{ secrets.CODECOV_TOKEN }}
-          # Codecov's own upstream default conditions this on
-          # `secrets.CODECOV_TOKEN` being set on push events, which
-          # isn't configured for this repo yet -- left as a soft
-          # failure (upload attempted, but a missing/invalid token
-          # won't redden this job) until a CODECOV_TOKEN secret is
-          # added at codecov.io, at which point this can switch to
-          # the stricter upstream default:
-          # `${{ github.event_name != 'pull_request' || secrets.CODECOV_TOKEN }}`.
-          fail_ci_if_error: false
-
-      - name: Show testthat output
-        if: always()
-        run: |
-          find "$RUNNER_TEMP/package" -name 'testthat.Rout*' -exec cat '{}' \; || true
-        shell: bash
+          Rscript -e 'devtools::load_all("."); testthat::test_dir("tests/testthat", stop_on_failure = TRUE)'

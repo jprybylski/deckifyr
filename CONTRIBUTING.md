@@ -30,28 +30,25 @@ doc comment or `@export` in `R/*.R`, regenerate both with:
 Rscript -e 'roxygen2::roxygenise()'
 ```
 
-and commit the result -- CI's `r-check` job (`R CMD check`) fails if
-they're out of date with `R/*.R`.
+and commit the result -- CI's `R-CMD-check.yaml` workflow (`R CMD
+check`) fails if they're out of date with `R/*.R`.
 
 ### Running a real `R CMD check`/coverage locally
 
 ```bash
 Rscript -e 'devtools::check()'
-DECKIFYR_DEV_VENV_ROOT="$(pwd)" Rscript -e 'covr::package_coverage()'
+Rscript -e 'covr::package_coverage()'
 ```
 
 Both install a fresh copy of the package into a temp location and run
 `tests/testthat.R` against *that* copy, not your checkout -- so
-`pyro::get_venv_uv_paths()`'s default `here::here()`-based lookup can't
-find this checkout's `.venv/` (deliberately excluded from the package by
-`.Rbuildignore`) by relative path alone. `DECKIFYR_DEV_VENV_ROOT`
-(read by `tests/testthat/test-wiring.R`) works around this -- without
-it, every integration test in that file silently skips (`R CMD check`)
-or `covr` reports a flat 0% for every `R/*.R` file, in both cases not
-because the bridge doesn't work but because the temp copy can't find
-`.venv/`. CI's `r-check`/`r-coverage` jobs set this to
-`${{ github.workspace }}`; set it to your own checkout's absolute path
-locally.
+`tests/testthat/test-wiring.R`'s pyro-dependent tests will report as
+skipped (`R CMD check`) or show as 0% coverage (`covr`) here even
+though they pass for real under `testthat::test_dir("tests/testthat")`
+above. That's expected, not a bug to chase: this repo deliberately
+doesn't engineer around it (see CLAUDE.md's architecture notes) --
+`ci.yml`'s `full-pipeline` job is the actual integration proof, run
+directly against the checkout instead.
 
 ## Before opening a PR
 
