@@ -23,11 +23,11 @@ from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_POINT, parse_length
 
 # Element types this slice's compositor can actually place on a slide.
-# Everything else in spec section 7.7's `type` enum (table, shape, group,
-# quarto, reportifyr) is later-phase work (deckifyr-specification.md
-# section 18) -- raising a clear error here keeps that boundary explicit
-# instead of silently dropping content (spec section 20 warning 7).
-SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image"}
+# Everything else in spec section 7.7's `type` enum (table, quarto,
+# reportifyr) is later-phase work (deckifyr-specification.md section 18)
+# -- raising a clear error here keeps that boundary explicit instead of
+# silently dropping content (spec section 20 warning 7).
+SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group"}
 
 
 @dataclass
@@ -43,6 +43,20 @@ class ResolvedTextStyle:
     bold: bool
     italic: bool
     color: str
+
+
+@dataclass
+class ResolvedShapeStyle:
+    """A `design.yaml` shape style with its `fill`/`line_color` tokens
+    already resolved to literal values, mirroring `ResolvedTextStyle`.
+    Any field left `None` here means "use `deckifyr.pptx.compose`'s own
+    default", not "no style" -- that distinction is only meaningful at
+    `design.yaml`'s `ShapeStyle` level.
+    """
+
+    fill: str | None
+    line_color: str | None
+    line_width_pt: float | None
 
 
 @dataclass
@@ -64,6 +78,11 @@ class ResolvedElement:
     render_mode: str
     alt_text: str | None
     required: bool
+    shape_kind: str | None = None
+    shape_style: ResolvedShapeStyle | None = None
+    # `group`-only: already-resolved children, sorted by paint order the
+    # same way `ResolvedSlide.elements` is.
+    children: list["ResolvedElement"] = field(default_factory=list)
 
 
 @dataclass
@@ -98,6 +117,33 @@ def _resolve_text_style(
     return ResolvedTextStyle(
         font=font, size_pt=size_pt, bold=style.bold, italic=style.italic, color=color
     )
+
+
+def _resolve_shape_style(
+    design: DesignDocument, style_name: str | None
+) -> ResolvedShapeStyle | None:
+    if style_name is None:
+        return None
+    style = design.shape_styles.get(style_name)
+    if style is None:
+        raise ContentValidationError(
+            f"unknown style {style_name!r}: not defined in design.yaml's "
+            "shape_styles"
+        )
+
+    fill = design.colors.get(style.fill, style.fill) if style.fill is not None else None
+    line_color = (
+        design.colors.get(style.line_color, style.line_color)
+        if style.line_color is not None
+        else None
+    )
+    line_width_pt = (
+        parse_length(style.line_width, strict=True) / EMU_PER_POINT
+        if style.line_width is not None
+        else None
+    )
+
+    return ResolvedShapeStyle(fill=fill, line_color=line_color, line_width_pt=line_width_pt)
 
 
 def _merge_element(layout_element: Element | None, override: Element | None) -> dict[str, Any]:
@@ -166,6 +212,150 @@ def _iter_slide_element_pairs(
         yield element.id, None, element
 
 
+def _has_content(element_type: str, merged: dict[str, Any]) -> bool:
+    """Whether a merged element carries enough to render, per type.
+
+    `shape` and `group` have no `value`/`source` of their own -- a shape's
+    content is its `shape_kind`, a group's is its `elements` -- so each
+    gets its own presence check; every other type falls back to the
+    original `value`/`source` rule.
+    """
+    if element_type == "group":
+        return bool(merged.get("elements"))
+    if element_type == "shape":
+        return merged.get("shape_kind") is not None
+    return merged.get("value") is not None or merged.get("source") is not None
+
+
+def _iter_child_entries(
+    children: Any, *, context: str
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield `(child_id, merged_child_dict)` for a `group` element's
+    already-merged `elements` value (dict-keyed or list-keyed, mirroring
+    `Slide.elements` -- spec section 7.6). Unlike `_iter_slide_element_pairs`,
+    there is no separate layout-zone/override merge here: a group's
+    children are whatever `_merge_element` already folded into the
+    group's own `elements` key, so each entry is used as-is.
+    """
+    if isinstance(children, dict):
+        yield from children.items()
+        return
+
+    seen: set[str] = set()
+    for position, child in enumerate(children or []):
+        child_id = child.get("id") if isinstance(child, dict) else None
+        if not child_id:
+            raise ContentValidationError(
+                f"{context}: child at position {position} in its element "
+                "list has no id (spec section 7.7 requires an id for "
+                "elements given as a list)"
+            )
+        if child_id in seen:
+            raise ContentValidationError(f"{context}: duplicate child id {child_id!r}")
+        seen.add(child_id)
+        yield child_id, child
+
+
+def _resolve_element(
+    slide_id: str,
+    element_id: str,
+    merged: dict[str, Any],
+    design: DesignDocument,
+    *,
+    strict: bool,
+    order: int,
+) -> ResolvedElement | None:
+    element_type = merged.get("type")
+    required = bool(merged.get("required", False))
+
+    if not _has_content(element_type, merged):
+        # Covers both an untouched layout zone (`slot`/`footnotes`,
+        # spec section 7.5's `content`/`footnotes` example) and any
+        # other element type left empty -- either way, an unfilled,
+        # non-required element is simply skipped rather than rendered
+        # as nothing (spec section 7.7's `required` field is exactly
+        # the opt-in for "this must not be empty"). Type validity is
+        # checked only once there's actually something to render, same
+        # as the original single-pass version of this check -- an empty
+        # zone of an unimplemented type is still just an empty zone.
+        if required:
+            raise ContentValidationError(
+                f"slide {slide_id!r}: required element {element_id!r} "
+                "has no content"
+            )
+        return None
+
+    if element_type is None:
+        raise ContentValidationError(
+            f"slide {slide_id!r}, element {element_id!r}: no element "
+            "type resolved for this element"
+        )
+    if element_type not in SUPPORTED_ELEMENT_TYPES:
+        raise ContentValidationError(
+            f"slide {slide_id!r}, element {element_id!r}: element type "
+            f"{element_type!r} is not implemented yet (see "
+            "deckifyr-specification.md section 18)"
+        )
+
+    box = merged.get("box")
+    if box is None:
+        raise ContentValidationError(
+            f"slide {slide_id!r}, element {element_id!r}: no box/"
+            "geometry resolved for this element"
+        )
+
+    style = (
+        _resolve_text_style(design, merged.get("style"))
+        if element_type in ("text", "markdown")
+        else None
+    )
+    shape_style = (
+        _resolve_shape_style(design, merged.get("style")) if element_type == "shape" else None
+    )
+
+    children: list[ResolvedElement] = []
+    if element_type == "group":
+        context = f"slide {slide_id!r}, group {element_id!r}"
+        for child_order, (child_id, child_merged) in enumerate(
+            _iter_child_entries(merged.get("elements"), context=context)
+        ):
+            resolved_child = _resolve_element(
+                slide_id, child_id, child_merged, design, strict=strict, order=child_order
+            )
+            if resolved_child is not None:
+                children.append(resolved_child)
+        children.sort(key=lambda e: (e.z_index, e.order))
+
+    rotation = merged.get("rotation")
+    z_index = merged.get("z_index")
+    fit = merged.get("fit")
+    overflow = merged.get("overflow")
+    render_mode = merged.get("render_mode")
+
+    return ResolvedElement(
+        id=element_id,
+        type=element_type,
+        value=merged.get("value"),
+        source=merged.get("source"),
+        x=parse_length(box["x"], strict=strict),
+        y=parse_length(box["y"], strict=strict),
+        width=parse_length(box["width"], strict=strict),
+        height=parse_length(box["height"], strict=strict),
+        rotation=rotation if rotation is not None else design.defaults.rotation,
+        z_index=z_index if z_index is not None else 0,
+        order=order,
+        style=style,
+        fit=fit if fit is not None else design.defaults.image_fit,
+        overflow=overflow if overflow is not None else design.defaults.overflow,
+        render_mode=render_mode if render_mode is not None else "native",
+        alt_text=merged.get("alt_text"),
+        required=required,
+        shape_kind=merged.get("shape_kind"),
+        shape_style=shape_style,
+        children=children,
+    )
+
+
 def expand_slide(
     slide: Slide,
     layout: Layout | None,
@@ -182,74 +372,11 @@ def expand_slide(
             continue
 
         merged = _merge_element(layout_element, override)
-        element_type = merged.get("type")
-        value = merged.get("value")
-        source = merged.get("source")
-        required = bool(merged.get("required", False))
-        has_content = value is not None or source is not None
-
-        if not has_content:
-            # Covers both an untouched layout zone (`slot`/`footnotes`,
-            # spec section 7.5's `content`/`footnotes` example) and any
-            # other element type left empty -- either way, an unfilled,
-            # non-required element is simply skipped rather than rendered
-            # as nothing (spec section 7.7's `required` field is exactly
-            # the opt-in for "this must not be empty").
-            if required:
-                raise ContentValidationError(
-                    f"slide {slide.id!r}: required element {element_id!r} "
-                    "has no value/source"
-                )
-            continue
-
-        if element_type is None:
-            raise ContentValidationError(
-                f"slide {slide.id!r}, element {element_id!r}: no element "
-                "type resolved for this element"
-            )
-        if element_type not in SUPPORTED_ELEMENT_TYPES:
-            raise ContentValidationError(
-                f"slide {slide.id!r}, element {element_id!r}: element type "
-                f"{element_type!r} is not implemented yet (see "
-                "deckifyr-specification.md section 18)"
-            )
-
-        box = merged.get("box")
-        if box is None:
-            raise ContentValidationError(
-                f"slide {slide.id!r}, element {element_id!r}: no box/"
-                "geometry resolved for this element"
-            )
-
-        style = _resolve_text_style(design, merged.get("style"))
-
-        rotation = merged.get("rotation")
-        z_index = merged.get("z_index")
-        fit = merged.get("fit")
-        overflow = merged.get("overflow")
-        render_mode = merged.get("render_mode")
-
-        resolved.append(
-            ResolvedElement(
-                id=element_id,
-                type=element_type,
-                value=value,
-                source=source,
-                x=parse_length(box["x"], strict=strict),
-                y=parse_length(box["y"], strict=strict),
-                width=parse_length(box["width"], strict=strict),
-                height=parse_length(box["height"], strict=strict),
-                rotation=rotation if rotation is not None else design.defaults.rotation,
-                z_index=z_index if z_index is not None else 0,
-                order=order,
-                style=style,
-                fit=fit if fit is not None else design.defaults.image_fit,
-                overflow=overflow if overflow is not None else design.defaults.overflow,
-                render_mode=render_mode if render_mode is not None else "native",
-                alt_text=merged.get("alt_text"),
-                required=required,
-            )
+        resolved_element = _resolve_element(
+            slide.id, element_id, merged, design, strict=strict, order=order
         )
+        if resolved_element is not None:
+            resolved.append(resolved_element)
 
     resolved.sort(key=lambda e: (e.z_index, e.order))
     return ResolvedSlide(id=slide.id, elements=resolved)

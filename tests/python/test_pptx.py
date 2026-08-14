@@ -3,6 +3,7 @@ import json
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx.compose import _compute_image_placement, compose_and_write
@@ -117,3 +118,93 @@ def test_image_element_builds_and_manifest_records_its_source(project):
 def test_missing_alt_text_raises(project):
     with pytest.raises(ContentValidationError):
         _build(project, _presentation(alt_text=None), _design())
+
+
+def _shape_group_presentation() -> PresentationDocument:
+    return PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="card",
+                        type="group",
+                        box=Box(x="0in", y="0in", width="3in", height="2in"),
+                        elements=[
+                            Element(
+                                id="backdrop",
+                                type="shape",
+                                shape_kind="rounded_rectangle",
+                                box=Box(x="0in", y="0in", width="3in", height="2in"),
+                            ),
+                            Element(
+                                id="label",
+                                type="text",
+                                value="hello",
+                                box=Box(x="0.2in", y="0.2in", width="2.6in", height="0.5in"),
+                            ),
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_group_element_builds_a_native_group_with_named_children(project):
+    result = _build(project, _shape_group_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (group,) = list(slide.shapes)
+    assert group.shape_type is not None
+    assert group.name == "card"
+    child_names = [shape.name for shape in group.shapes]
+    assert child_names == ["backdrop", "label"]
+
+    manifest = json.loads(result.manifest_path.read_text())
+    element_ids = [entry["element_id"] for entry in manifest["elements"]]
+    assert element_ids == ["backdrop", "label", "card"]
+    editabilities = {entry["element_id"]: entry["editability"] for entry in manifest["elements"]}
+    assert editabilities == {
+        "backdrop": "fully_editable",
+        "label": "fully_editable",
+        "card": "fully_editable",
+    }
+
+
+def test_shape_without_style_gets_default_outline(project):
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="divider",
+                        type="shape",
+                        shape_kind="rectangle",
+                        box=Box(x="0in", y="0in", width="3in", height="0.05in"),
+                    )
+                ],
+            )
+        ],
+    )
+    result = _build(project, presentation, _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.name == "divider"
+    assert shape.line.color.rgb == RGBColor.from_string("000000")

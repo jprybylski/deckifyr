@@ -27,6 +27,7 @@ from typing import Any
 from PIL import Image
 from pptx import Presentation as PptxPresentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
 
@@ -55,7 +56,36 @@ _EDITABILITY = {
     "text": "fully_editable",
     "markdown": "fully_editable",
     "image": "rendered_graphic",
+    "shape": "fully_editable",
+    "group": "fully_editable",
 }
+
+# `deckifyr.schema.layouts.ShapeKind`'s values, mapped to their
+# `MSO_SHAPE` member. Keep in sync with that Literal -- schema validation
+# already guarantees every `shape_kind` reaching this module is one of
+# these keys, so a lookup miss here is a bug, not a user error.
+_SHAPE_KIND_MAP = {
+    "rectangle": MSO_SHAPE.RECTANGLE,
+    "rounded_rectangle": MSO_SHAPE.ROUNDED_RECTANGLE,
+    "oval": MSO_SHAPE.OVAL,
+    "triangle": MSO_SHAPE.ISOSCELES_TRIANGLE,
+    "diamond": MSO_SHAPE.DIAMOND,
+    "pentagon": MSO_SHAPE.PENTAGON,
+    "hexagon": MSO_SHAPE.HEXAGON,
+    "chevron": MSO_SHAPE.CHEVRON,
+    "right_arrow": MSO_SHAPE.RIGHT_ARROW,
+    "left_arrow": MSO_SHAPE.LEFT_ARROW,
+    "up_arrow": MSO_SHAPE.UP_ARROW,
+    "down_arrow": MSO_SHAPE.DOWN_ARROW,
+    "star_5": MSO_SHAPE.STAR_5_POINT,
+}
+
+# Shape defaults (spec section 21-style pragmatic choice, not spec text):
+# a style-less shape still renders as a visible, thin black outline rather
+# than an invisible one, since an all-default shape with no fill and no
+# line would otherwise place nothing a viewer can actually see.
+_DEFAULT_LINE_COLOR = "#000000"
+_DEFAULT_LINE_WIDTH_PT = 1.0
 
 
 @dataclass
@@ -183,6 +213,43 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
 
 
 # ---------------------------------------------------------------------------
+# Shapes
+# ---------------------------------------------------------------------------
+
+
+def _add_autoshape(slide: Any, element: ResolvedElement) -> Any:
+    mso_shape = _SHAPE_KIND_MAP[element.shape_kind]
+    shape = slide.shapes.add_shape(
+        mso_shape, Emu(element.x), Emu(element.y), Emu(element.width), Emu(element.height)
+    )
+    shape.name = element.id
+    shape.rotation = element.rotation
+
+    style = element.shape_style
+    fill_color = style.fill if style else None
+    line_color = style.line_color if (style and style.line_color) else _DEFAULT_LINE_COLOR
+    line_width_pt = (
+        style.line_width_pt if (style and style.line_width_pt) else _DEFAULT_LINE_WIDTH_PT
+    )
+
+    if fill_color:
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = _hex_to_rgbcolor(fill_color)
+    else:
+        shape.fill.background()
+
+    if line_color:
+        shape.line.color.rgb = _hex_to_rgbcolor(line_color)
+        shape.line.width = Pt(line_width_pt)
+    else:
+        shape.line.fill.background()
+
+    if element.alt_text:
+        _set_alt_text(shape, element.alt_text)
+    return shape
+
+
+# ---------------------------------------------------------------------------
 # Images
 # ---------------------------------------------------------------------------
 
@@ -265,6 +332,64 @@ def _add_image_shape(
 # ---------------------------------------------------------------------------
 
 
+def _compose_element(
+    slide: Any,
+    slide_id: str,
+    element: ResolvedElement,
+    design: DesignDocument,
+    *,
+    project_root: Path,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Place one resolved element on `slide` and return `(shape,
+    manifest_entries)`. Recursive for `group`: each child is composed the
+    same way, directly on `slide` (group children share the slide's own
+    absolute coordinate space -- spec section 7.3 -- rather than a
+    group-relative one), then `add_group_shape` reparents the already-
+    placed child shapes under a new group shape, per python-pptx's own
+    documented pattern for building a group from existing shapes.
+    """
+    source_manifest: dict[str, str] = {}
+    manifest_entries: list[dict[str, Any]] = []
+
+    if element.type in ("text", "markdown"):
+        shape = _add_text_shape(slide, element, design)
+    elif element.type == "image":
+        shape, source_manifest = _add_image_shape(slide, element, project_root=project_root)
+    elif element.type == "shape":
+        shape = _add_autoshape(slide, element)
+    elif element.type == "group":
+        child_shapes = []
+        for child in element.children:
+            child_shape, child_entries = _compose_element(
+                slide, slide_id, child, design, project_root=project_root
+            )
+            child_shapes.append(child_shape)
+            manifest_entries.extend(child_entries)
+        shape = slide.shapes.add_group_shape(child_shapes)
+        shape.name = element.id
+        shape.rotation = element.rotation
+        if element.alt_text:
+            _set_alt_text(shape, element.alt_text)
+    else:  # pragma: no cover -- deckifyr.plan already rejects this
+        raise ContentValidationError(
+            f"element {element.id!r}: element type {element.type!r} "
+            "is not implemented yet"
+        )
+
+    manifest_entries.append(
+        {
+            "slide_id": slide_id,
+            "element_id": element.id,
+            "type": element.type,
+            "render_mode": element.render_mode,
+            "editability": _EDITABILITY[element.type],
+            "overflow_policy": element.overflow,
+            **source_manifest,
+        }
+    )
+    return shape, manifest_entries
+
+
 def compose(
     presentation: PresentationDocument,
     design: DesignDocument,
@@ -285,30 +410,10 @@ def compose(
         slide.background.fill.fore_color.rgb = _hex_to_rgbcolor(design.slide.background)
 
         for element in resolved_slide.elements:
-            source_manifest: dict[str, str] = {}
-            if element.type in ("text", "markdown"):
-                _add_text_shape(slide, element, design)
-            elif element.type == "image":
-                _shape, source_manifest = _add_image_shape(
-                    slide, element, project_root=project_root
-                )
-            else:  # pragma: no cover -- deckifyr.plan already rejects this
-                raise ContentValidationError(
-                    f"element {element.id!r}: element type {element.type!r} "
-                    "is not implemented yet"
-                )
-
-            element_manifest.append(
-                {
-                    "slide_id": resolved_slide.id,
-                    "element_id": element.id,
-                    "type": element.type,
-                    "render_mode": element.render_mode,
-                    "editability": _EDITABILITY[element.type],
-                    "overflow_policy": element.overflow,
-                    **source_manifest,
-                }
+            _shape, entries = _compose_element(
+                slide, resolved_slide.id, element, design, project_root=project_root
             )
+            element_manifest.extend(entries)
 
     return prs, element_manifest
 

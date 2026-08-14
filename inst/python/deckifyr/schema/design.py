@@ -43,6 +43,22 @@ class TextStyle(BaseModel):
     color: str
 
 
+class ShapeStyle(BaseModel):
+    """A named fill/line style for `shape` elements, alongside `text_styles`
+    (spec section 7.4's planned "shape styles" -- see the `design.yaml`
+    table in spec section 7.2). Every field is optional and falls back to
+    `deckifyr.pptx.compose`'s own default (a thin black outline, no fill)
+    when unset, the same "token or bare literal" convention `TextStyle`'s
+    `font`/`color` fields use.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fill: str | None = None
+    line_color: str | None = None
+    line_width: str | None = None
+
+
 class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +78,7 @@ class DesignDocument(BaseModel):
     # names beyond the example's text/muted/primary/accent.
     colors: dict[str, str] = {}
     text_styles: dict[str, TextStyle] = {}
+    shape_styles: dict[str, ShapeStyle] = {}
     defaults: Defaults = Defaults()
 
     _check_version = field_validator("deckifyr")(check_schema_version)

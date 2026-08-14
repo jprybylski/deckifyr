@@ -31,6 +31,26 @@ FitMode = Literal["contain", "cover", "stretch", "none"]
 OverflowMode = Literal["error", "shrink", "clip", "continue"]
 RenderMode = Literal["native", "svg", "png", "auto"]
 
+# The autoshape kinds a `shape` element may draw (spec section 7.7's `type`
+# enum). Deliberately a small, named subset of python-pptx's much larger
+# `MSO_SHAPE` enum -- `deckifyr.pptx.compose`'s `_SHAPE_KIND_MAP` maps each
+# of these to its `MSO_SHAPE` member and must be kept in sync with this list.
+ShapeKind = Literal[
+    "rectangle",
+    "rounded_rectangle",
+    "oval",
+    "triangle",
+    "diamond",
+    "pentagon",
+    "hexagon",
+    "chevron",
+    "right_arrow",
+    "left_arrow",
+    "up_arrow",
+    "down_arrow",
+    "star_5",
+]
+
 
 class Box(BaseModel):
     """Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).
@@ -74,6 +94,13 @@ class Element(BaseModel):
     alt_text: str | None = None
     remove: bool = False
     required: bool = False
+    # `shape`-only: which autoshape to draw (spec section 7.7).
+    shape_kind: ShapeKind | None = None
+    # `group`-only: child elements, keyed by id or listed with their own
+    # `id` -- the same dict-vs-list choice `presentation.yaml`'s
+    # `Slide.elements` offers (spec section 7.6), recursively, so a group
+    # may itself contain a group.
+    elements: dict[str, Element] | list[Element] | None = None
 
 
 class Layout(BaseModel):

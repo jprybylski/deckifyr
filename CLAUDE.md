@@ -30,11 +30,11 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image` elements only |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image` elements; `table`/`shape`/`group`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group` elements; `table`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver` and `InlineResolver` are real; reportifyr/Quarto/table resolvers are not implemented -- Phase 2 |
 | `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
@@ -42,13 +42,19 @@ learned while building the scaffold.
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
 the same way, then plans and composes a real `.pptx` + manifest for
-projects that only use `text`/`markdown`/`image` elements -- a project
-using `table`/`shape`/`group`/`quarto`/`reportifyr` elements still fails
-with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
-than silently dropping that content. Document furniture (§7.8) isn't
-composed at all yet (still gated behind issue #1). Don't assume any
-command beyond `init`/`validate`/`build`/`schema` does real work without
-checking `inst/python/deckifyr/cli.py` first.
+projects that use `text`/`markdown`/`image`/`shape`/`group` elements --
+a project using `table`/`quarto`/`reportifyr` elements still fails with
+a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather than
+silently dropping that content. `shape`'s autoshape kinds are a small
+named subset of `MSO_SHAPE` (`deckifyr.schema.layouts.ShapeKind`), not
+the full enum; `group` nests any supported element (including another
+group) and composes via `python-pptx`'s `add_group_shape`, reparenting
+already-placed child shapes rather than using a group-relative
+coordinate system -- a group's children still use the same slide-
+absolute geometry as everything else (spec §7.3). Document furniture
+(§7.8) isn't composed at all yet (still gated behind issue #1). Don't
+assume any command beyond `init`/`validate`/`build`/`schema` does real
+work without checking `inst/python/deckifyr/cli.py` first.
 
 ## Components
 
