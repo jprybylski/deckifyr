@@ -170,21 +170,31 @@ document models specifically so the supported-version set only needs
 updating in one place as the schema evolves -- don't duplicate a
 version check per model.
 
-**`pyro` (and any other r-universe-only dependency) must be declared via
-DESCRIPTION's `Additional_repositories:` field, not a CI env var --
-confirmed the hard way after the first CI run failed.** quartifyr's CI
-adds `a2-ai.r-universe.dev` for `pyro`/`reportifyr` via the
-`RENV_CONFIG_REPOS_OVERRIDE` env var, because its `r/` job resolves
-dependencies with `renv::restore()`, which reads that variable. This
-repo's `r-check` CI job uses `r-lib/actions/setup-r-dependencies`
-instead, backed by `pak`, and `pak` does not read
-`RENV_CONFIG_REPOS_OVERRIDE` at all -- copying that env var into this
-repo's CI produced "Can't find package called pyro" on the very first
-push. The actual fix is DESCRIPTION's `Additional_repositories:` field
-(the standard R mechanism `pak`'s `deps::.` resolution honors), which is
-also why `pyro` is deliberately *not* listed as an `any::pyro` extra
-package in `ci.yml` -- that form has no DESCRIPTION to read
-`Additional_repositories` from and fails the same way.
+**`pyro` (and any other r-universe-only dependency) needs
+`options(repos=)` to include `a2-ai.r-universe.dev`, and getting there
+took three attempts against real CI/clean-sandbox failures -- two
+plausible-looking fixes verifiably do not work.** quartifyr's CI adds
+that repo via the `RENV_CONFIG_REPOS_OVERRIDE` env var, but that's
+renv-specific; this repo's `r-check` job resolves deps via `pak`
+(`r-lib/actions/setup-r-dependencies`), which never reads it -- first
+attempt, failed on the first real push. DESCRIPTION's
+`Additional_repositories:` field looked like the fix next (it's the
+standard mechanism CRAN policy and `remotes::install_deps()` use for
+exactly this), but `pak`'s `deps::.` local solve doesn't consult it
+either -- confirmed in CI a second time. **The trap in "confirming"
+either of these locally**: `pak` treats an already-installed package as
+satisfying a dependency regardless of what's in `options(repos=)`, so
+testing on a machine that already has `pyro` installed (true of this
+repo's own dev environment) makes broken repo config look like it
+works. The real test needs `pak::lockfile_create(..., lib =
+"<empty-dir>")` to force a genuine repo resolution. The actual, verified
+fix is this repo's root **`.Rprofile`**, which sets `options(repos=)`
+directly and is sourced automatically by every plain `Rscript` step
+(including `setup-r-dependencies`'s own) run from the repo root --
+confirmed against a clean-lib sandbox before it went into CI. `pyro` is
+deliberately *not* listed as an `any::pyro` extra package in `ci.yml`;
+it only needs to be resolvable via `deps::.` (DESCRIPTION's `Imports:`),
+same as any other real dependency.
 
 **`deckifyr.pptx`, `deckifyr.renderers`, and `deckifyr.web` are
 intentionally empty packages with only a docstring.** That's not an
