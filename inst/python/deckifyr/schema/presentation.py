@@ -57,6 +57,11 @@ class Slide(BaseModel):
     # there is no named layout to key against and each element carries
     # its own `id`.
     elements: dict[str, Element] | list[Element] = {}
+    # Speaker notes (spec section 7.1's file-responsibility table, section
+    # 18 Phase 1). Plain text, not a slide element -- no box/style/z_index,
+    # composed straight onto the slide's native notes page rather than
+    # through the ordinary element pipeline.
+    notes: str | None = None
 
 
 class PresentationDocument(BaseModel):

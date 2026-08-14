@@ -47,6 +47,23 @@ def test_presentation_rejects_duplicate_slide_ids():
         PresentationDocument.model_validate(data)
 
 
+def test_slide_notes_defaults_to_none_and_accepts_text():
+    data = {
+        "deckifyr": "0.1",
+        "design": {"base": "design.yaml"},
+        "layouts": "layouts.yaml",
+        "metadata": {"title": "Notes"},
+        "build": {"output": "build/out.pptx"},
+        "slides": [
+            {"id": "a", "layout": None, "elements": []},
+            {"id": "b", "layout": None, "elements": [], "notes": "Remember to mention Q3."},
+        ],
+    }
+    presentation = PresentationDocument.model_validate(data)
+    assert presentation.slides[0].notes is None
+    assert presentation.slides[1].notes == "Remember to mention Q3."
+
+
 def test_unsupported_schema_version_is_rejected():
     with pytest.raises(ValidationError):
         DesignDocument.model_validate(

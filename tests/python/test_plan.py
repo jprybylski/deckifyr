@@ -94,6 +94,20 @@ def test_freeform_slide_uses_list_elements_with_their_own_ids():
     assert [e.id for e in resolved.elements] == ["bg"]
 
 
+def test_slide_notes_pass_through_unresolved():
+    design = _design()
+    slide = Slide(id="s1", layout=None, elements=[], notes="Speaker notes go here.")
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.notes == "Speaker notes go here."
+
+
+def test_slide_without_notes_resolves_to_none():
+    design = _design()
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.notes is None
+
+
 def test_z_index_sorts_elements_for_paint_order():
     design = _design()
     slide = Slide(

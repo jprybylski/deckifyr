@@ -30,11 +30,11 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements, plus document furniture (spec §7.8) expansion |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group` elements; `table`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group` elements and `Slide.notes`; `table`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver` and `InlineResolver` are real; reportifyr/Quarto/table resolvers are not implemented -- Phase 2 |
 | `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
@@ -64,9 +64,15 @@ all. Furniture paints behind ordinary content by default
 `page_number.format` substitutes exactly `{page}`/`{total}` via
 `str.format`; `branding.text` is a literal string with no placeholder
 substitution (general `design.yaml` variable/expression support remains
-an open question, spec §21). Don't assume any command beyond
-`init`/`validate`/`build`/`schema` does real work without checking
-`inst/python/deckifyr/cli.py` first.
+an open question, spec §21). Speaker notes (spec §7.1/§18 Phase 1,
+`Slide.notes` in `presentation.yaml`) are real: a plain string, not a
+slide element -- no box/style/z_index, no design-token resolution --
+that `deckifyr.plan.expand_slide` carries straight through onto
+`ResolvedSlide.notes` and `deckifyr.pptx.compose` writes to the native
+PowerPoint notes page (`slide.notes_slide.notes_text_frame`) via
+`python-pptx`, not through the ordinary element pipeline. Don't assume
+any command beyond `init`/`validate`/`build`/`schema` does real work
+without checking `inst/python/deckifyr/cli.py` first.
 
 ## Components
 
@@ -246,17 +252,22 @@ CLI/schema stabilize, or executing Quarto in an unisolated web process.
 Read the relevant spec section before writing real code into either of
 these two.
 
-**Reference-PPTX policy (spec §21's open decision) is resolved
-pragmatically for v1: `deckifyr.pptx.compose` uses `python-pptx`'s own
-bundled default template, not a project-supplied reference file.** Every
-`deckifyr build` starts from `pptx.Presentation()` with no arguments,
-overrides `slide_width`/`slide_height` from `design.yaml`, and adds every
-slide against that template's "Blank" native layout (found by name, spec
-§10.1's "known blank or minimal native layout"). A project-supplied
-reference `.pptx` (for a house theme, custom fonts baked into the
-template, etc.) is a real future need but not what any current schema
-field or CLI flag configures -- don't assume one is being read from
-disk anywhere in `deckifyr.pptx` today.
+**Reference-PPTX support is descoped, not deferred (spec §10.1/§21,
+decided): `deckifyr.pptx.compose` always uses `python-pptx`'s own
+bundled default template, never a project-supplied reference file.**
+Every `deckifyr build` starts from `pptx.Presentation()` with no
+arguments, overrides `slide_width`/`slide_height` from `design.yaml`,
+and adds every slide against that template's "Blank" native layout
+(found by name, spec §10.1's "known blank or minimal native layout").
+This was considered and rejected as a v1 feature, not left as a gap: no
+element deckifyr composes inherits color or font from a native theme --
+every style comes from `design.yaml` tokens (§7.4) and, for branding, the
+`furniture` block (§7.8) -- so a project-supplied `.pptx` would add
+nothing but a binary, non-diffable artifact back into a pipeline whose
+whole premise is replacing exactly that (see this file's "What this
+is"). Don't add a `--reference-pptx` flag, a `design.yaml` field for one,
+or any code path reading a template from disk in `deckifyr.pptx` --
+that idea was explicitly ruled out, not just unbuilt.
 
 **`deckifyr.plan` (Pass 1) and `deckifyr.pptx.compose` (Pass 2) stay
 genuinely decoupled: `deckifyr.plan` has zero `python-pptx` import.**

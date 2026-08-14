@@ -46,6 +46,10 @@ slides:
 
   - id: concentration-time
     layout: plot-with-note
+    notes: |
+      Point out the rapid absorption phase in the first 1-2 hours, then the
+      slower elimination tail. No PK modeling is shown here -- this is the
+      raw observed data only.
     elements:
       title:
         value: Concentration-Time Profile

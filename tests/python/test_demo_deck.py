@@ -81,6 +81,15 @@ def test_demo_deck_logo_keeps_its_rotation(demo_deck_dir, tmp_path, capsys):
     assert _alt_text(logo) == "Organization logo"
 
 
+def test_demo_deck_plot_slide_carries_its_speaker_notes(demo_deck_dir, tmp_path, capsys):
+    output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
+    prs = Presentation(output["output"])
+    _title_slide, plot_slide, closing_slide = list(prs.slides)
+
+    assert "absorption phase" in plot_slide.notes_slide.notes_text_frame.text
+    assert closing_slide.has_notes_slide is False
+
+
 def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path, capsys):
     output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
     manifest = json.loads(Path(output["manifest"]).read_text())

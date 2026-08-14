@@ -129,6 +129,24 @@ def test_missing_alt_text_raises(project):
         _build(project, _presentation(alt_text=None), _design())
 
 
+def test_slide_notes_are_written_to_the_notes_slide(project):
+    presentation = _presentation()
+    presentation.slides[0].notes = "Mention the Q3 numbers."
+    result = _build(project, presentation, _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    assert slide.notes_slide.notes_text_frame.text == "Mention the Q3 numbers."
+
+
+def test_slide_without_notes_has_no_notes_slide(project):
+    result = _build(project, _presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    assert slide.has_notes_slide is False
+
+
 def _shape_group_presentation() -> PresentationDocument:
     return PresentationDocument(
         deckifyr="0.1",

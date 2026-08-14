@@ -110,6 +110,10 @@ class ResolvedElement:
 class ResolvedSlide:
     id: str
     elements: list[ResolvedElement] = field(default_factory=list)
+    # Plain speaker-notes text (spec section 7.7's `Slide.notes`), carried
+    # through unresolved -- unlike element `value`/`style`, notes have no
+    # design tokens to resolve, so this is a straight pass-through.
+    notes: str | None = None
 
 
 def _resolve_text_style(
@@ -474,7 +478,7 @@ def expand_slide(
             resolved.append(resolved_element)
 
     resolved.sort(key=lambda e: (e.z_index, e.order))
-    return ResolvedSlide(id=slide.id, elements=resolved)
+    return ResolvedSlide(id=slide.id, elements=resolved, notes=slide.notes)
 
 
 def expand_presentation(

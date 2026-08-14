@@ -6,12 +6,17 @@ actual `.pptx` plus a build manifest (spec section 14). Per spec section
 (`python-pptx` has no public alt-text API) is confined to `_set_alt_text`
 below and must never leak into `deckifyr.schema`.
 
-Reference-PPTX policy (spec section 21's open decision): this slice uses
-`python-pptx`'s own bundled default template as the reference deck rather
-than requiring a project-supplied one, and always adds slides against
-that template's "Blank" layout (spec section 10.1: "known blank or
-minimal native layout"). A project-supplied reference `.pptx` is a later
-extension, not a v1 requirement.
+Reference-PPTX policy (spec section 10.1/section 21, decided -- not an
+open v1 slice): this always composes against `python-pptx`'s own bundled
+default template, adding slides against that template's "Blank" layout
+(spec section 10.1's "known blank or minimal native layout"). A
+project-supplied reference `.pptx` is deliberately descoped, not
+deferred -- it would reintroduce the hand-clicked template artifact
+Deckifyr exists to replace, and would contribute nothing that
+`design.yaml`'s tokens and `furniture` block (spec section 7.8) don't
+already provide, since no element here inherits color/font from native
+theme. Don't add a `--reference-pptx`-style flag or schema field; that
+was considered and rejected.
 """
 
 from __future__ import annotations
@@ -408,6 +413,9 @@ def compose(
         slide = prs.slides.add_slide(blank_layout)
         slide.background.fill.solid()
         slide.background.fill.fore_color.rgb = _hex_to_rgbcolor(design.slide.background)
+
+        if resolved_slide.notes:
+            slide.notes_slide.notes_text_frame.text = resolved_slide.notes
 
         for element in resolved_slide.elements:
             _shape, entries = _compose_element(

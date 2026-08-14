@@ -602,8 +602,17 @@ the CSV/Parquet path in option 1 for tables that don't need R-side formatting.
 
 ### 10.1 Recommended strategy
 
-- Load a validated reference `.pptx` containing the desired slide size, theme, and safe native layouts.
-- Add slides using a known blank or minimal native layout.
+- Compose against `python-pptx`'s own bundled default template — not a
+  project-supplied reference `.pptx`. **Descoped, not deferred:** an org
+  template is exactly the hand-clicked artifact Deckifyr exists to
+  replace (§1's "What this is"), and since every color, font, and
+  background already comes from `design.yaml` tokens rather than native
+  theme inheritance, a reference file would contribute nothing a
+  binary, non-diffable file doesn't already cost. Slide size comes from
+  `design.slide.width`/`height`; branding comes from `design.yaml`'s
+  `furniture` block (§7.8), not a template.
+- Add slides using a known blank or minimal native layout (found by name
+  in that bundled template).
 - Expand Deckifyr logical layouts into ordinary slide shapes.
 - Place content with `python-pptx` using normalized EMU geometry.
 - Use stable shape names derived from element IDs.
@@ -947,7 +956,8 @@ This section is a project-planning summary, not legal advice.
 - Images, native text, basic shapes, notes, and footnotes.
 - Document furniture — background image, status marker, branding, page numbers (§7.8).
 - Strict validation and manifest generation.
-- Reference PPTX support.
+- Compose against `python-pptx`'s own bundled default template (§10.1;
+  no project-supplied reference `.pptx` — descoped, see §10.1's note).
 
 ### Phase 2: content integrations
 
@@ -989,7 +999,7 @@ Version 1 is successful when:
 6. `{rpfy}:` figure references and metadata sidecars resolve correctly.
 7. At least one Quarto fragment can be executed and inserted.
 8. Every build emits a PPTX, manifest, and actionable diagnostics.
-9. A reference deck can provide slide dimensions and theme information.
+9. `design.yaml` alone provides slide dimensions and theme information — no project-supplied reference deck (§10.1).
 10. The example corpus passes through both the R and Python entry points in CI.
 
 ## 20. Major design warnings
@@ -1012,7 +1022,11 @@ The following choices should be resolved during Phase 0 or early Phase 1:
 - Confirm `deckifyr` as the repository, R package, Python distribution, and CLI name.
 - Decide whether the Python wheel will be published to PyPI, R-universe assets, GitHub releases, or all three.
 - Decide whether Deckifyr becomes a blessed dependency group inside Pyro or registers explicit dependencies itself.
-- Select the reference-PPTX policy and minimum supported PowerPoint versions.
+- ~~Select the reference-PPTX policy.~~ Resolved: no project-supplied
+  reference `.pptx` — descoped as a deviation from the declarative,
+  version-controlled model (§10.1's note; `design.yaml` alone provides
+  slide size and theme via furniture/tokens).
+- Select minimum supported PowerPoint versions.
 - Select the initial preview renderer and define its fidelity expectations.
 - Define version 1 table inputs: CSV only, CSV plus Parquet, or an R conversion hook.
 - Define the required Reportifyr metadata contract and compatibility fixtures.

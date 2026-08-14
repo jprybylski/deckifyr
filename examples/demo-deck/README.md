@@ -13,6 +13,8 @@ real `reportifyr` artifact rather than placeholder content.
    (defined in `layouts.yaml`, not `title-content`): the figure on the
    left, an interpretive note on the right, matching the `exposure-plot`
    slide shape in `deckifyr-specification.md` section 7.6's own example.
+   Also carries speaker notes (`notes:`), the only slide in this deck
+   that does.
 3. **Closing** -- a freeform (`layout: null`) slide combining text, a
    markdown note, and a rotated logo image, to exercise `z_index` and
    `rotation` together.
