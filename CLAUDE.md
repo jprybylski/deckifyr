@@ -170,6 +170,22 @@ document models specifically so the supported-version set only needs
 updating in one place as the schema evolves -- don't duplicate a
 version check per model.
 
+**`pyro` (and any other r-universe-only dependency) must be declared via
+DESCRIPTION's `Additional_repositories:` field, not a CI env var --
+confirmed the hard way after the first CI run failed.** quartifyr's CI
+adds `a2-ai.r-universe.dev` for `pyro`/`reportifyr` via the
+`RENV_CONFIG_REPOS_OVERRIDE` env var, because its `r/` job resolves
+dependencies with `renv::restore()`, which reads that variable. This
+repo's `r-check` CI job uses `r-lib/actions/setup-r-dependencies`
+instead, backed by `pak`, and `pak` does not read
+`RENV_CONFIG_REPOS_OVERRIDE` at all -- copying that env var into this
+repo's CI produced "Can't find package called pyro" on the very first
+push. The actual fix is DESCRIPTION's `Additional_repositories:` field
+(the standard R mechanism `pak`'s `deps::.` resolution honors), which is
+also why `pyro` is deliberately *not* listed as an `any::pyro` extra
+package in `ci.yml` -- that form has no DESCRIPTION to read
+`Additional_repositories` from and fails the same way.
+
 **`deckifyr.pptx`, `deckifyr.renderers`, and `deckifyr.web` are
 intentionally empty packages with only a docstring.** That's not an
 oversight to "finish" casually -- each corresponds to a specific later

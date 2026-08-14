@@ -36,21 +36,21 @@ jobs:
         with:
           r-version: "release"
 
-      # pyro isn't on CRAN -- it's sourced from a2-ai.r-universe.dev, the
-      # same repo quartifyr's CI adds for pyro/reportifyr (see its
-      # CLAUDE.md's CI notes). setup-r's use-public-rspm default only
-      # points at Posit Package Manager, which silently drops this repo
-      # unless it's re-added explicitly.
-      - name: Add a2-ai.r-universe.dev to the effective repos list
-        shell: bash
-        run: echo "RENV_CONFIG_REPOS_OVERRIDE=a2-ai=https://a2-ai.r-universe.dev;CRAN=https://packagemanager.posit.co/cran/latest" >> "$GITHUB_ENV"
-
+      # pyro isn't on CRAN -- it's sourced from a2-ai.r-universe.dev.
+      # This action resolves dependencies via `pak`, which (unlike
+      # `renv::restore()`, quartifyr's r/ CI mechanism) does NOT read
+      # RENV_CONFIG_REPOS_OVERRIDE -- that's renv-specific. pak instead
+      # honors DESCRIPTION's `Additional_repositories:` field for
+      # `deps::.` resolution (the standard R mechanism for exactly this
+      # case, confirmed locally), which is why pyro is declared there
+      # rather than passed here as an extra `any::pyro` package -- that
+      # form of the spec has no DESCRIPTION to read Additional_repositories
+      # from and fails the same way this originally did.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: |
             any::devtools
             any::testthat
-            any::pyro
           needs: check
 
       - uses: astral-sh/setup-uv@v5
