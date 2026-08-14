@@ -1,0 +1,20 @@
+Type: Package
+Package: deckifyr
+Title: Declarative, Code-First PowerPoint Compiler
+Version: 0.0.0.9000
+Description: Generates .pptx presentations from version-controlled YAML
+    and content files. Design tokens, logical layouts, and presentation
+    content are validated and composed as separate schemas. Supports
+    reportifyr's `{rpfy}:` magic-string artifacts and Quarto content
+    fragments. This R package is a thin orchestration facade: schema
+    validation, merging, resolution, and PPTX composition all live in
+    the bundled Python engine under inst/python/deckifyr/, invoked via
+    'pyro'. See deckifyr-specification.md at the repository root for the
+    full design.
+Imports:
+    pyro,
+    jsonlite
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2

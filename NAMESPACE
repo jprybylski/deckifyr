@@ -1,0 +1,13 @@
+# Hand-written for now -- no roxygen2 toolchain has run in this repo yet.
+# Once available, regenerate with `Rscript -e 'roxygen2::roxygenise()'`
+# (see CONTRIBUTING.md) and this file should end up identical, since
+# every exported function below already carries a `#' @export` roxygen
+# block in its source file.
+
+export(deck_build)
+export(deck_inspect)
+export(deck_preview)
+export(deck_schema)
+export(deck_serve)
+export(deck_validate)
+export(initialize_deck_project)

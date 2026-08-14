@@ -1,0 +1,20 @@
+deckifyr: "0.1"
+
+layouts:
+  title-content:
+    elements:
+      title:
+        type: text
+        box: {x: 0.7in, y: 0.35in, width: 11.9in, height: 0.65in}
+        style: title
+        required: true
+      content:
+        type: slot
+        box: {x: 0.7in, y: 1.25in, width: 11.9in, height: 5.35in}
+      footnotes:
+        type: footnotes
+        box: {x: 0.7in, y: 6.72in, width: 11.9in, height: 0.45in}
+        style: footnote
+
+  blank:
+    elements: {}

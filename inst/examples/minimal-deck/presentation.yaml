@@ -1,0 +1,40 @@
+# Minimal example deck used as a fixture by tests/python and
+# tests/testthat, and as the template `deckifyr init` copies into a new
+# project. Deliberately avoids {rpfy}: and Quarto fragment references --
+# those resolvers aren't implemented yet (see CLAUDE.md's status notes).
+deckifyr: "0.1"
+design:
+  base: design.yaml
+layouts: layouts.yaml
+
+metadata:
+  title: Minimal Example Deck
+  author: Deckifyr
+  status: draft
+
+build:
+  strict: true
+  output: build/minimal-deck.pptx
+  manifest: build/minimal-deck.manifest.json
+  previews: false
+
+slides:
+  - id: title
+    layout: blank
+    elements:
+      - id: deck-title
+        type: markdown
+        value: "# Minimal Example Deck"
+        box: {x: 0.9in, y: 2.1in, width: 11.5in, height: 1.1in}
+        render_mode: native
+        style: title
+
+  - id: content-slide
+    layout: title-content
+    elements:
+      title:
+        value: A slide using the title-content layout
+      content:
+        type: markdown
+        value: "This slide's content element fills the layout's `content` slot."
+        render_mode: native

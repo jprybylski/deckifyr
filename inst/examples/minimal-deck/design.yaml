@@ -1,0 +1,38 @@
+deckifyr: "0.1"
+
+slide:
+  width: 13.333in
+  height: 7.5in
+  background: "#FFFFFF"
+  safe_area: 0.35in
+
+fonts:
+  body: Arial
+  heading: Arial
+  monospace: Consolas
+
+colors:
+  text: "#202124"
+  muted: "#5F6368"
+  primary: "#2457A6"
+  accent: "#D14D32"
+
+text_styles:
+  title:
+    font: heading
+    size: 28pt
+    bold: true
+    color: primary
+  body:
+    font: body
+    size: 16pt
+    color: text
+  footnote:
+    font: body
+    size: 8pt
+    color: muted
+
+defaults:
+  overflow: error
+  image_fit: contain
+  rotation: 0

@@ -1,0 +1,40 @@
+[project]
+name = "deckifyr"
+version = "0.0.0.dev0"
+description = "Declarative, code-first PowerPoint compiler for Quarto content and reportifyr artifacts"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+dependencies = [
+    "python-pptx>=1.0",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+# Unused until Phase 3 (spec section 12) -- declared now so the extras
+# name is stable and doesn't need to be invented later.
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.scripts]
+deckifyr = "deckifyr.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# The Python source is canonical under inst/python/ so it can be bundled
+# unmodified inside the R package (spec section 5.3/5.4) -- this is the
+# only place that path mapping is declared, don't duplicate it.
+where = ["inst/python"]
+include = ["deckifyr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-tests:
+    name: python pytest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # `uv run` manages its own ephemeral venv from pyproject.toml, so
+      # this needs no manual venv setup and works identically on all
+      # three platforms.
+      - name: Run tests/python pytest suite
+        run: uv run --extra dev pytest tests/python -v
+
+  r-check:
+    name: R testthat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+
+      # pyro isn't on CRAN -- it's sourced from a2-ai.r-universe.dev, the
+      # same repo quartifyr's CI adds for pyro/reportifyr (see its
+      # CLAUDE.md's CI notes). setup-r's use-public-rspm default only
+      # points at Posit Package Manager, which silently drops this repo
+      # unless it's re-added explicitly.
+      - name: Add a2-ai.r-universe.dev to the effective repos list
+        shell: bash
+        run: echo "RENV_CONFIG_REPOS_OVERRIDE=a2-ai=https://a2-ai.r-universe.dev;CRAN=https://packagemanager.posit.co/cran/latest" >> "$GITHUB_ENV"
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::devtools
+            any::testthat
+            any::pyro
+          needs: check
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # tests/testthat/test-wiring.R invokes the real pyro/Python bridge
+      # and skip()s cleanly if uv or pyro aren't available -- this step
+      # exists so that path is actually exercised in CI rather than
+      # always skipped.
+      - name: Run testthat suite
+        run: |
+          Rscript -e 'devtools::load_all("."); testthat::test_dir("tests/testthat", stop_on_failure = TRUE)'
