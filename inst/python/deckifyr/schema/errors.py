@@ -17,6 +17,7 @@ class ErrorCode:
     REFERENCE_NOT_FOUND = "E_REFERENCE_NOT_FOUND"
     NOT_IMPLEMENTED = "E_NOT_IMPLEMENTED"
     IO = "E_IO"
+    CONTENT_VALIDATION = "E_CONTENT_VALIDATION"
 
 
 class DeckifyrError(Exception):
@@ -39,6 +40,18 @@ class SchemaValidationError(DeckifyrError):
 
 class UnitParseError(DeckifyrError):
     code = ErrorCode.UNIT_PARSE
+
+
+class ContentValidationError(DeckifyrError):
+    """Raised when a slide plan references content the compiler can't yet
+    resolve or compose: an unsupported element type (spec section 7.7's
+    `type` values not yet implemented -- shape/table/group/quarto/
+    reportifyr, see deckifyr-specification.md section 18), a required
+    element left unresolved, or missing required alt text (spec section
+    13's "Content validation" category).
+    """
+
+    code = ErrorCode.CONTENT_VALIDATION
 
 
 class NotImplementedFeatureError(DeckifyrError):

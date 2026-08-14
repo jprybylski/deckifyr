@@ -1,0 +1,93 @@
+# A working demo, in the spirit of quartifyr's examples/demo-report: a
+# small PK-style deck built from a real reportifyr artifact rather than
+# placeholder content. `OUTPUTS/figures/conc-time.png` and its metadata
+# sidecar are copied straight from quartifyr's examples/demo-report/
+# (scripts/01_analysis.R, the same Theoph-derived concentration-time
+# figure that report's own `.qmd` fills via a `{rpfy}:` magic string).
+#
+# deckifyr's reportifyr resolver isn't implemented yet (spec section 9,
+# Phase 2), so this deck references that PNG as a plain local `image`
+# element (`source: OUTPUTS/figures/...`, resolved by
+# `deckifyr.resolvers.LocalFileResolver`) instead of
+# `{rpfy}:conc-time.png` -- see README.md in this directory for exactly
+# what would change once that resolver lands.
+deckifyr: "0.1"
+design:
+  base: design.yaml
+layouts: layouts.yaml
+
+metadata:
+  title: Theophylline PK Summary
+  author: Deckifyr
+  status: demo
+
+build:
+  strict: true
+  output: build/demo-deck.pptx
+  manifest: build/demo-deck.manifest.json
+  previews: false
+
+slides:
+  - id: title
+    layout: blank
+    elements:
+      - id: deck-title
+        type: markdown
+        value: "# Theophylline PK Summary"
+        box: {x: 0.9in, y: 2.4in, width: 11.5in, height: 1.1in}
+        render_mode: native
+        style: title
+      - id: deck-subtitle
+        type: markdown
+        value: "*Concentration-time profiles from the built-in Theoph dataset*"
+        box: {x: 0.9in, y: 3.55in, width: 11.5in, height: 0.6in}
+        render_mode: native
+        style: subtitle
+
+  - id: concentration-time
+    layout: plot-with-note
+    elements:
+      title:
+        value: Concentration-Time Profile
+      figure:
+        type: image
+        source: OUTPUTS/figures/conc-time.png
+        fit: contain
+        alt_text: >-
+          Line plot of theophylline serum concentration over time for each
+          of the 12 participants in the Theoph dataset, showing a rapid
+          rise to peak concentration within the first few hours followed
+          by a gradual decline.
+      note:
+        type: markdown
+        value: |
+          **Data source**
+
+          Data are from the built-in *Theoph* dataset, produced by reportifyr's two-pass pipeline (see quartifyr's demo-report example).
+
+          Each line traces one participant's observed PK profile after a single oral dose; no model-based estimation was performed.
+        render_mode: native
+        style: body
+
+  - id: closing
+    layout: null
+    elements:
+      - id: closing-title
+        type: text
+        value: Generated with deckifyr
+        box: {x: 0.9in, y: 2.7in, width: 11.5in, height: 0.9in}
+        style: title
+      - id: closing-note
+        type: markdown
+        value: |
+          This deck was compiled entirely from version-controlled YAML in this directory -- design.yaml, layouts.yaml, and presentation.yaml -- with **no manual slide editing**.
+        box: {x: 0.9in, y: 3.7in, width: 11.5in, height: 1.3in}
+        style: body
+      - id: logo
+        type: image
+        source: assets/logo.png
+        fit: contain
+        alt_text: Organization logo
+        box: {x: 10.6in, y: 6.55in, width: 2.0in, height: 0.7in}
+        rotation: -3
+        z_index: 1

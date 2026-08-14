@@ -1,6 +1,10 @@
 import json
+import shutil
+from pathlib import Path
 
-from deckifyr.cli import EXIT_NOT_IMPLEMENTED, EXIT_OK, EXIT_VALIDATION_ERROR, main
+from pptx import Presentation
+
+from deckifyr.cli import EXIT_OK, EXIT_VALIDATION_ERROR, main
 
 
 def test_validate_exits_ok_on_minimal_deck(minimal_deck_dir, capsys):
@@ -12,14 +16,26 @@ def test_validate_exits_ok_on_minimal_deck(minimal_deck_dir, capsys):
     assert output["slide_count"] == 2
 
 
-def test_build_is_not_implemented_yet(minimal_deck_dir, capsys):
-    exit_code = main(["--json", "build", str(minimal_deck_dir / "presentation.yaml")])
-    assert exit_code == EXIT_NOT_IMPLEMENTED
-    # Errors go to stderr, not stdout -- see cli.py's main() comment on
-    # why (the R facade's pyro bridge depends on this split).
-    output = json.loads(capsys.readouterr().err)
-    assert output["status"] == "error"
-    assert output["code"] == "E_NOT_IMPLEMENTED"
+def test_build_writes_pptx_and_manifest(minimal_deck_dir, tmp_path, capsys):
+    # Copy the fixture into tmp_path rather than building in place, so
+    # this test doesn't leave a build/ directory inside the repo's
+    # bundled example (the same fixture `deckifyr init` scaffolds from).
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+
+    exit_code = main(["--json", "build", str(tmp_path / "presentation.yaml")])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "ok"
+    assert output["slide_count"] == 2
+
+    prs = Presentation(output["output"])
+    shape_names = {shape.name for slide in prs.slides for shape in slide.shapes}
+    assert shape_names == {"deck-title", "title", "content"}
+
+    manifest = json.loads(Path(output["manifest"]).read_text())
+    assert manifest["slide_count"] == 2
+    assert {"deckifyr_version", "elements", "input_files", "output"} <= manifest.keys()
 
 
 def test_validate_reports_missing_file(capsys):

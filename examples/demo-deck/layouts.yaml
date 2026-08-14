@@ -1,0 +1,22 @@
+deckifyr: "0.1"
+
+layouts:
+  # A title plus two side-by-side zones -- a figure on the left, a note
+  # on the right -- matching the `exposure-plot` slide shape in
+  # deckifyr-specification.md section 7.6's own example.
+  plot-with-note:
+    elements:
+      title:
+        type: text
+        box: {x: 0.7in, y: 0.35in, width: 11.9in, height: 0.65in}
+        style: title
+        required: true
+      figure:
+        type: slot
+        box: {x: 0.7in, y: 1.25in, width: 7.4in, height: 4.9in}
+      note:
+        type: slot
+        box: {x: 8.3in, y: 1.25in, width: 4.3in, height: 4.9in}
+
+  blank:
+    elements: {}

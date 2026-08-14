@@ -9,11 +9,13 @@ PowerPoint template. A sibling project to
 ecosystem, inheriting its reproducible, YAML-driven philosophy while
 targeting slides instead of documents.
 
-> **Status: early scaffold.** This repository currently implements
-> schema validation, unit parsing, deep-merge precedence, and the CLI/R
-> plumbing between them. It does **not** yet write a `.pptx` file --
-> `deckifyr build` validates its input and then reports a clear
-> "not implemented yet" error. See `deckifyr-specification.md` at the
+> **Status: early, but `deckifyr build` is real.** Schema validation,
+> unit parsing, deep-merge precedence, layout expansion, and PPTX
+> composition all work end-to-end for `text`/`markdown`/`image`
+> elements -- see `examples/demo-deck/` for a working example. Element
+> types beyond those three (`table`/`shape`/`group`/`quarto`/
+> `reportifyr`) still report a clear "not implemented yet" error rather
+> than being silently dropped. See `deckifyr-specification.md` at the
 > repo root for the full design and phased delivery plan, and
 > `CLAUDE.md` for exactly what's real today versus stubbed.
 
@@ -38,8 +40,8 @@ flowchart TD
     WEB["Optional web application (Phase 3)"] --> C
     C --> Q["Quarto adapter (Phase 2)"]
     C --> RF["Reportifyr resolver (Phase 2)"]
-    C --> PPTX["PowerPoint compositor (Phase 1)"]
-    PPTX --> OUT["PPTX, manifest, previews"]
+    C --> PPTX["PowerPoint compositor (text/markdown/image)"]
+    PPTX --> OUT["PPTX + manifest"]
 ```
 
 The Python source under `inst/python/deckifyr/` is canonical: it's
@@ -56,7 +58,8 @@ never a second implementation of the same logic.
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, ...) delegating to the bundled Python CLI via pyro | R |
 | `inst/python/deckifyr/` | The canonical engine: schemas, unit/merge logic, CLI. Bundled into the R package and built as the standalone wheel from the same source | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio, used as `deckifyr init`'s template and as the test fixture for both languages | YAML |
-| `tests/` | `tests/python/` (pytest, unit-level) and `tests/testthat/` (R, including one end-to-end test of the real R→pyro→Python bridge) | Python, R |
+| `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a three-slide deck using a real `reportifyr`-produced figure | YAML |
+| `tests/` | `tests/python/` (pytest, unit-level plus an end-to-end build of `examples/demo-deck/`) and `tests/testthat/` (R, including end-to-end tests of the real R→pyro→Python bridge) | Python, R |
 
 ## Quick start
 
@@ -64,15 +67,19 @@ never a second implementation of the same logic.
 # Python CLI, directly
 uv run deckifyr init my-deck
 uv run deckifyr validate my-deck/presentation.yaml
-uv run deckifyr build my-deck/presentation.yaml   # currently errors: not implemented yet
+uv run deckifyr build my-deck/presentation.yaml   # writes my-deck/build/my-deck.pptx
 ```
 
 ```r
 # R, via pyro
 initialize_deck_project("my-deck")
 deck_validate("my-deck/presentation.yaml")
-deck_build("my-deck/presentation.yaml")  # currently errors: not implemented yet
+deck_build("my-deck/presentation.yaml")  # writes my-deck/build/my-deck.pptx
 ```
+
+For a richer working example than `init`'s minimal scaffold, see
+`examples/demo-deck/` (`uv run deckifyr build
+examples/demo-deck/presentation.yaml`).
 
 See `CONTRIBUTING.md` for development setup and running the test
 suites.

@@ -1,15 +1,19 @@
 """The `deckifyr` command-line interface (spec section 11.1).
 
 Every subcommand from the spec is wired up with real argument parsing.
-`init`, `validate`, and `schema` do real work today: `init` copies the
-bundled minimal example, `validate` loads and pydantic-validates a
-project (design + layouts + presentation, cross-checking layout
-references and box unit strings), and `schema` dumps a document type's
-JSON Schema. `build`, `preview`, `inspect`, and `serve` parse their
-arguments fully but raise `NotImplementedFeatureError` -- the PPTX
-compositor, preview renderer, inspector, and web server are Phase 1/3/4
-work (see deckifyr-specification.md) and deliberately do not pretend to
-succeed.
+`init`, `validate`, `build`, and `schema` do real work today: `init`
+copies the bundled minimal example, `validate` loads and
+pydantic-validates a project (design + layouts + presentation,
+cross-checking layout references and box unit strings), `build` plans
+(`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest
+for `text`/`markdown`/`image` elements, and `schema` dumps a document
+type's JSON Schema. `preview`, `inspect`, and `serve` parse their
+arguments fully but raise `NotImplementedFeatureError` -- the preview
+renderer, inspector, and web server are Phase 3/4 work (see
+deckifyr-specification.md) and deliberately do not pretend to succeed.
+`build` itself still raises the same error for element types
+`deckifyr.plan` doesn't support yet (table/shape/group/quarto/
+reportifyr, spec section 18).
 
 Exit codes are stable and independent of message wording, per spec
 section 11.1:
@@ -35,6 +39,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError as PydanticValidationError
 
+from deckifyr.plan import expand_presentation
+from deckifyr.pptx import compose_and_write
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode, NotImplementedFeatureError
 from deckifyr.schema.layouts import LayoutsDocument
@@ -199,15 +205,34 @@ def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
-    # Fail on schema/geometry problems before hitting the not-implemented
-    # wall below, so `build` on a broken project still reports the real
-    # validation error rather than always saying "not implemented".
-    _load_project(Path(args.presentation), strict=args.strict)
-    raise NotImplementedFeatureError(
-        "PPTX composition is not implemented yet; the project validates, "
-        "but deckifyr.pptx (spec section 10) does not exist yet -- see "
-        "deckifyr-specification.md section 18, Phase 1"
+    presentation_path = Path(args.presentation).resolve()
+    # Fail on schema/geometry problems before planning/composing, so
+    # `build` on a broken project reports the real validation error
+    # rather than a confusing failure downstream.
+    presentation, design, layouts = _load_project(
+        Path(args.presentation), strict=args.strict
     )
+
+    project_root = presentation_path.parent
+    resolved_slides = expand_presentation(
+        presentation, design, layouts, strict=args.strict
+    )
+    result = compose_and_write(
+        presentation,
+        design,
+        resolved_slides,
+        project_root=project_root,
+        presentation_path=presentation_path,
+        design_path=(project_root / presentation.design.base).resolve(),
+        layouts_path=(project_root / presentation.layouts).resolve(),
+    )
+
+    return {
+        "output": str(result.output_path),
+        "manifest": str(result.manifest_path) if result.manifest_path else None,
+        "slide_count": result.slide_count,
+        "warning_count": len(result.warnings),
+    }
 
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
@@ -271,7 +296,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     add_strict_flag(validate_parser)
     validate_parser.set_defaults(handler=_cmd_validate)
 
-    build_parser = subparsers.add_parser("build", help="build a .pptx (not implemented yet)")
+    build_parser = subparsers.add_parser("build", help="build a .pptx and manifest")
     build_parser.add_argument("presentation")
     add_strict_flag(build_parser)
     build_parser.set_defaults(handler=_cmd_build)

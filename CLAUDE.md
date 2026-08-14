@@ -30,20 +30,25 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| CLI `init`/`validate`/`schema` (spec §11.1) | Real, tested |
-| CLI `build`/`preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image` elements only |
+| CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
+| CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Not started -- Phase 1 |
-| `deckifyr.resolvers` concrete resolvers (local file, reportifyr, Quarto, spec §9.2) | Only the `ContentResolver` Protocol exists -- Phase 1/2 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image` elements; `table`/`shape`/`group`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
+| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver` and `InlineResolver` are real; reportifyr/Quarto/table resolvers are not implemented -- Phase 2 |
 | `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
-the same way and then deliberately fails with a clear "not implemented"
-error -- it does not write a placeholder or partial `.pptx`. Don't
-assume any command beyond `init`/`validate`/`schema` does real work
-without checking `inst/python/deckifyr/cli.py` first.
+the same way, then plans and composes a real `.pptx` + manifest for
+projects that only use `text`/`markdown`/`image` elements -- a project
+using `table`/`shape`/`group`/`quarto`/`reportifyr` elements still fails
+with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
+than silently dropping that content. Document furniture (§7.8) isn't
+composed at all yet (still gated behind issue #1). Don't assume any
+command beyond `init`/`validate`/`build`/`schema` does real work without
+checking `inst/python/deckifyr/cli.py` first.
 
 ## Components
 
@@ -51,8 +56,9 @@ without checking `inst/python/deckifyr/cli.py` first.
 | --- | --- | --- |
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, `initialize_deck_project()`, ...) delegating to the bundled Python CLI via pyro. `R/run-python.R` is the single bridge point every other `R/*.R` file calls through. | R |
 | `inst/python/deckifyr/` | The canonical engine. Bundled unmodified into the R package (`inst/python`) and also the source directory for the standalone Python wheel (spec §5.3) -- never fork this tree for one facade or the other. | Python |
-| `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. | YAML |
-| `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes. | Python |
+| `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. Ships inside the R package/Python wheel (it's under `inst/`). | YAML |
+| `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a three-slide deck using a real `reportifyr`-produced figure copied from quartifyr's `examples/demo-report`, a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates and why it doesn't use `{rpfy}:` yet. | YAML |
+| `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes, plan expansion, PPTX composition -- plus `test_demo_deck.py`, an end-to-end build of `examples/demo-deck/`. | Python |
 | `tests/testthat/` | R tests, including `test-wiring.R`, the only test that exercises the real R -> pyro -> Python round trip end-to-end (not just function signatures). Skips cleanly without `uv`/`pyro`. | R |
 
 ## Commands
@@ -196,22 +202,54 @@ deliberately *not* listed as an `any::pyro` extra package in `ci.yml`;
 it only needs to be resolvable via `deps::.` (DESCRIPTION's `Imports:`),
 same as any other real dependency.
 
-**`deckifyr.pptx`, `deckifyr.renderers`, and `deckifyr.web` are
-intentionally empty packages with only a docstring.** That's not an
-oversight to "finish" casually -- each corresponds to a specific later
-phase in spec §18, and spec §20's warnings 2/5/6 specifically caution
-against building the PPTX compositor around Quarto's own layout writer,
-building the web editor before the CLI/schema stabilize, or executing
-Quarto in an unisolated web process. Read the relevant spec section
-before writing real code into any of these three.
+**`deckifyr.renderers` and `deckifyr.web` are intentionally empty
+packages with only a docstring; `deckifyr.pptx` no longer is.** Each
+corresponds to a specific later phase in spec §18, and spec §20's
+warnings 2/5/6 specifically caution against building the PPTX compositor
+around Quarto's own layout writer, building the web editor before the
+CLI/schema stabilize, or executing Quarto in an unisolated web process.
+Read the relevant spec section before writing real code into either of
+these two.
+
+**Reference-PPTX policy (spec §21's open decision) is resolved
+pragmatically for v1: `deckifyr.pptx.compose` uses `python-pptx`'s own
+bundled default template, not a project-supplied reference file.** Every
+`deckifyr build` starts from `pptx.Presentation()` with no arguments,
+overrides `slide_width`/`slide_height` from `design.yaml`, and adds every
+slide against that template's "Blank" native layout (found by name, spec
+§10.1's "known blank or minimal native layout"). A project-supplied
+reference `.pptx` (for a house theme, custom fonts baked into the
+template, etc.) is a real future need but not what any current schema
+field or CLI flag configures -- don't assume one is being read from
+disk anywhere in `deckifyr.pptx` today.
+
+**`deckifyr.plan` (Pass 1) and `deckifyr.pptx.compose` (Pass 2) stay
+genuinely decoupled: `deckifyr.plan` has zero `python-pptx` import.**
+This isn't just tidiness -- spec §6 keeps the two passes separate
+specifically so a shell (the output of `expand_presentation`) can be
+inspected or cached independent of whatever consumes it, and today's
+`ResolvedElement`/`ResolvedSlide` dataclasses in `deckifyr/plan.py` are
+that shell. Style tokens (`design.fonts`/`design.colors`) are resolved
+to literal values during planning, not composition, for the same
+reason: a `ResolvedElement` should be usable without `design.yaml` in
+hand a second time. If you're adding a new element type, its
+`SUPPORTED_ELEMENT_TYPES` membership and any zone/required semantics
+belong in `deckifyr/plan.py`; only the actual `python-pptx` shape
+construction belongs in `deckifyr/pptx/compose.py`.
 
 ## Testing strategy
 
 Today's tests are unit-level plus one true integration test:
-`tests/python/` covers units/merge/schema/CLI exit codes in isolation;
+`tests/python/` covers units/merge/schema/CLI exit codes in isolation,
+plus `test_plan.py` (layout/slide expansion) and `test_pptx.py` (fit-mode
+geometry, manifest shape, opening the written `.pptx` back up with
+`python-pptx` to check slide/shape counts and names);
 `tests/testthat/test-wiring.R` is the only test that actually invokes
 the real R -> pyro -> Python bridge (the other two R-side gotchas above
 were both caught by *running* this test against a live toolchain, not
-by reasoning about the code). There is no PPTX structural or visual-
-regression testing yet (spec §17's later categories) because there's no
-compositor to test.
+by reasoning about the code). What's still missing from spec §17's later
+categories: real visual-regression testing (rendering a slide to an
+image and diffing it) and broader OOXML structural validation beyond
+shape names/counts -- today's PPTX tests check what `python-pptx` can
+read back, not what the file looks like rendered or its full
+relationship-graph integrity.
