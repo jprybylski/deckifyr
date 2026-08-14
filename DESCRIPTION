@@ -2,6 +2,9 @@ Type: Package
 Package: deckifyr
 Title: Declarative, Code-First PowerPoint Compiler
 Version: 0.0.0.9000
+Authors@R: person("John", "Prybylski", email = "jprybylski@gmail.com", role = c("aut", "cre", "cph"), comment = c(ORCID = "0000-0001-5802-0539"))
+URL: https://github.com/jprybylski/deckifyr
+BugReports: https://github.com/jprybylski/deckifyr/issues
 Description: Generates .pptx presentations from version-controlled YAML
     and content files. Design tokens, logical layouts, and presentation
     content are validated and composed as separate schemas. Supports
@@ -14,8 +17,12 @@ Description: Generates .pptx presentations from version-controlled YAML
 Imports:
     pyro,
     jsonlite
+Suggests:
+    testthat (>= 3.0.0),
+    covr
+Config/testthat/edition: 3
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
 Additional_repositories: https://a2-ai.r-universe.dev
+Config/roxygen2/version: 8.1.0

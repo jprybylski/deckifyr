@@ -1,0 +1,30 @@
+# NOTE: .Rbuildignore has no real comment syntax -- R compiles every
+# non-blank line, including "#" lines, as its own Perl regex and matches
+# it against relative file paths. A "#" line is normally a harmless
+# no-op that matches nothing, EXCEPT R CMD build hard-errors if that
+# line isn't valid regex on its own. Keep every comment line below
+# self-contained and free of unbalanced regex metacharacters -- no
+# parens, brackets, or quotes that span more than one line. Confirmed
+# the hard way in quartifyr's own .Rbuildignore.
+^examples$
+^deckifyr-specification\.md$
+^\.github$
+^\.venv$
+^\.Rprofile$
+^\.pytest_cache$
+^\.claude$
+^uv\.lock$
+^pyproject\.toml$
+^CONTRIBUTING\.md$
+^CLAUDE\.md$
+# The Python test suite lives alongside tests/testthat/ for repo
+# convenience (spec section 5.4's planned tests/ layout) but isn't part
+# of the R package's own test story -- it's invoked directly via
+# `uv run pytest`, never through R CMD check.
+^tests/python$
+# A local `pip install -e`/`uv pip install -e` artifact under inst/python
+# (already gitignored, see *.egg-info/ in .gitignore) -- excluded here
+# too since R CMD build doesn't consult .gitignore at all.
+\.egg-info$
+__pycache__$
+\.pyc$

@@ -81,9 +81,10 @@ testthat::test_dir("tests/testthat")
 deck_validate("inst/examples/minimal-deck/presentation.yaml")
 ```
 
-`NAMESPACE` is hand-written for now (no roxygen2 toolchain has run in
-this repo yet); see its header comment and `CONTRIBUTING.md` before
-assuming it's auto-generated.
+`NAMESPACE` and `man/*.Rd` are roxygen2-generated (`Rscript -e
+'roxygen2::roxygenise()'`) -- see `CONTRIBUTING.md`. CI's `r-check` job
+runs a real `R CMD check` (`r-lib/actions/check-r-package`), which fails
+if either is stale relative to `R/*.R`'s `#'` doc comments.
 
 ## Architecture notes that span files
 
@@ -236,6 +237,29 @@ hand a second time. If you're adding a new element type, its
 `SUPPORTED_ELEMENT_TYPES` membership and any zone/required semantics
 belong in `deckifyr/plan.py`; only the actual `python-pptx` shape
 construction belongs in `deckifyr/pptx/compose.py`.
+
+**`tests/testthat/test-wiring.R`'s integration tests silently skip
+under a real `R CMD check`/`covr::package_coverage()` run unless
+`DECKIFYR_DEV_VENV_ROOT` is set -- confirmed empirically, not just
+inferred.** `pyro::get_venv_uv_paths()` looks for `.venv/` at
+`getOption("venv_dir")`, falling back to `here::here()` when unset.
+`test_path("..", "..")` (what the test file used to rely on alone) and
+`here::here()` both resolve relative to *where the test file currently
+lives* -- fine when running `devtools::test()`/`testthat::test_dir()`
+directly against this checkout, but `R CMD check` and `covr` both first
+install the package into a *fresh, separate copy* and run
+`tests/testthat.R` against that copy instead. Neither mechanism can
+therefore ever find this checkout's `.venv/` (correctly excluded from
+the package by `.Rbuildignore`) by relative path alone -- there is no
+bug to fix in pyro or here::here() here, this is those tools' isolation
+working as intended. The fix, in `test-wiring.R`: read
+`Sys.getenv("DECKIFYR_DEV_VENV_ROOT")` (falling back to the old
+`test_path("..", "..")` when unset, for local `devtools::test()` runs)
+and pass it to `options(venv_dir = ...)` before any `deck_*()` call.
+`ci.yml`'s `r-check`/`r-coverage` jobs set it to `${{ github.workspace
+}}`. Without this, a real `R CMD check` reports the whole file skipped,
+and `covr::package_coverage()` reports a flat 0% for every `R/*.R`
+file -- both confirmed locally before this fix existed.
 
 ## Testing strategy
 
