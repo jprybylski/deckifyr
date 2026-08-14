@@ -41,3 +41,17 @@ defaults:
   overflow: error
   image_fit: contain
   rotation: 0
+
+# Document furniture (spec section 7.8): a branding label and running
+# page number, composed on every slide without hand-placing either one --
+# see this file's shape names in the compositor's output
+# (`__furniture_branding`, `__furniture_page_number`).
+furniture:
+  branding:
+    text: Deckifyr Demo
+    box: {x: 0.35in, y: 7.05in, width: 4in, height: 0.3in}
+    style: footnote
+  page_number:
+    format: "{page} / {total}"
+    box: {x: 5.5in, y: 7.05in, width: 1in, height: 0.3in}
+    style: footnote

@@ -50,11 +50,12 @@ def test_demo_deck_builds_three_slides_with_expected_shapes(demo_deck_dir, tmp_p
     slides = list(prs.slides)
     assert len(slides) == 3
 
+    furniture = {"__furniture_branding", "__furniture_page_number"}
     shape_names_per_slide = [{shape.name for shape in slide.shapes} for slide in slides]
     assert shape_names_per_slide == [
-        {"deck-title", "deck-subtitle"},
-        {"title", "figure", "note"},
-        {"closing-title", "closing-note", "logo"},
+        {"deck-title", "deck-subtitle"} | furniture,
+        {"title", "figure", "note"} | furniture,
+        {"closing-title", "closing-note", "logo"} | furniture,
     ]
 
 
@@ -85,7 +86,9 @@ def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path
     manifest = json.loads(Path(output["manifest"]).read_text())
 
     assert manifest["slide_count"] == 3
-    assert len(manifest["elements"]) == 8  # 2 + 3 + 3 elements across the three slides
+    # 2 + 3 + 3 elements across the three slides, plus branding + page
+    # number furniture (spec section 7.8) on each of them.
+    assert len(manifest["elements"]) == 8 + 2 * 3
 
     figure_entry = next(
         e for e in manifest["elements"] if e["slide_id"] == "concentration-time" and e["element_id"] == "figure"

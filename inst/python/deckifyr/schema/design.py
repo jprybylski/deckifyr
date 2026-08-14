@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from deckifyr.schema.layouts import Box
 from deckifyr.schema.version import check_schema_version
 
 
@@ -23,6 +24,10 @@ class SlideSize(BaseModel):
     height: str
     background: str = "#FFFFFF"
     safe_area: str = "0in"
+    # Optional path/URI, rendered behind all slide content (spec section
+    # 7.8's `furniture` design) -- composes with `background` above, which
+    # remains the fallback/letterbox color behind a non-covering image.
+    background_image: str | None = None
 
 
 class Fonts(BaseModel):
@@ -67,6 +72,65 @@ class Defaults(BaseModel):
     rotation: float = 0
 
 
+class StatusFurniture(BaseModel):
+    """A draft/final marker (spec section 7.8) -- off by default, flipped
+    on for in-progress decks and off again at release, per the spec's own
+    example.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    text: str = "DRAFT"
+    box: Box
+    style: str | None = None
+
+
+class BrandingFurniture(BaseModel):
+    """An organization/department label. Unlike `status`/`page_number`
+    there's no `enabled` flag -- whether the `furniture.branding` block is
+    present at all *is* the toggle, matching spec section 7.8's own
+    example YAML. `text` is a literal string: general variable/expression
+    substitution (e.g. `{organization}`) is a separate, still-open design
+    question (spec section 21) that this does not preempt.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    box: Box
+    style: str | None = None
+
+
+class PageNumberFurniture(BaseModel):
+    """A running page number. `format` supports exactly two placeholders,
+    `{page}` (1-indexed slide position) and `{total}` (slide count) --
+    a closed-form substitution the author cannot hand-write, not a
+    general templating mechanism (spec section 21's still-open decision
+    about broader variable/expression support is unrelated to this).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    format: str = "{page} / {total}"
+    box: Box
+    style: str | None = None
+
+
+class Furniture(BaseModel):
+    """`design.yaml`'s `furniture` block (spec section 7.8). Every field
+    is optional and unset by default -- a `DesignDocument` with no
+    furniture configured expands into nothing extra at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: StatusFurniture | None = None
+    branding: BrandingFurniture | None = None
+    page_number: PageNumberFurniture | None = None
+
+
 class DesignDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -80,5 +144,6 @@ class DesignDocument(BaseModel):
     text_styles: dict[str, TextStyle] = {}
     shape_styles: dict[str, ShapeStyle] = {}
     defaults: Defaults = Defaults()
+    furniture: Furniture = Furniture()
 
     _check_version = field_validator("deckifyr")(check_schema_version)

@@ -4,10 +4,19 @@ import pytest
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.oxml.ns import qn
 
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx.compose import _compute_image_placement, compose_and_write
-from deckifyr.schema.design import DesignDocument, Fonts, SlideSize
+from deckifyr.schema.design import (
+    BrandingFurniture,
+    DesignDocument,
+    Fonts,
+    Furniture,
+    PageNumberFurniture,
+    SlideSize,
+    StatusFurniture,
+)
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.presentation import (
@@ -177,6 +186,62 @@ def test_group_element_builds_a_native_group_with_named_children(project):
         "label": "fully_editable",
         "card": "fully_editable",
     }
+
+
+def test_furniture_composes_as_ordinary_shapes(project):
+    Image.new("RGB", (400, 200), color="blue").save(project / "bg.png")
+
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in", background_image="bg.png"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        furniture=Furniture(
+            status=StatusFurniture(
+                enabled=True, box=Box(x="0in", y="0in", width="1in", height="0.3in")
+            ),
+            branding=BrandingFurniture(
+                text="Acme / R&D", box=Box(x="0in", y="0in", width="2in", height="0.3in")
+            ),
+            page_number=PageNumberFurniture(
+                box=Box(x="0in", y="0in", width="1in", height="0.3in")
+            ),
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[Element(id="title", type="text", value="hi", box=Box(x="0in", y="0in", width="1in", height="1in"))],
+            )
+        ],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    shape_names = {shape.name for shape in slide.shapes}
+    assert shape_names == {
+        "__furniture_background",
+        "__furniture_status",
+        "__furniture_branding",
+        "__furniture_page_number",
+        "title",
+    }
+
+    background = next(shape for shape in slide.shapes if shape.name == "__furniture_background")
+    cnv_pr = background._element.find(qn("p:nvPicPr")).find(qn("p:cNvPr"))
+    assert cnv_pr.get("descr") == "Background image"
+
+    page_number = next(
+        shape for shape in slide.shapes if shape.name == "__furniture_page_number"
+    )
+    assert page_number.text_frame.text == "1 / 1"
 
 
 def test_shape_without_style_gets_default_outline(project):

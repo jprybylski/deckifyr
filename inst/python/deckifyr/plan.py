@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import ContentValidationError
-from deckifyr.schema.layouts import Element, Layout, LayoutsDocument
+from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.merge import deep_merge
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_POINT, parse_length
@@ -28,6 +28,27 @@ from deckifyr.schema.units import EMU_PER_POINT, parse_length
 # -- raising a clear error here keeps that boundary explicit instead of
 # silently dropping content (spec section 20 warning 7).
 SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group"}
+
+# Reserved ids for `design.yaml`'s `furniture` block (spec section 7.8),
+# synthesized fresh per slide by `_furniture_layout` below. The
+# `__furniture_` prefix keeps these out of the way of author-chosen zone/
+# element ids, so the ordinary duplicate-id check in
+# `_iter_slide_element_pairs` is a non-issue in practice.
+_FURNITURE_BACKGROUND_ID = "__furniture_background"
+_FURNITURE_STATUS_ID = "__furniture_status"
+_FURNITURE_BRANDING_ID = "__furniture_branding"
+_FURNITURE_PAGE_NUMBER_ID = "__furniture_page_number"
+
+# Furniture must never obscure real slide content by default (spec
+# section 7.8), so it paints well behind the implicit `z_index: 0` every
+# ordinary element defaults to -- the background furthest back of all.
+_FURNITURE_BACKGROUND_Z_INDEX = -1000
+_FURNITURE_OVERLAY_Z_INDEX = -10
+
+# `_add_image_shape` (deckifyr.pptx.compose) requires alt_text on every
+# image; a furniture background is decorative branding, not authored
+# content, so it gets one fixed description rather than a config field.
+_FURNITURE_BACKGROUND_ALT_TEXT = "Background image"
 
 
 @dataclass
@@ -356,17 +377,91 @@ def _resolve_element(
     )
 
 
+def _furniture_layout(
+    design: DesignDocument, *, page_number: int, total_pages: int
+) -> Layout:
+    """Expand `design.yaml`'s `furniture` block (spec section 7.8) into
+    reserved, low-`z_index` elements. Furniture is not a new element
+    `type` -- these are ordinary `image`/`text` elements, synthesized
+    once per slide the same way a layout zone is, so they reuse existing
+    merge, override, and composition machinery rather than a parallel
+    code path (spec section 7.8's closing note).
+    """
+    elements: dict[str, Element] = {}
+
+    if design.slide.background_image:
+        elements[_FURNITURE_BACKGROUND_ID] = Element(
+            type="image",
+            source=design.slide.background_image,
+            box=Box(
+                x="0in", y="0in", width=design.slide.width, height=design.slide.height
+            ),
+            z_index=_FURNITURE_BACKGROUND_Z_INDEX,
+            alt_text=_FURNITURE_BACKGROUND_ALT_TEXT,
+        )
+
+    status = design.furniture.status
+    if status is not None and status.enabled:
+        elements[_FURNITURE_STATUS_ID] = Element(
+            type="text",
+            value=status.text,
+            box=status.box,
+            style=status.style,
+            z_index=_FURNITURE_OVERLAY_Z_INDEX,
+        )
+
+    branding = design.furniture.branding
+    if branding is not None:
+        elements[_FURNITURE_BRANDING_ID] = Element(
+            type="text",
+            value=branding.text,
+            box=branding.box,
+            style=branding.style,
+            z_index=_FURNITURE_OVERLAY_Z_INDEX,
+        )
+
+    page_number_furniture = design.furniture.page_number
+    if page_number_furniture is not None and page_number_furniture.enabled:
+        try:
+            text = page_number_furniture.format.format(page=page_number, total=total_pages)
+        except KeyError as exc:
+            raise ContentValidationError(
+                "design.yaml furniture.page_number.format "
+                f"{page_number_furniture.format!r}: only {{page}} and "
+                f"{{total}} placeholders are supported (unknown placeholder "
+                f"{exc})"
+            ) from exc
+        elements[_FURNITURE_PAGE_NUMBER_ID] = Element(
+            type="text",
+            value=text,
+            box=page_number_furniture.box,
+            style=page_number_furniture.style,
+            z_index=_FURNITURE_OVERLAY_Z_INDEX,
+        )
+
+    return Layout(elements=elements)
+
+
 def expand_slide(
     slide: Slide,
     layout: Layout | None,
     design: DesignDocument,
     *,
     strict: bool,
+    page_number: int = 1,
+    total_pages: int = 1,
 ) -> ResolvedSlide:
+    furniture_layout = _furniture_layout(
+        design, page_number=page_number, total_pages=total_pages
+    )
+    combined_layout = Layout(
+        elements={**furniture_layout.elements, **(layout.elements if layout else {})}
+    )
+
     resolved: list[ResolvedElement] = []
 
     for order, (element_id, layout_element, override) in enumerate(
-        _iter_slide_element_pairs(slide, layout)
+        _iter_slide_element_pairs(slide, combined_layout)
     ):
         if override is not None and override.remove:
             continue
@@ -389,12 +484,15 @@ def expand_presentation(
     *,
     strict: bool,
 ) -> list[ResolvedSlide]:
+    total_pages = len(presentation.slides)
     return [
         expand_slide(
             slide,
             layouts.layouts[slide.layout] if slide.layout is not None else None,
             design,
             strict=strict,
+            page_number=index + 1,
+            total_pages=total_pages,
         )
-        for slide in presentation.slides
+        for index, slide in enumerate(presentation.slides)
     ]

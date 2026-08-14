@@ -30,7 +30,7 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements, plus document furniture (spec §7.8) expansion |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
@@ -52,9 +52,21 @@ group) and composes via `python-pptx`'s `add_group_shape`, reparenting
 already-placed child shapes rather than using a group-relative
 coordinate system -- a group's children still use the same slide-
 absolute geometry as everything else (spec §7.3). Document furniture
-(§7.8) isn't composed at all yet (still gated behind issue #1). Don't
-assume any command beyond `init`/`validate`/`build`/`schema` does real
-work without checking `inst/python/deckifyr/cli.py` first.
+(§7.8, closing issue #1) is real: `design.yaml`'s `furniture` block
+(background image, status marker, branding, page number) expands, once
+per slide, into reserved `text`/`image` elements
+(`__furniture_background`/`__furniture_status`/`__furniture_branding`/
+`__furniture_page_number`) merged beneath the slide's own layout zones
+using the same override/`remove` machinery those zones already use --
+not a parallel code path, and no changes to `deckifyr.pptx.compose` at
+all. Furniture paints behind ordinary content by default
+(`z_index: -1000` for the background, `-10` for the other three).
+`page_number.format` substitutes exactly `{page}`/`{total}` via
+`str.format`; `branding.text` is a literal string with no placeholder
+substitution (general `design.yaml` variable/expression support remains
+an open question, spec §21). Don't assume any command beyond
+`init`/`validate`/`build`/`schema` does real work without checking
+`inst/python/deckifyr/cli.py` first.
 
 ## Components
 

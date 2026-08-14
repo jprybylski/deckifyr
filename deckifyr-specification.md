@@ -226,7 +226,7 @@ Both passes may run within one `deckifyr build` command. They should remain sepa
 
 | File | Responsibility |
 |---|---|
-| `design.yaml` | Slide dimensions, typography, colors, spacing, defaults, table styles, shape styles, named tokens, and document furniture (background image, status marker, branding, page numbers — planned, see [issue #1](https://github.com/jprybylski/deckifyr/issues/1)) |
+| `design.yaml` | Slide dimensions, typography, colors, spacing, defaults, table styles, shape styles, named tokens, and document furniture (background image, status marker, branding, page numbers — §7.8) |
 | `layouts.yaml` | Reusable logical slide structures composed of named elements |
 | `presentation.yaml` | Slide order, content references, geometry, overrides, notes, and build settings |
 
@@ -412,11 +412,11 @@ Common element fields should include:
 
 Named elements are essential. Array indices should never be the primary override mechanism.
 
-### 7.8 Document furniture (planned, issue #1)
+### 7.8 Document furniture
 
-> **Status:** Not implemented. Tracked in [issue #1](https://github.com/jprybylski/deckifyr/issues/1);
-> the section below records the intended design so `deckifyr.schema.design` can grow into it
-> without a breaking schema change. Do not build against this until the issue is closed.
+> **Status:** Implemented (`deckifyr.schema.design.Furniture` and
+> `deckifyr.plan._furniture_layout`), closing
+> [issue #1](https://github.com/jprybylski/deckifyr/issues/1).
 
 Organization decks are typically identified by more than color tokens and typography: a
 background image, a draft/final status marker, an organization or department label, and a
@@ -441,7 +441,7 @@ furniture:
     box: {x: 0.5in, y: 6.9in, width: 3in, height: 0.35in}
     style: footnote
   branding:
-    text: "{organization} / {department}"
+    text: "Acme Corp / Biostatistics"
     box: {x: 0.5in, y: 7.05in, width: 6in, height: 0.3in}
     style: footnote
   page_number:
@@ -451,16 +451,37 @@ furniture:
     style: footnote
 ```
 
-Design notes for when this is implemented:
+Design notes:
 
 - Furniture fields merge like any other `design.yaml` token (§7.2): an organization base can
   set `branding.text` and enable `status`, and a project override can disable `status` for a
   final deliverable, without redefining the whole block.
-- Furniture elements should be individually overridable or removable per slide using the same
-  `remove` mechanism as inherited layout elements (§7.7), for the rare slide (e.g. a title or
-  section divider) that needs different placement or no furniture at all.
+- Each configured furniture item expands, once per slide, into a reserved element id
+  (`__furniture_background`, `__furniture_status`, `__furniture_branding`,
+  `__furniture_page_number`) merged into that slide's zones *ahead of* its named layout's own
+  zones, using the exact same merge/override/`remove` machinery layout zones already use (§7.7)
+  — so a slide overrides or removes a furniture item the same way it overrides or removes an
+  inherited layout element, e.g. `elements: {__furniture_status: {remove: true}}`, for the rare
+  slide (a title or section divider) that needs different placement or no furniture at all. The
+  `__furniture_` prefix keeps these reserved ids out of the way of ordinary author-chosen zone
+  and element ids.
+- Furniture never obscures real content by default: `__furniture_background` composes at
+  `z_index: -1000`, the other three at `z_index: -10`, both well below the `z_index: 0` every
+  ordinary element defaults to.
 - `background_image` composes with `slide.background`; the color remains the fallback/letterbox
-  behind a non-covering image.
+  behind a non-covering image. It gets a fixed alt text ("Background image") rather than an
+  author-configurable one, since every image element requires alt text (§13) and a decorative
+  background has no author-facing content to describe.
+- `status`/`page_number` carry an `enabled` flag (default `false`/`true` respectively, as in the
+  example above); `branding` does not — whether the `branding` block is present at all *is* the
+  toggle.
+- `page_number.format` supports exactly two placeholders, `{page}` (the slide's 1-indexed
+  position) and `{total}` (the slide count), substituted via a plain `str.format` — this is a
+  narrow, closed-form substitution for values an author cannot hand-write, not general
+  templating. Any other placeholder is a validation error. `branding.text`, by contrast, is a
+  literal string with no placeholder substitution: general variable/expression support for
+  `design.yaml` (e.g. an `{organization}` token) is a separate, still-open decision (§21) that
+  this feature does not preempt.
 - This does not introduce a new element `type`; furniture expands into ordinary `text`/`image`
   elements during Pass 1 (§6), so it reuses existing validation, styling, and PPTX composition
   rather than a parallel code path.
@@ -924,8 +945,7 @@ This section is a project-planning summary, not legal advice.
 - Deep merging.
 - Logical layouts.
 - Images, native text, basic shapes, notes, and footnotes.
-- Document furniture — background image, status marker, branding, page numbers (§7.8,
-  [issue #1](https://github.com/jprybylski/deckifyr/issues/1)).
+- Document furniture — background image, status marker, branding, page numbers (§7.8).
 - Strict validation and manifest generation.
 - Reference PPTX support.
 
@@ -1001,9 +1021,9 @@ The following choices should be resolved during Phase 0 or early Phase 1:
 - ~~Decide whether the first web application is strictly local-only.~~ Resolved by
   [issue #2](https://github.com/jprybylski/deckifyr/issues/2): local/single-user first, React/TypeScript + FastAPI (§12.1).
 - Decide whether GPLv3 or AGPLv3 best reflects the intended hosted-service policy.
-- Define the exact `furniture` schema fields and per-slide override/removal semantics for
-  background image, status marker, branding, and page numbers (§7.8,
-  [issue #1](https://github.com/jprybylski/deckifyr/issues/1)).
+- ~~Define the exact `furniture` schema fields and per-slide override/removal semantics for
+  background image, status marker, branding, and page numbers.~~ Resolved by
+  [issue #1](https://github.com/jprybylski/deckifyr/issues/1): see §7.8.
 - Choose React-Konva or Fabric.js for the primary editor canvas, via the spike in §12.1
   ([issue #2](https://github.com/jprybylski/deckifyr/issues/2)).
 - Define the precise complexity limit for a per-element `type: quarto` fragment — line/output

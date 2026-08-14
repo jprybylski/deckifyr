@@ -1,7 +1,17 @@
 import pytest
 
 from deckifyr.plan import expand_slide
-from deckifyr.schema.design import DesignDocument, Fonts, ShapeStyle, SlideSize, TextStyle
+from deckifyr.schema.design import (
+    BrandingFurniture,
+    DesignDocument,
+    Fonts,
+    Furniture,
+    PageNumberFurniture,
+    ShapeStyle,
+    SlideSize,
+    StatusFurniture,
+    TextStyle,
+)
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.layouts import Box, Element, Layout
 from deckifyr.schema.presentation import Slide
@@ -209,3 +219,136 @@ def test_group_child_without_id_in_list_form_raises():
     )
     with pytest.raises(ContentValidationError):
         expand_slide(slide, None, design, strict=True)
+
+
+# ---------------------------------------------------------------------------
+# Document furniture (spec section 7.8)
+# ---------------------------------------------------------------------------
+
+
+def test_no_furniture_configured_expands_to_nothing_extra():
+    design = _design()
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.elements == []
+
+
+def test_background_image_synthesizes_a_full_bleed_image_behind_everything():
+    design = _design(slide=SlideSize(width="10in", height="7.5in", background_image="bg.png"))
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="title", type="text", value="hi", box=_box())],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    ids = [e.id for e in resolved.elements]
+    assert ids == ["__furniture_background", "title"]
+    background = resolved.elements[0]
+    assert background.type == "image"
+    assert background.source == "bg.png"
+    assert background.width == parse_length("10in", strict=True)
+    assert background.height == parse_length("7.5in", strict=True)
+    assert background.z_index < 0
+    assert background.alt_text == "Background image"
+
+
+def test_status_furniture_disabled_by_default():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=False))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.elements == []
+
+
+def test_status_furniture_enabled_renders_its_text():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True, text="DRAFT"))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.id == "__furniture_status"
+    assert element.type == "text"
+    assert element.value == "DRAFT"
+
+
+def test_branding_furniture_presence_is_the_toggle():
+    design = _design(furniture=Furniture(branding=BrandingFurniture(text="Acme / R&D", box=_box())))
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.id == "__furniture_branding"
+    assert element.value == "Acme / R&D"
+
+
+def test_page_number_substitutes_page_and_total():
+    design = _design(furniture=Furniture(page_number=PageNumberFurniture(box=_box())))
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True, page_number=2, total_pages=5)
+    (element,) = resolved.elements
+    assert element.id == "__furniture_page_number"
+    assert element.value == "2 / 5"
+
+
+def test_page_number_custom_format():
+    design = _design(
+        furniture=Furniture(
+            page_number=PageNumberFurniture(box=_box(), format="Page {page} of {total}")
+        )
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True, page_number=3, total_pages=9)
+    (element,) = resolved.elements
+    assert element.value == "Page 3 of 9"
+
+
+def test_page_number_unsupported_placeholder_raises():
+    design = _design(
+        furniture=Furniture(page_number=PageNumberFurniture(box=_box(), format="{author}"))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    with pytest.raises(ContentValidationError):
+        expand_slide(slide, None, design, strict=True, page_number=1, total_pages=1)
+
+
+def test_page_number_disabled():
+    design = _design(
+        furniture=Furniture(page_number=PageNumberFurniture(box=_box(), enabled=False))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.elements == []
+
+
+def test_slide_can_remove_a_furniture_element():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True))
+    )
+    slide = Slide(id="s1", layout=None, elements={"__furniture_status": Element(remove=True)})
+    resolved = expand_slide(slide, None, design, strict=True)
+    assert resolved.elements == []
+
+
+def test_slide_can_override_a_furniture_elements_box():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True))
+    )
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements={"__furniture_status": Element(box=_box(width="4in"))},
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.width == parse_length("4in", strict=True)
+
+
+def test_furniture_paints_behind_a_named_layouts_own_zones():
+    design = _design(
+        furniture=Furniture(branding=BrandingFurniture(text="Acme", box=_box()))
+    )
+    layout = Layout(elements={"title": Element(type="text", value="hi", box=_box())})
+    slide = Slide(id="s1", layout="main", elements={})
+    resolved = expand_slide(slide, layout, design, strict=True)
+    assert [e.id for e in resolved.elements] == ["__furniture_branding", "title"]
