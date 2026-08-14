@@ -6,7 +6,7 @@
 **Proposed license:** GPL-3.0-or-later  
 **Primary product:** A declarative, code-first PowerPoint compiler  
 **Primary interfaces:** A `pyro`-based R package and a Python CLI  
-**Optional interface:** A local-first web application
+**Optional interface:** An in-session interactive editor, launched from within an existing RStudio/Positron R session (like a Shiny app), for manipulating and generating one project's configs — not a generic hosted website
 
 ## 1. Executive summary
 
@@ -19,7 +19,7 @@ The recommended implementation is a **Python presentation engine with two first-
 
 The Python source should be canonical and bundled inside the R package under `inst/python/`. The same source tree should also be buildable as a Python wheel. This avoids implementing slide generation twice and lets R and Python users produce equivalent outputs from the same YAML inputs.
 
-The web application should be an optional, thin authoring and build interface over the CLI/core—not the owner of presentation logic.
+The web application should be an optional, thin authoring and build interface over the CLI/core—not the owner of presentation logic. Its intended audience is a user who already has this R (or Python) package installed and a project open: they launch it from their RStudio/Positron session the way one launches a Shiny app, to interactively edit and generate that project's configs, not a general public visiting a hosted slide-building product ([issue #4](https://github.com/jprybylski/deckifyr/issues/4)).
 
 > **Primary recommendation:** Build and stabilize the compiler and schemas before building the web editor.
 
@@ -65,12 +65,13 @@ Deckifyr should:
 - Expose equivalent R and Python user experiences.
 - Produce a build manifest containing dependency versions, input hashes, resolved artifacts, and warnings.
 - Support slide previews without requiring preview generation to be the source of truth.
-- Make a local-first web interface possible without coupling the compiler to a web framework.
+- Make an in-session interactive interface possible — launched from an active RStudio/Positron R session via `deck_serve()`, the same way a Shiny app is launched, against the one project already open in that session — without coupling the compiler to a web framework.
 
 ## 4. Non-goals for version 1
 
 Version 1 should not promise:
 
+- A publicly hosted, general-purpose, or multi-tenant web product for users without the R or Python package installed. The web interface is an in-IDE authoring tool for one local project at a time, not a destination site for arbitrary slide-building needs ([issue #4](https://github.com/jprybylski/deckifyr/issues/4)).
 - A complete browser-based WYSIWYG PowerPoint replacement.
 - Full fidelity for every PowerPoint feature, animation, transition, chart, SmartArt object, or embedded OLE object.
 - Arbitrary creation and mutation of native PowerPoint slide masters through public `python-pptx` APIs.
@@ -90,7 +91,7 @@ flowchart TD
     R["R package API"] --> P["Pyro-managed environment"]
     P --> C["Deckifyr Python core"]
     CLI["Python CLI"] --> C
-    WEB["Optional web application"] --> C
+    WEB["Optional in-session editor (launched like a Shiny app)"] --> C
     C --> Q["Quarto adapter"]
     C --> RF["Reportifyr resolver"]
     C --> PPTX["PowerPoint compositor"]
@@ -663,11 +664,24 @@ R functions should:
 > [issue #2](https://github.com/jprybylski/deckifyr/issues/2), which also resolves the
 > previously-open "local-only first version" decision from §21 in favor of the scope below.
 
+### 12.0 Scope and audience (clarified, issue #4)
+
+This is **not** a website for a general audience with generic slide-building needs. It is an
+interactive tool for someone who already has the Deckifyr R or Python package installed and a
+project checked out, launched from inside their existing RStudio or Positron session — the same
+mental model as `shiny::runApp()`: `deck_serve()` (§11.2) starts a local server bound to the
+project already open in that session and opens it in the IDE's Viewer pane or default browser.
+There is no concept of a logged-in user browsing or creating arbitrary other people's projects;
+the process's lifetime and scope are tied to that one local project and that one R/Python
+session. Multi-tenant or publicly hosted deployment (§15) remains explicitly out of scope for
+version 1, not merely a "less preferred" configuration — see the non-goal added in §4.
+
 The web application should be an optional extra, such as `deckifyr[web]`, backed by FastAPI or another lightweight ASGI framework.
 
-Recommended initial capabilities:
+Recommended initial capabilities, all scoped to the single project the session was launched
+against:
 
-- Select or upload a project configuration.
+- Open the current project's design, layout, and presentation configuration.
 - Edit design, layout, and presentation YAML with schema validation.
 - Display normalized slide plans.
 - Submit builds to a worker.
@@ -685,7 +699,10 @@ GET  /api/jobs/{job_id}/artifacts
 GET  /api/schemas/{schema_name}
 ```
 
-The first web version should preferably be local and single-user. A multi-user deployment requires authentication, authorization, isolated workspaces, resource limits, and sandboxed code execution.
+Version 1 is local and single-user only, matching the launched-from-an-IDE-session model above.
+A multi-user deployment is a different product with a different threat model — it would require
+authentication, authorization, isolated workspaces, resource limits, and sandboxed code
+execution — and is not planned.
 
 > **Warning:** FastAPI background tasks are not a substitute for a durable or isolated rendering worker. Production builds should run in a queue-backed worker or isolated job container.
 
@@ -723,7 +740,8 @@ R package --Pyro--> same Deckifyr Python core
 - **Build execution:** an isolated subprocess or worker, not the API request process, per the
   warning above and §20 warning 6.
 - **R entry point:** `deck_serve()` (§11.2) launches this Python service through the
-  Pyro-managed environment.
+  Pyro-managed environment, bound to the current project, and opens it in the RStudio/Positron
+  Viewer pane (or default browser) the way `shiny::runApp()` does — see §12.0.
 - **Shiny's role:** optional and secondary — a lightweight R interface for selecting projects,
   editing build parameters, starting builds, reviewing warnings, and downloading artifacts. It
   should not own the graphical slide canvas.
