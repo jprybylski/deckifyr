@@ -2,15 +2,16 @@
 
 A resolver turns a slide element's `value`/`source` into concrete
 content -- a local file, a `{rpfy}:` reportifyr magic string, a Quarto
-fragment, an inline Markdown string, or a CSV/Parquet table. `LocalFileResolver`
-(`deckifyr.resolvers.local`) and `InlineResolver`
-(`deckifyr.resolvers.inline`) are real -- they cover the `image` and
-`text`/`markdown` element types `deckifyr.pptx` composes today. The
-reportifyr, Quarto, and table resolvers from spec section 9.2's initial
-list are Phase 2 work (deckifyr-specification.md section 18) and are not
-implemented yet. Nothing here should reuse reportifyr's own DOCX fill
-layer (spec section 9.1) -- only its documented `{rpfy}:` string contract
-and metadata sidecars.
+fragment, an inline Markdown string, or a CSV/Parquet table.
+`LocalFileResolver` (`deckifyr.resolvers.local`), `InlineResolver`
+(`deckifyr.resolvers.inline`), and `TableResolver`
+(`deckifyr.resolvers.table`) are real -- they cover the `image`,
+`text`/`markdown`, and `table` element types `deckifyr.pptx` composes
+today. The reportifyr and Quarto resolvers from spec section 9.2's
+initial list are still Phase 2 work (deckifyr-specification.md section
+18) and are not implemented yet. Nothing here should reuse reportifyr's
+own DOCX fill layer (spec section 9.1) -- only its documented `{rpfy}:`
+string contract and metadata sidecars.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ class ContentResolver(Protocol):
 # them already defined on this partially-initialized module.
 from deckifyr.resolvers.inline import InlineResolver  # noqa: E402
 from deckifyr.resolvers.local import LocalFileResolver  # noqa: E402
+from deckifyr.resolvers.table import TableData, TableResolver  # noqa: E402
 
 __all__ = [
     "BuildContext",
@@ -56,4 +58,6 @@ __all__ = [
     "ContentResolver",
     "LocalFileResolver",
     "InlineResolver",
+    "TableResolver",
+    "TableData",
 ]

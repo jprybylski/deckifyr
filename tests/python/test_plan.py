@@ -127,10 +127,23 @@ def test_unsupported_element_type_raises():
     slide = Slide(
         id="s1",
         layout=None,
-        elements=[Element(id="tbl", type="table", value="x", box=_box())],
+        elements=[Element(id="frag", type="quarto", value="x", box=_box())],
     )
     with pytest.raises(ContentValidationError):
         expand_slide(slide, None, design, strict=True)
+
+
+def test_table_element_is_supported():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="tbl", type="table", source="data.csv", box=_box())],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.type == "table"
+    assert element.source == "data.csv"
 
 
 def test_style_token_resolves_font_and_color():

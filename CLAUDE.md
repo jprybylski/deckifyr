@@ -30,22 +30,28 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group` elements and `Slide.notes`; `table`/`quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 |
-| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver` and `InlineResolver` are real; reportifyr/Quarto/table resolvers are not implemented -- Phase 2 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table` elements and `Slide.notes`; `quarto`/`reportifyr` raise a clear `ContentValidationError` (`deckifyr.plan` rejects them before composition) -- Phase 1 done, Phase 2 (§18) starting |
+| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, and `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra) are real; reportifyr/Quarto resolvers are not implemented -- Phase 2 |
 | `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
 the same way, then plans and composes a real `.pptx` + manifest for
-projects that use `text`/`markdown`/`image`/`shape`/`group` elements --
-a project using `table`/`quarto`/`reportifyr` elements still fails with
-a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather than
-silently dropping that content. `shape`'s autoshape kinds are a small
+projects that use `text`/`markdown`/`image`/`shape`/`group`/`table`
+elements -- a project using `quarto`/`reportifyr` elements still fails
+with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
+than silently dropping that content. `table` elements resolve their
+`source` (a `.csv` or `.parquet` file, project-relative like an image's
+`source`) to a native, fully-editable PowerPoint table -- first row is
+always the header, mirroring `pandas`' own `header=0` default; there is
+no `design.yaml` table-style token yet, so `style` on a `table` element
+reuses an ordinary `text_styles` entry applied uniformly to every cell
+(header cells are bold regardless of the style). `shape`'s autoshape kinds are a small
 named subset of `MSO_SHAPE` (`deckifyr.schema.layouts.ShapeKind`), not
 the full enum; `group` nests any supported element (including another
 group) and composes via `python-pptx`'s `add_group_shape`, reparenting

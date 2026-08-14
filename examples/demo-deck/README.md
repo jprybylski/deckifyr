@@ -2,7 +2,7 @@
 
 A small, working example, in the spirit of
 [quartifyr's `examples/demo-report`](https://github.com/jprybylski/quartifyr/tree/main/examples/demo-report):
-a three-slide PK-style deck built from version-controlled YAML, using a
+a four-slide PK-style deck built from version-controlled YAML, using a
 real `reportifyr` artifact rather than placeholder content.
 
 ## What it builds
@@ -15,7 +15,11 @@ real `reportifyr` artifact rather than placeholder content.
    slide shape in `deckifyr-specification.md` section 7.6's own example.
    Also carries speaker notes (`notes:`), the only slide in this deck
    that does.
-3. **Closing** -- a freeform (`layout: null`) slide combining text, a
+3. **Per-Subject PK Summary** -- a `table` element (`layout: blank`,
+   list-form elements) rendered from `OUTPUTS/tables/pk-summary.csv` as
+   a native, fully-editable PowerPoint table, exercising
+   `deckifyr.resolvers.TableResolver` (spec section 9.2).
+4. **Closing** -- a freeform (`layout: null`) slide combining text, a
    markdown note, and a rotated logo image, to exercise `z_index` and
    `rotation` together.
 
@@ -41,6 +45,19 @@ table -- so `concentration-time`'s `figure` element uses
 lands (Phase 2), the only change needed here is that one `source:` value
 becoming `source: "{rpfy}:conc-time.png"`; everything else -- geometry,
 fit mode, alt text, the rest of the deck -- stays as-is.
+
+## Where the table comes from
+
+`OUTPUTS/tables/pk-summary.csv` is a per-subject summary (weight, dose,
+observed peak concentration `Cmax`, and time-to-peak `Tmax`) computed
+from the same base-R `Theoph` dataset as the concentration-time figure
+above -- one row per participant, derived with `max()`/`which.max()`
+over each subject's observed profile rather than any PK modeling. The
+`pk-summary` slide's `pk-table` element resolves it with
+`deckifyr.resolvers.TableResolver` (CSV support is built in; the same
+resolver also reads `.parquet`, via the optional `pyarrow` extra) into a
+native, fully-editable PowerPoint table -- first row as header, `style:
+footnote` keeping thirteen rows legible in the slide's box.
 
 ## Building it
 

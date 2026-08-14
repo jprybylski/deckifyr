@@ -38,7 +38,7 @@ from pptx.util import Emu, Pt
 
 from deckifyr import __version__ as DECKIFYR_VERSION
 from deckifyr.plan import ResolvedElement, ResolvedSlide
-from deckifyr.resolvers import BuildContext, LocalFileResolver
+from deckifyr.resolvers import BuildContext, LocalFileResolver, TableData, TableResolver
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.presentation import PresentationDocument
@@ -63,6 +63,7 @@ _EDITABILITY = {
     "image": "rendered_graphic",
     "shape": "fully_editable",
     "group": "fully_editable",
+    "table": "fully_editable",
 }
 
 # `deckifyr.schema.layouts.ShapeKind`'s values, mapped to their
@@ -333,6 +334,81 @@ def _add_image_shape(
 
 
 # ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
+
+
+def _add_table_shape(
+    slide: Any, element: ResolvedElement, design: DesignDocument, *, project_root: Path
+) -> tuple[Any, dict[str, str]]:
+    context = BuildContext(project_root=str(project_root))
+    # Two resolves of the same `source`, deliberately: `LocalFileResolver`
+    # gives the path this function needs for the manifest's
+    # `resolved_path`/`sha256` (the same fields every other file-backed
+    # element records), while `TableResolver` gives the parsed content --
+    # mirroring the resolver-per-concern split spec section 9.2 lays out
+    # rather than having `TableResolver` reach back into path bookkeeping
+    # that isn't its job.
+    table_path: Path = LocalFileResolver().resolve(str(element.source), context).value
+    data: TableData = TableResolver().resolve(str(element.source), context).value
+
+    if not data.headers:
+        raise ContentValidationError(
+            f"element {element.id!r}: table source {element.source!r} has no columns"
+        )
+
+    row_count = 1 + len(data.rows)
+    col_count = len(data.headers)
+    graphic_frame = slide.shapes.add_table(
+        row_count,
+        col_count,
+        Emu(element.x),
+        Emu(element.y),
+        Emu(element.width),
+        Emu(element.height),
+    )
+    graphic_frame.name = element.id
+    graphic_frame.rotation = element.rotation
+    table = graphic_frame.table
+
+    style = element.style
+    font_name = style.font if style else design.fonts.body
+    font_size_pt = style.size_pt if style else _DEFAULT_FONT_SIZE_PT
+    font_color = style.color if style else design.colors.get("text", "#000000")
+    style_italic = style.italic if style else False
+
+    def _fill_cell(row: int, col: int, text: str, *, bold: bool, apply_color: bool) -> None:
+        cell = table.cell(row, col)
+        cell.text = text
+        run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.name = font_name
+        run.font.size = Pt(font_size_pt)
+        run.font.bold = bold
+        run.font.italic = style_italic
+        # The default table style (python-pptx's bundled template, spec
+        # section 10.1) already colors the header row for contrast against
+        # its own fill (light text on a solid band). A `table` element's
+        # `style` is meant for body text color against the slide
+        # background, not the header's fill, so it's applied to data rows
+        # only -- forcing it onto the header would fight the theme's own
+        # contrast choice (e.g. `footnote`'s muted gray unreadable on a
+        # dark header band).
+        if apply_color:
+            run.font.color.rgb = _hex_to_rgbcolor(font_color)
+
+    for col_index, header in enumerate(data.headers):
+        _fill_cell(0, col_index, header, bold=True, apply_color=False)
+    for row_index, row in enumerate(data.rows, start=1):
+        for col_index, value in enumerate(row):
+            _fill_cell(row_index, col_index, value, bold=False, apply_color=True)
+
+    if element.alt_text:
+        _set_alt_text(graphic_frame, element.alt_text)
+
+    return graphic_frame, {"resolved_path": str(table_path), "sha256": _sha256_file(table_path)}
+
+
+# ---------------------------------------------------------------------------
 # Compose + write
 # ---------------------------------------------------------------------------
 
@@ -362,6 +438,10 @@ def _compose_element(
         shape, source_manifest = _add_image_shape(slide, element, project_root=project_root)
     elif element.type == "shape":
         shape = _add_autoshape(slide, element)
+    elif element.type == "table":
+        shape, source_manifest = _add_table_shape(
+            slide, element, design, project_root=project_root
+        )
     elif element.type == "group":
         child_shapes = []
         for child in element.children:

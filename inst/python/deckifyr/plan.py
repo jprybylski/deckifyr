@@ -23,11 +23,11 @@ from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_POINT, parse_length
 
 # Element types this slice's compositor can actually place on a slide.
-# Everything else in spec section 7.7's `type` enum (table, quarto,
-# reportifyr) is later-phase work (deckifyr-specification.md section 18)
-# -- raising a clear error here keeps that boundary explicit instead of
-# silently dropping content (spec section 20 warning 7).
-SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group"}
+# Everything else in spec section 7.7's `type` enum (quarto, reportifyr)
+# is later-phase work (deckifyr-specification.md section 18) -- raising
+# a clear error here keeps that boundary explicit instead of silently
+# dropping content (spec section 20 warning 7).
+SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group", "table"}
 
 # Reserved ids for `design.yaml`'s `furniture` block (spec section 7.8),
 # synthesized fresh per slide by `_furniture_layout` below. The
@@ -331,7 +331,7 @@ def _resolve_element(
 
     style = (
         _resolve_text_style(design, merged.get("style"))
-        if element_type in ("text", "markdown")
+        if element_type in ("text", "markdown", "table")
         else None
     )
     shape_style = (

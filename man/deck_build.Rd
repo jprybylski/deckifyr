@@ -20,7 +20,7 @@ if \code{presentation.yaml}'s \code{build.manifest} is unset), and
 \description{
 Delegates to \verb{deckifyr build} in the bundled Python engine: plans
 (\code{deckifyr.plan}) and composes (\code{deckifyr.pptx}, spec section 10) a
-\code{.pptx} and manifest for \code{text}/\code{markdown}/\code{image} elements. Still
-errors for element types the compositor doesn't support yet
-(table/shape/group/quarto/reportifyr -- see spec section 18).
+\code{.pptx} and manifest for \code{text}/\code{markdown}/\code{image}/\code{shape}/\code{group}/
+\code{table} elements. Still errors for element types the compositor
+doesn't support yet (quarto/reportifyr -- see spec section 18).
 }

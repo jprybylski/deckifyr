@@ -14,6 +14,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pyarrow>=14.0",
+]
+# `deckifyr.resolvers.table.TableResolver` imports pyarrow lazily, only
+# for `.parquet` sources -- a project using only CSV tables never pays
+# for it. `dev` also pulls this in so `tests/python` can exercise the
+# Parquet path.
+tables = [
+    "pyarrow>=14.0",
 ]
 # Unused until Phase 3 (spec section 12) -- declared now so the extras
 # name is stable and doesn't need to be invented later.

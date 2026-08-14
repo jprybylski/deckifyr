@@ -291,3 +291,59 @@ def test_shape_without_style_gets_default_outline(project):
     (shape,) = list(slide.shapes)
     assert shape.name == "divider"
     assert shape.line.color.rgb == RGBColor.from_string("000000")
+
+
+def _table_presentation(*, source: str = "data.csv") -> PresentationDocument:
+    return PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="tbl",
+                        type="table",
+                        source=source,
+                        box=Box(x="0in", y="0in", width="4in", height="2in"),
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_table_element_builds_a_native_table_from_csv(project):
+    (project / "data.csv").write_text("name,score\nAda,10\nGrace,9\n")
+
+    result = _build(project, _table_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (graphic_frame,) = list(slide.shapes)
+    assert graphic_frame.name == "tbl"
+    table = graphic_frame.table
+    assert [cell.text for cell in table.rows[0].cells] == ["name", "score"]
+    assert [cell.text for cell in table.rows[1].cells] == ["Ada", "10"]
+    assert [cell.text for cell in table.rows[2].cells] == ["Grace", "9"]
+
+    manifest = json.loads(result.manifest_path.read_text())
+    (element_entry,) = manifest["elements"]
+    assert element_entry["element_id"] == "tbl"
+    assert element_entry["editability"] == "fully_editable"
+    assert element_entry["resolved_path"].endswith("data.csv")
+    assert "sha256" in element_entry
+
+
+def test_table_source_not_found_raises(project):
+    with pytest.raises(ContentValidationError):
+        _build(project, _table_presentation(source="missing.csv"), _design())
+
+
+def test_table_source_outside_project_root_raises(project):
+    with pytest.raises(ContentValidationError):
+        _build(project, _table_presentation(source="../outside/data.csv"), _design())

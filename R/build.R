@@ -2,9 +2,9 @@
 #'
 #' Delegates to `deckifyr build` in the bundled Python engine: plans
 #' (`deckifyr.plan`) and composes (`deckifyr.pptx`, spec section 10) a
-#' `.pptx` and manifest for `text`/`markdown`/`image` elements. Still
-#' errors for element types the compositor doesn't support yet
-#' (table/shape/group/quarto/reportifyr -- see spec section 18).
+#' `.pptx` and manifest for `text`/`markdown`/`image`/`shape`/`group`/
+#' `table` elements. Still errors for element types the compositor
+#' doesn't support yet (quarto/reportifyr -- see spec section 18).
 #'
 #' @param presentation Path to `presentation.yaml`.
 #' @param strict Reject unitless geometry when `TRUE` (default).
