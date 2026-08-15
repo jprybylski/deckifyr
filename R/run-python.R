@@ -1,3 +1,13 @@
+# testthat::local_mocked_bindings() can only replace a binding that
+# already exists in this package's (locked, once installed) namespace --
+# it can't create one. `system.file()` below is a base function called
+# unqualified, so this NULL binding is the documented seam
+# (`?testthat::local_mocked_bindings`, "Base functions") that lets tests
+# mock it; it's shadowed by base::system.file() at runtime and never
+# actually called. Kept as a plain (non-roxygen) comment/assignment so
+# roxygen2 doesn't mistake it for the next block's documented object.
+system.file <- NULL
+
 #' Invoke the bundled Python CLI via pyro
 #'
 #' Internal helper every exported `deck_*()`/`initialize_deck_project()`
