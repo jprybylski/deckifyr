@@ -4,6 +4,27 @@ slide:
   width: 13.333in
   height: 7.5in
   background: "#FFFFFF"
+  # A sequential-blue gradient (spec section 7.4) -- the two stops below
+  # are ColorBrewer's "Blues" sequential palette (https://colorbrewer2.org,
+  # class 3: #f7fbff/.../#9ecae1), not a literal RColorBrewer dependency:
+  # deckifyr's Python engine has no R dependency to add for this (see
+  # CLAUDE.md's "one engine, two facades" invariant), so this only
+  # borrows ColorBrewer's own published color values as a starting
+  # palette, the same way a designer would pick them from the color
+  # picker on colorbrewer2.org. Deliberately more saturated at the
+  # bottom-right corner than a "barely visible" pale wash -- a gradient
+  # this subtle reads as flat at slide scale/thumbnail size.
+  background_gradient:
+    stops:
+      - {color: "#F7FBFF", position: 0.0}
+      - {color: "#9ECAE1", position: 1.0}
+    angle: 135
+  # A faint, brand-tinted rendering of assets/logo.png (see this
+  # directory's own README.md for how it was generated) -- real PNG
+  # alpha transparency, not a compositor feature, so it composes over
+  # `background_gradient` above using the ordinary `background_image`
+  # path with no new code.
+  background_image: assets/logo-watermark.png
   safe_area: 0.35in
 
 fonts:
@@ -45,6 +66,25 @@ text_styles:
     font: body
     size: 13pt
     color: text
+  # `furniture.status`'s own style (spec section 7.8) -- large and bold
+  # so it reads as a watermark once `status.rotation` angles it, not a
+  # small corner label like `footnote` above. `color: primary` at full
+  # saturation, softened only by `opacity` -- not a separate hand-mixed
+  # pale color token -- so it reads consistently once
+  # `furniture.status.z_index` (below) puts it on top of arbitrary slide
+  # content (images, table fills, ...) instead of a fixed light tint that
+  # only looks right against a plain white/near-white background.
+  # `text_transform: uppercase` is what turns presentation.yaml's
+  # `metadata.status: demo` (any free-text word) into "DEMO" -- the
+  # conventional all-caps status/watermark look -- without requiring the
+  # author to type it that way themselves.
+  watermark:
+    font: heading
+    size: 96pt
+    bold: true
+    color: primary
+    opacity: 0.28
+    text_transform: uppercase
 
 # Fill/border chrome for the `pk-summary` slide's `pk-table` element --
 # `style: table-body` above still governs its typography; this is the
@@ -75,6 +115,45 @@ defaults:
 # see this file's shape names in the compositor's output
 # (`__furniture_branding`, `__furniture_page_number`).
 furniture:
+  status:
+    # Nothing here is on by default -- presentation.yaml's own
+    # `status_indicator` field (spec section 7.8) chooses whether a
+    # build shows one at all and which placement; an organization base
+    # design shouldn't force every deck that inherits it into a draft
+    # watermark. This demo's own presentation.yaml sets
+    # `status_indicator: watermark` to exercise the placement configured
+    # here, and leaves `watermark` unset so the text falls back to
+    # `metadata.status: demo`, uppercased below.
+    watermark:
+      # Centered on the slide -- `deckifyr.plan` always centers a status
+      # indicator's text within this box (both axes), so the box only
+      # needs to be roomy enough for the word at `style: watermark`'s
+      # own 96pt, not hand-tuned to center the text itself.
+      box: {x: 1.5in, y: 2.5in, width: 10.333in, height: 2.5in}
+      style: watermark
+      rotation: -30
+      # A genuine diagonal watermark reads on top of whatever content it
+      # crosses (the Word/Google Docs convention) rather than hiding
+      # behind it -- ordinary elements default to z_index 0, so this only
+      # needs to be higher than the highest one any slide in this deck
+      # actually uses. `style: watermark`'s own `opacity: 0.28` (above)
+      # is what keeps it legible-but-unobtrusive on top of dark content
+      # instead of fully obscuring it.
+      z_index: 9999
+    # Two alternative, simpler placements the same word could use instead
+    # of the full-page `watermark` above -- small, upright, behind
+    # ordinary content like `branding`/`page_number` below, no
+    # `z_index`/`opacity` needed. Configured here to show the option
+    # exists, even though this demo's own presentation.yaml picks
+    # `watermark` instead; see man/figures/demo-deck-corner-tr-example.png
+    # (and this directory's own README.md) for a real render of
+    # `status_indicator: corner-tr` using this exact placement.
+    corner_br:
+      box: {x: 10.6in, y: 6.9in, width: 2.4in, height: 0.4in}
+      style: footnote
+    corner_tr:
+      box: {x: 10.6in, y: 0.35in, width: 2.4in, height: 0.4in}
+      style: footnote
   branding:
     text: Deckifyr Demo
     box: {x: 0.35in, y: 7.05in, width: 4in, height: 0.3in}

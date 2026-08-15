@@ -85,7 +85,103 @@ all. Furniture paints behind ordinary content by default
 `page_number.format` substitutes exactly `{page}`/`{total}` via
 `str.format`; `branding.text` is a literal string with no placeholder
 substitution (general `design.yaml` variable/expression support remains
-an open question, spec §21). Speaker notes (spec §7.1/§18 Phase 1,
+an open question, spec §21). `furniture.status` is deckifyr's status-
+indicator/watermark mechanism, redesigned from a single on/off marker
+into a set of named *placements*: `deckifyr.schema.design.StatusFurniture`
+has five optional `StatusIndicatorStyle | None` fields --
+`watermark`, `corner_tr`, `corner_tl`, `corner_bl`, `corner_br` -- each
+its own `box`/`style`/`rotation`/`z_index`, none of them "the" status
+marker on their own. `presentation.yaml`'s top-level `status_indicator`
+field (`deckifyr.schema.layouts.StatusIndicatorMode`, a `Literal` shared
+by both schema modules to avoid duplicating the value set) picks exactly
+one -- `"watermark"`, one of the four hyphenated `"corner-*"` values (a
+plain YAML string has no identifier restriction, unlike
+`StatusFurniture`'s own underscored field names, hence the spelling
+mismatch), or `"none"`/unset (default, nothing shown) -- and
+`presentation.yaml`'s own `watermark` field (`str | None`, any word, no
+longer a bool) supplies the text, falling back to `metadata.status`
+(`deckifyr.plan.expand_presentation`, computed once before the
+per-slide `expand_slide` loop) when `watermark` itself is `None` -- the
+expected common case, so a deck doesn't need the same word ("draft",
+"demo", ...) typed into both `metadata.status` (already there for
+descriptive purposes) and a separate `watermark` field. `deckifyr.plan
+._furniture_layout` maps the hyphenated mode to the underscored field
+via `_STATUS_INDICATOR_FIELDS`, looks up that `StatusIndicatorStyle` on
+`design.furniture.status`, and raises `ContentValidationError` if
+`None` (spec §20 warning 7 -- selecting a placement `design.yaml` never
+configured must not silently render nothing). A `corner-*` placement
+with no text from either source is simply skipped (no content, not
+required, same as any other unfilled element); `status_indicator:
+watermark` with *neither* `watermark` nor `metadata.status` set is
+instead a schema-validation error -- `PresentationDocument`'s own
+`model_validator(mode="after")`, since a full-page watermark with
+nothing to say would be a large, silently empty rotated box, worth
+failing over immediately rather than at build time. Turning free text
+like `metadata.status: demo` into the conventional all-caps status/
+watermark look ("DEMO") is a third new field, `TextStyle.text_transform`
+(`none`/unset/`uppercase`/`lowercase`/`capitalize`) -- unlike `opacity`,
+a plain `str.upper()`/`.lower()`/`.title()` in
+`deckifyr.pptx.compose._apply_text_transform`, no OOXML gap to work
+around, applied to each run's text right before `run.text` is set (so
+markdown's own bold/italic markers are already stripped by the time it
+runs, not accidentally transformed). Every status/watermark element also
+gets a new, general `center`
+field (`deckifyr.schema.layouts.Element.center`, default `False`,
+inert everywhere else): `deckifyr.pptx.compose._add_text_shape` sets
+`text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE` and
+`paragraph.alignment = PP_ALIGN.CENTER` when it's set, which
+`_furniture_layout` always does for `__furniture_status` regardless of
+placement -- a short label/word reads correctly centered, and a large
+rotated watermark reads distractingly off-center without it (this was
+the actual visual bug that prompted the field: an uncentered "DRAFT"
+sat visibly left-of-center once rotated). A placement's own `rotation`
+(0 by default, like every other element's own rotation) is what makes
+the `watermark` placement diagonal rather than upright, and its `z_index`
+(unset by default, so it paints behind content like every other
+furniture item -- `_FURNITURE_OVERLAY_Z_INDEX`) is what opts it into
+painting *on top* of ordinary content instead, the conventional
+Word/Google-Docs watermark placement. Getting that on-top case to
+actually read as a watermark (rather than a large diagonal label sitting
+in front of everything, fully obscuring it) needed one more field:
+`TextStyle.opacity` (spec §7.4, 0.0-1.0, `None` = fully opaque, every
+other `text`/`markdown`/`table`/footer style unaffected). `python-pptx`
+has no public API for run color alpha, so
+`deckifyr.pptx.compose._apply_text_alpha` appends an `<a:alpha>` child
+directly to the `<a:srgbClr>` element `run.font.color.rgb`'s own setter
+already created -- must run after that setter, same ordering
+requirement `_set_cell_borders` has with `cell.fill.solid()` -- verified
+against a real `.pptx` reopened with `python-pptx` (the alpha child
+round-tripped exactly). `examples/demo-deck/design.yaml`'s own
+`watermark` `text_styles` entry uses a saturated `color: primary` with
+`opacity: 0.28` doing the softening, deliberately not a separately
+hand-mixed pale color -- a flat pale color only reads correctly against
+one particular background, where a translucent one composites
+consistently over whatever the watermark happens to cross (images,
+table fills, other text). Gradients (spec §7.4) are real, usable as `design.slide
+.background_gradient` (the slide's own native background fill,
+`design.slide.background` remains its unused-once-set fallback) or as a
+`shape_styles` entry's `fill` (`deckifyr.schema.design.Gradient`/
+`GradientStop`, alongside the existing plain-color `fill: str`) --
+`deckifyr.plan.resolve_gradient` resolves each stop's `color` through
+`design.colors` the same "token or bare literal" way every other color
+field already does. `python-pptx`'s own `FillFormat.gradient()`
+installs a fixed two default stops and its `gradient_stops` collection
+(`_GradientStops`) is a read/write-in-place `Sequence` with no public
+way to add or remove a stop -- confirmed directly against its source,
+not assumed from docs -- so `deckifyr.pptx.compose._apply_gradient`
+rebuilds the `<a:gsLst>` element's children via lxml for an arbitrary
+stop count, the same confined-OOXML-workaround pattern
+`_set_cell_borders` already uses for a different `python-pptx` gap
+(both now share the `_DRAWINGML_NS` constant), verified against a real
+`.pptx` reopened with `python-pptx` for both a 2-stop and a 3-stop
+gradient (exact stop colors/positions and gradient angle all
+round-tripped). It still calls the public `fill.gradient()` first (that
+installs the `<a:lin>` element `gradient_angle`'s own public setter
+requires) and sets the angle via that public setter -- only the stop
+list itself is hand-built. `Gradient.angle` follows `python-pptx`'s own
+convention (0 = left-to-right, increasing = clockwise, so 90 =
+top-to-bottom), not CSS's `linear-gradient()` convention. Speaker notes
+(spec §7.1/§18 Phase 1,
 `Slide.notes` in `presentation.yaml`) are real: a plain string, not a
 slide element -- no box/style/z_index, no design-token resolution --
 that `deckifyr.plan.expand_slide` carries straight through onto

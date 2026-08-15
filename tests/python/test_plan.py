@@ -10,6 +10,7 @@ from deckifyr.schema.design import (
     ShapeStyle,
     SlideSize,
     StatusFurniture,
+    StatusIndicatorStyle,
     TableStyle,
     TextStyle,
 )
@@ -571,25 +572,77 @@ def test_background_image_synthesizes_a_full_bleed_image_behind_everything():
     assert background.alt_text == "Background image"
 
 
-def test_status_furniture_disabled_by_default():
+def test_status_indicator_unset_renders_nothing_even_if_design_configures_it():
     design = _design(
-        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=False))
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
     slide = Slide(id="s1", layout=None, elements=[])
     resolved = expand_slide(slide, None, design, strict=True)
     assert resolved.elements == []
 
 
-def test_status_furniture_enabled_renders_its_text():
+def test_status_indicator_none_renders_nothing():
     design = _design(
-        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True, text="DRAFT"))
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
     slide = Slide(id="s1", layout=None, elements=[])
-    resolved = expand_slide(slide, None, design, strict=True)
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="none", watermark_text="DRAFT"
+    )
+    assert resolved.elements == []
+
+
+def test_status_indicator_watermark_renders_the_watermark_text():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
     (element,) = resolved.elements
     assert element.id == "__furniture_status"
     assert element.type == "text"
     assert element.value == "DRAFT"
+    assert element.center is True
+
+
+def test_status_indicator_corner_selects_its_own_placement():
+    design = _design(
+        furniture=Furniture(
+            status=StatusFurniture(
+                watermark=StatusIndicatorStyle(box=_box(width="9in")),
+                corner_br=StatusIndicatorStyle(box=_box(x="8in", y="6.5in")),
+            )
+        )
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="corner-br", watermark_text="DRAFT"
+    )
+    (element,) = resolved.elements
+    assert element.x == parse_length("8in", strict=True)
+    assert element.width == parse_length("1in", strict=True)  # from _box()'s own default
+
+
+def test_status_indicator_with_no_design_placement_raises():
+    design = _design(furniture=Furniture(status=StatusFurniture()))
+    slide = Slide(id="s1", layout=None, elements=[])
+    with pytest.raises(ContentValidationError):
+        expand_slide(
+            slide, None, design, strict=True, status_indicator="corner-tl", watermark_text="DRAFT"
+        )
+
+
+def test_status_indicator_corner_with_no_watermark_text_is_skipped_not_an_error():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(corner_tl=StatusIndicatorStyle(box=_box())))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="corner-tl", watermark_text=None
+    )
+    assert resolved.elements == []
 
 
 def test_branding_furniture_presence_is_the_toggle():
@@ -642,23 +695,27 @@ def test_page_number_disabled():
 
 def test_slide_can_remove_a_furniture_element():
     design = _design(
-        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True))
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
     slide = Slide(id="s1", layout=None, elements={"__furniture_status": Element(remove=True)})
-    resolved = expand_slide(slide, None, design, strict=True)
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
     assert resolved.elements == []
 
 
 def test_slide_can_override_a_furniture_elements_box():
     design = _design(
-        furniture=Furniture(status=StatusFurniture(box=_box(), enabled=True))
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
     slide = Slide(
         id="s1",
         layout=None,
         elements={"__furniture_status": Element(box=_box(width="4in"))},
     )
-    resolved = expand_slide(slide, None, design, strict=True)
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
     (element,) = resolved.elements
     assert element.width == parse_length("4in", strict=True)
 
@@ -671,3 +728,205 @@ def test_furniture_paints_behind_a_named_layouts_own_zones():
     slide = Slide(id="s1", layout="main", elements={})
     resolved = expand_slide(slide, layout, design, strict=True)
     assert [e.id for e in resolved.elements] == ["__furniture_branding", "title"]
+
+
+def test_status_indicator_rotation_flows_to_the_resolved_element():
+    design = _design(
+        furniture=Furniture(
+            status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box(), rotation=-30))
+        )
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
+    (element,) = resolved.elements
+    assert element.rotation == -30
+
+
+def test_status_indicator_z_index_defaults_to_the_overlay_constant():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
+    (element,) = resolved.elements
+    assert element.z_index < 0
+
+
+def test_status_indicator_z_index_override_paints_on_top_of_ordinary_content():
+    design = _design(
+        furniture=Furniture(
+            status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box(), z_index=9999))
+        )
+    )
+    layout = Layout(elements={"title": Element(type="text", value="hi", box=_box())})
+    slide = Slide(id="s1", layout="main", elements={})
+    resolved = expand_slide(
+        slide, layout, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
+    # Ordinary elements default to z_index 0; the watermark's explicit
+    # 9999 must sort after it, i.e. paint on top.
+    assert [e.id for e in resolved.elements] == ["title", "__furniture_status"]
+
+
+def test_resolve_text_style_passes_opacity_through():
+    design = _design(
+        text_styles={
+            "watermark": TextStyle(font="heading", size="20pt", color="primary", opacity=0.3)
+        }
+    )
+    from deckifyr.plan import resolve_text_style
+
+    style = resolve_text_style(design, "watermark")
+    assert style.opacity == 0.3
+
+
+def test_resolve_text_style_passes_text_transform_through():
+    design = _design(
+        text_styles={
+            "watermark": TextStyle(
+                font="heading", size="20pt", color="primary", text_transform="uppercase"
+            )
+        }
+    )
+    from deckifyr.plan import resolve_text_style
+
+    style = resolve_text_style(design, "watermark")
+    assert style.text_transform == "uppercase"
+
+
+def test_resolve_text_style_opacity_defaults_to_none():
+    design = _design()
+    from deckifyr.plan import resolve_text_style
+
+    style = resolve_text_style(design, "title")
+    assert style.opacity is None
+
+
+def test_expand_presentation_threads_status_indicator_and_watermark_through():
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import BuildConfig, DesignRef, Metadata
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="T"),
+        build=BuildConfig(output="build/out.pptx"),
+        status_indicator="watermark",
+        watermark="DRAFT",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
+    assert [e.id for e in resolved_slide.elements] == ["__furniture_status"]
+    assert resolved_slide.elements[0].value == "DRAFT"
+
+
+def test_expand_presentation_falls_back_to_metadata_status_when_watermark_unset():
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import BuildConfig, DesignRef, Metadata
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="T", status="demo"),
+        build=BuildConfig(output="build/out.pptx"),
+        status_indicator="watermark",
+        watermark=None,
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
+    (element,) = resolved_slide.elements
+    assert element.value == "demo"
+
+
+def test_expand_presentation_explicit_watermark_overrides_metadata_status():
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import BuildConfig, DesignRef, Metadata
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="T", status="demo"),
+        build=BuildConfig(output="build/out.pptx"),
+        status_indicator="watermark",
+        watermark="CONFIDENTIAL",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
+    (element,) = resolved_slide.elements
+    assert element.value == "CONFIDENTIAL"
+
+
+# ---------------------------------------------------------------------------
+# Gradients
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_gradient_resolves_stop_color_tokens():
+    from deckifyr.plan import resolve_gradient
+    from deckifyr.schema.design import Gradient, GradientStop
+
+    design = _design()
+    gradient = Gradient(
+        stops=[
+            GradientStop(color="primary", position=0.0),
+            GradientStop(color="#FFFFFF", position=1.0),
+        ],
+        angle=135,
+    )
+    resolved = resolve_gradient(design, gradient)
+    assert [stop.color for stop in resolved.stops] == ["#111111", "#FFFFFF"]
+    assert [stop.position for stop in resolved.stops] == [0.0, 1.0]
+    assert resolved.angle == 135
+
+
+def test_shape_style_gradient_fill_resolves_to_a_resolved_gradient():
+    from deckifyr.plan import ResolvedGradient
+    from deckifyr.schema.design import Gradient, GradientStop, ShapeStyle
+
+    design = _design(
+        shape_styles={
+            "card": ShapeStyle(
+                fill=Gradient(
+                    stops=[
+                        GradientStop(color="primary", position=0.0),
+                        GradientStop(color="text", position=1.0),
+                    ]
+                )
+            )
+        }
+    )
+    layout = Layout(
+        elements={
+            "box": Element(type="shape", shape_kind="rectangle", box=_box(), style="card")
+        }
+    )
+    slide = Slide(id="s1", layout="main", elements={})
+    resolved = expand_slide(slide, layout, design, strict=True)
+    (element,) = resolved.elements
+    assert isinstance(element.shape_style.fill, ResolvedGradient)
+    assert [stop.color for stop in element.shape_style.fill.stops] == ["#111111", "#000000"]

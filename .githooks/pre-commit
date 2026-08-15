@@ -28,6 +28,15 @@
 #   # binary and Rscript on PATH (see examples/demo-deck/README.md)
 #   cp examples/demo-deck/build/demo-deck.pptx man/figures/demo-deck.pptx
 #
+# man/figures/demo-deck-corner-tr-example.png is a supplementary asset,
+# not part of the group above -- it renders status_indicator: corner-tr
+# from a throwaway copy of the project (presentation.yaml's own
+# status_indicator: watermark is untouched), to show that alternative
+# placement actually composed. Only regenerate it if design.yaml's
+# furniture.status.corner_tr itself changes; see
+# examples/demo-deck/README.md's own "Where the background and
+# watermark come from" section for the exact reproduction steps.
+#
 # Add a case here whenever a new rendered-doc-asset group is added,
 # alongside a matching note in CONTRIBUTING.md -- this is the
 # machine-checkable half of the same rule, kept next to it so they're

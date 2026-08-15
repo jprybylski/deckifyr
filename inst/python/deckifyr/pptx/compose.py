@@ -33,6 +33,7 @@ from PIL import Image
 from pptx import Presentation as PptxPresentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
@@ -40,9 +41,11 @@ from pptx.util import Emu, Pt
 from deckifyr import __version__ as DECKIFYR_VERSION
 from deckifyr.plan import (
     ResolvedElement,
+    ResolvedGradient,
     ResolvedSlide,
     ResolvedTableStyle,
     ResolvedTextStyle,
+    resolve_gradient,
     resolve_text_style,
 )
 from deckifyr.renderers.quarto import QuartoExecutionConfig
@@ -108,6 +111,8 @@ _DEFAULT_FOOTER_STYLE = ResolvedTextStyle(
     bold=False,
     italic=False,
     color=_DEFAULT_FOOTER_COLOR,
+    opacity=None,
+    text_transform=None,
 )
 
 # Border weight applied when a `table_style` sets `border_color` but no
@@ -141,6 +146,11 @@ _SHAPE_KIND_MAP = {
 # line would otherwise place nothing a viewer can actually see.
 _DEFAULT_LINE_COLOR = "#000000"
 _DEFAULT_LINE_WIDTH_PT = 1.0
+
+# `a:`-namespaced raw XML built by hand for the OOXML gaps `python-pptx`
+# has no public API for -- table-cell borders (`_set_cell_borders`) and
+# arbitrary-length gradient stop lists (`_apply_gradient`).
+_DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 
 @dataclass
@@ -186,6 +196,8 @@ def _resolve_footer_style(design: DesignDocument) -> ResolvedTextStyle:
         bold=_DEFAULT_FOOTER_STYLE.bold,
         italic=_DEFAULT_FOOTER_STYLE.italic,
         color=design.colors.get("muted", _DEFAULT_FOOTER_COLOR),
+        opacity=_DEFAULT_FOOTER_STYLE.opacity,
+        text_transform=_DEFAULT_FOOTER_STYLE.text_transform,
     )
 
 
@@ -227,6 +239,57 @@ def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionC
 
 def _hex_to_rgbcolor(value: str) -> RGBColor:
     return RGBColor.from_string(value.lstrip("#"))
+
+
+def _apply_gradient(fill: Any, gradient: ResolvedGradient) -> None:
+    """Set a `FillFormat` (a shape's own `shape.fill`, or a slide's
+    `slide.background.fill`) to a linear gradient with an arbitrary
+    number of stops.
+
+    `python-pptx`'s own `FillFormat.gradient()` establishes a gradient
+    with a fixed two default stops, and its `gradient_stops` collection
+    (`_GradientStops`) is a read/write-in-place `Sequence` with no public
+    way to add or remove stops -- confirmed directly against its source,
+    not assumed from docs. So this rebuilds the `<a:gsLst>` element's
+    children via lxml, the same confined-OOXML-workaround pattern
+    `_set_cell_borders` above uses for a different `python-pptx` gap,
+    verified against a real `.pptx` reopened with `python-pptx` (2+ and
+    3-stop cases both round-tripped their exact stop colors/positions and
+    gradient angle). `fill.gradient()` is still called first -- it's what
+    actually switches the fill type to gradient and installs the `<a:lin>`
+    element `gradient_angle`'s setter requires -- this only replaces the
+    stop list underneath it and reuses the public `gradient_angle` setter
+    for the angle itself.
+    """
+    fill.gradient()
+    grad_fill = fill._xPr.get_or_change_to_gradFill()
+    gs_lst = grad_fill.gsLst
+    for gs in list(gs_lst):
+        gs_lst.remove(gs)
+    for stop in gradient.stops:
+        rgb = stop.color.lstrip("#")
+        pos = int(round(stop.position * 100000))
+        gs = parse_xml(f'<a:gs xmlns:a="{_DRAWINGML_NS}" pos="{pos}"><a:srgbClr val="{rgb}"/></a:gs>')
+        gs_lst.append(gs)
+    fill.gradient_angle = gradient.angle
+
+
+def _apply_text_alpha(run: Any, opacity: float) -> None:
+    """Set a text run's fill opacity (`TextStyle.opacity`, spec section
+    7.4). `python-pptx` has no public API for run color alpha --
+    `ColorFormat` only models the color itself -- so this appends an
+    `<a:alpha>` child directly to the `<a:srgbClr>` element
+    `run.font.color.rgb`'s own setter already created, the same confined
+    lxml pattern `_set_cell_borders`/`_apply_gradient` use for other
+    `python-pptx` gaps, verified against a real `.pptx` reopened with
+    `python-pptx` (the alpha child round-tripped exactly). Must run after
+    `run.font.color.rgb` is set -- that's what creates the `<a:srgbClr>`
+    element this appends to.
+    """
+    rPr = run._r.get_or_add_rPr()
+    srgb_clr = rPr.find(qn("a:solidFill")).find(qn("a:srgbClr"))
+    val = int(round(opacity * 100000))
+    srgb_clr.append(parse_xml(f'<a:alpha xmlns:a="{_DRAWINGML_NS}" val="{val}"/>'))
 
 
 def _sha256_file(path: Path) -> str:
@@ -296,6 +359,22 @@ def _inline_spans(text: str) -> list[tuple[str, bool, bool]]:
     return spans
 
 
+def _apply_text_transform(text: str, transform: str | None) -> str:
+    """Apply a `TextStyle.text_transform` case transform (spec section
+    7.4) to one run's text. `None`/`"none"` (the vast majority of
+    styles) is a no-op; every other value is a plain `str` method, not
+    an OOXML feature -- unlike `opacity`, there's no `python-pptx` gap
+    to work around here.
+    """
+    if transform == "uppercase":
+        return text.upper()
+    if transform == "lowercase":
+        return text.lower()
+    if transform == "capitalize":
+        return text.title()
+    return text
+
+
 def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument) -> Any:
     shape = slide.shapes.add_textbox(
         Emu(element.x), Emu(element.y), Emu(element.width), Emu(element.height)
@@ -310,6 +389,8 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
     # python-pptx's default insets shrinking the usable area.
     text_frame.margin_left = text_frame.margin_right = Emu(0)
     text_frame.margin_top = text_frame.margin_bottom = Emu(0)
+    if element.center:
+        text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
 
     style = element.style
     font_name = style.font if style else design.fonts.body
@@ -317,6 +398,8 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
     font_color = style.color if style else design.colors.get("text", "#000000")
     style_bold = style.bold if style else False
     style_italic = style.italic if style else False
+    font_opacity = style.opacity if style else None
+    text_transform = style.text_transform if style else None
 
     if element.type == "markdown":
         paragraphs = [
@@ -327,9 +410,11 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
 
     for index, (level, spans) in enumerate(paragraphs):
         paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        if element.center:
+            paragraph.alignment = PP_ALIGN.CENTER
         for text, span_bold, span_italic in spans:
             run = paragraph.add_run()
-            run.text = text
+            run.text = _apply_text_transform(text, text_transform)
             run.font.name = font_name
             run.font.size = Pt(font_size_pt)
             # A markdown heading (`#`) is bold regardless of the resolved
@@ -337,6 +422,8 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
             run.font.bold = span_bold or level > 0 or style_bold
             run.font.italic = span_italic or style_italic
             run.font.color.rgb = _hex_to_rgbcolor(font_color)
+            if font_opacity is not None:
+                _apply_text_alpha(run, font_opacity)
 
     if element.alt_text:
         _set_alt_text(shape, element.alt_text)
@@ -357,15 +444,17 @@ def _add_autoshape(slide: Any, element: ResolvedElement) -> Any:
     shape.rotation = element.rotation
 
     style = element.shape_style
-    fill_color = style.fill if style else None
+    fill = style.fill if style else None
     line_color = style.line_color if (style and style.line_color) else _DEFAULT_LINE_COLOR
     line_width_pt = (
         style.line_width_pt if (style and style.line_width_pt) else _DEFAULT_LINE_WIDTH_PT
     )
 
-    if fill_color:
+    if isinstance(fill, ResolvedGradient):
+        _apply_gradient(shape.fill, fill)
+    elif fill:
         shape.fill.solid()
-        shape.fill.fore_color.rgb = _hex_to_rgbcolor(fill_color)
+        shape.fill.fore_color.rgb = _hex_to_rgbcolor(fill)
     else:
         shape.fill.background()
 
@@ -594,8 +683,6 @@ def _add_reportifyr_shape(
 # Tables
 # ---------------------------------------------------------------------------
 
-_LINE_XML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-
 
 def _set_cell_borders(cell: Any, *, color: str, width_pt: float) -> None:
     """Set all four sides of a table cell's border to a uniform color/width.
@@ -617,7 +704,7 @@ def _set_cell_borders(cell: Any, *, color: str, width_pt: float) -> None:
     rgb = color.lstrip("#")
     for tag in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
         line = parse_xml(
-            f'<{tag} xmlns:a="{_LINE_XML_NS}" w="{width_emu}">'
+            f'<{tag} xmlns:a="{_DRAWINGML_NS}" w="{width_emu}">'
             f'<a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill>'
             f"</{tag}>"
         )
@@ -965,10 +1052,21 @@ def compose(
     element_manifest: list[dict[str, Any]] = []
     warnings: list[str] = []
 
+    # Resolved once per build, not once per slide -- every slide's native
+    # background fill is the same `design.slide` token(s).
+    background_gradient = (
+        resolve_gradient(design, design.slide.background_gradient)
+        if design.slide.background_gradient is not None
+        else None
+    )
+
     for resolved_slide in resolved_slides:
         slide = prs.slides.add_slide(blank_layout)
-        slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = _hex_to_rgbcolor(design.slide.background)
+        if background_gradient is not None:
+            _apply_gradient(slide.background.fill, background_gradient)
+        else:
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = _hex_to_rgbcolor(design.slide.background)
 
         notes_parts = [resolved_slide.notes] if resolved_slide.notes else []
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from deckifyr.schema.design import DesignDocument
+from deckifyr.schema.design import DesignDocument, Gradient
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.merge import deep_merge
@@ -73,6 +73,26 @@ class ResolvedTextStyle:
     bold: bool
     italic: bool
     color: str
+    opacity: float | None
+    text_transform: str | None
+
+
+@dataclass
+class ResolvedGradientStop:
+    color: str
+    position: float
+
+
+@dataclass
+class ResolvedGradient:
+    """A `design.yaml` `Gradient` with its stop colors already resolved to
+    literal values, mirroring `ResolvedTextStyle`/`ResolvedShapeStyle`.
+    `angle` is passed straight through -- it has no token indirection to
+    resolve, unlike `stops[*].color`.
+    """
+
+    stops: list[ResolvedGradientStop]
+    angle: float
 
 
 @dataclass
@@ -81,10 +101,13 @@ class ResolvedShapeStyle:
     already resolved to literal values, mirroring `ResolvedTextStyle`.
     Any field left `None` here means "use `deckifyr.pptx.compose`'s own
     default", not "no style" -- that distinction is only meaningful at
-    `design.yaml`'s `ShapeStyle` level.
+    `design.yaml`'s `ShapeStyle` level. `fill` is a `ResolvedGradient`
+    rather than a plain color when the style's own `fill` was a
+    `Gradient` (spec section 7.4) -- `deckifyr.pptx.compose` branches on
+    which one it got.
     """
 
-    fill: str | None
+    fill: str | ResolvedGradient | None
     line_color: str | None
     line_width_pt: float | None
 
@@ -128,6 +151,7 @@ class ResolvedElement:
     shape_kind: str | None = None
     shape_style: ResolvedShapeStyle | None = None
     table_style: ResolvedTableStyle | None = None
+    center: bool = False
     # `group`-only: already-resolved children, sorted by paint order the
     # same way `ResolvedSlide.elements` is.
     children: list["ResolvedElement"] = field(default_factory=list)
@@ -175,7 +199,32 @@ def resolve_text_style(
     size_pt = parse_length(style.size, strict=True) / EMU_PER_POINT
 
     return ResolvedTextStyle(
-        font=font, size_pt=size_pt, bold=style.bold, italic=style.italic, color=color
+        font=font,
+        size_pt=size_pt,
+        bold=style.bold,
+        italic=style.italic,
+        color=color,
+        opacity=style.opacity,
+        text_transform=style.text_transform,
+    )
+
+
+def resolve_gradient(design: DesignDocument, gradient: Gradient) -> ResolvedGradient:
+    """Resolve a `design.yaml` `Gradient`'s stop colors to literal values.
+
+    Public (not `_`-prefixed) because `deckifyr.pptx.compose` reuses it
+    directly for `design.slide.background_gradient` -- a slide-level
+    field `deckifyr.plan` never turns into a `ResolvedElement`/shape
+    style, so it has no other resolution point in this module.
+    """
+    return ResolvedGradient(
+        stops=[
+            ResolvedGradientStop(
+                color=design.colors.get(stop.color, stop.color), position=stop.position
+            )
+            for stop in gradient.stops
+        ],
+        angle=gradient.angle,
     )
 
 
@@ -191,7 +240,13 @@ def _resolve_shape_style(
             "shape_styles"
         )
 
-    fill = design.colors.get(style.fill, style.fill) if style.fill is not None else None
+    fill: str | ResolvedGradient | None
+    if isinstance(style.fill, Gradient):
+        fill = resolve_gradient(design, style.fill)
+    elif style.fill is not None:
+        fill = design.colors.get(style.fill, style.fill)
+    else:
+        fill = None
     line_color = (
         design.colors.get(style.line_color, style.line_color)
         if style.line_color is not None
@@ -506,12 +561,32 @@ def _resolve_element(
         shape_kind=merged.get("shape_kind"),
         shape_style=shape_style,
         table_style=table_style,
+        center=bool(merged.get("center", False)),
         children=children,
     )
 
 
+# Maps `PresentationDocument.status_indicator`'s hyphenated literal
+# values to `StatusFurniture`'s own underscored field names (spec
+# section 7.8's `StatusFurniture` docstring explains why the two spellings
+# differ). `"none"`/`None` are deliberately absent -- both mean "no status
+# indicator at all" and are handled before this mapping is consulted.
+_STATUS_INDICATOR_FIELDS = {
+    "watermark": "watermark",
+    "corner-tr": "corner_tr",
+    "corner-tl": "corner_tl",
+    "corner-bl": "corner_bl",
+    "corner-br": "corner_br",
+}
+
+
 def _furniture_layout(
-    design: DesignDocument, *, page_number: int, total_pages: int
+    design: DesignDocument,
+    *,
+    page_number: int,
+    total_pages: int,
+    status_indicator: str | None = None,
+    watermark_text: str | None = None,
 ) -> Layout:
     """Expand `design.yaml`'s `furniture` block (spec section 7.8) into
     reserved, low-`z_index` elements. Furniture is not a new element
@@ -519,6 +594,13 @@ def _furniture_layout(
     once per slide the same way a layout zone is, so they reuse existing
     merge, override, and composition machinery rather than a parallel
     code path (spec section 7.8's closing note).
+
+    `status_indicator`/`watermark_text` are `presentation.yaml`'s own
+    `PresentationDocument.status_indicator`/`.watermark` (threaded down
+    via `expand_slide`/`expand_presentation`): `status_indicator` picks
+    *which* of `design.yaml`'s `furniture.status` placements to use
+    (`None`/`"none"` means none at all), `watermark_text` is the actual
+    word to show.
     """
     elements: dict[str, Element] = {}
 
@@ -533,15 +615,34 @@ def _furniture_layout(
             alt_text=_FURNITURE_BACKGROUND_ALT_TEXT,
         )
 
-    status = design.furniture.status
-    if status is not None and status.enabled:
-        elements[_FURNITURE_STATUS_ID] = Element(
-            type="text",
-            value=status.text,
-            box=status.box,
-            style=status.style,
-            z_index=_FURNITURE_OVERLAY_Z_INDEX,
-        )
+    if status_indicator is not None and status_indicator != "none":
+        field_name = _STATUS_INDICATOR_FIELDS[status_indicator]
+        indicator_style = getattr(design.furniture.status, field_name)
+        if indicator_style is None:
+            raise ContentValidationError(
+                f"presentation.yaml sets status_indicator: {status_indicator!r}, "
+                f"but design.yaml's furniture.status has no {field_name!r} "
+                "configured"
+            )
+        # A full-page watermark with no text is rejected at schema
+        # validation (`PresentationDocument`'s own model validator); a
+        # small corner placement with no text is just empty content --
+        # skipped like any other unfilled, non-required element, not an
+        # error.
+        if watermark_text is not None:
+            elements[_FURNITURE_STATUS_ID] = Element(
+                type="text",
+                value=watermark_text,
+                box=indicator_style.box,
+                style=indicator_style.style,
+                rotation=indicator_style.rotation,
+                center=True,
+                z_index=(
+                    indicator_style.z_index
+                    if indicator_style.z_index is not None
+                    else _FURNITURE_OVERLAY_Z_INDEX
+                ),
+            )
 
     branding = design.furniture.branding
     if branding is not None:
@@ -583,9 +684,15 @@ def expand_slide(
     strict: bool,
     page_number: int = 1,
     total_pages: int = 1,
+    status_indicator: str | None = None,
+    watermark_text: str | None = None,
 ) -> ResolvedSlide:
     furniture_layout = _furniture_layout(
-        design, page_number=page_number, total_pages=total_pages
+        design,
+        page_number=page_number,
+        total_pages=total_pages,
+        status_indicator=status_indicator,
+        watermark_text=watermark_text,
     )
     combined_layout = Layout(
         elements={**furniture_layout.elements, **(layout.elements if layout else {})}
@@ -618,6 +725,19 @@ def expand_presentation(
     strict: bool,
 ) -> list[ResolvedSlide]:
     total_pages = len(presentation.slides)
+    # `presentation.watermark` is an explicit override; unset (the usual
+    # case, per this field's own docstring), the status indicator's text
+    # falls back to `metadata.status` -- the same free-text field authors
+    # already set ("draft", "demo", "final", ...) for descriptive
+    # purposes, so a status/watermark mark doesn't require typing the
+    # same word twice. `TextStyle.text_transform` (spec section 7.4),
+    # not this fallback, is what turns "demo" into "DEMO" -- this only
+    # decides which string gets used at all.
+    watermark_text = (
+        presentation.watermark
+        if presentation.watermark is not None
+        else presentation.metadata.status
+    )
     return [
         expand_slide(
             slide,
@@ -626,6 +746,8 @@ def expand_presentation(
             strict=strict,
             page_number=index + 1,
             total_pages=total_pages,
+            status_indicator=presentation.status_indicator,
+            watermark_text=watermark_text,
         )
         for index, slide in enumerate(presentation.slides)
     ]

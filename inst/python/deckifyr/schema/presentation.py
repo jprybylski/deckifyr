@@ -10,9 +10,9 @@ section 6, not yet implemented (see the module docstring in
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from deckifyr.schema.layouts import Element
+from deckifyr.schema.layouts import Element, StatusIndicatorMode
 from deckifyr.schema.version import check_schema_version
 
 
@@ -29,6 +29,10 @@ class Metadata(BaseModel):
 
     title: str
     author: str | None = None
+    # Free text ("draft", "demo", "final", ...) -- also the default
+    # status-indicator text (spec section 7.8) when `PresentationDocument
+    # .watermark` is unset (`deckifyr.plan.expand_presentation`), so a
+    # deck doesn't need the same word typed in two places.
     status: str | None = None
 
 
@@ -111,6 +115,26 @@ class PresentationDocument(BaseModel):
     layouts: str
     metadata: Metadata
     build: BuildConfig
+    # Which of `design.yaml`'s `furniture.status` placements (spec
+    # section 7.8) this build uses -- `None` (equivalent to `"none"`,
+    # the default) shows no status/watermark mark at all. Selecting a
+    # placement `design.yaml` never configured a `StatusIndicatorStyle`
+    # for is a build-time `ContentValidationError`
+    # (`deckifyr.plan._furniture_layout`), not a silent no-op.
+    status_indicator: StatusIndicatorMode | None = None
+    # The status/watermark mark's own text -- any word, a build-time
+    # choice (spec section 7.8), not a `design.yaml` constant. `None`
+    # (the default -- expected the common case) falls back to
+    # `metadata.status` (`deckifyr.plan.expand_presentation`), the same
+    # free-text field authors already set for descriptive purposes
+    # ("draft", "demo", "final", ...), so a status/watermark mark
+    # doesn't require typing the same word twice; set this explicitly
+    # only when the mark's text should differ from `metadata.status`.
+    # Simply unused when `status_indicator` selects nothing (see
+    # `_check_status_indicator_has_watermark_text` below for the one
+    # case where having neither this nor `metadata.status` is a
+    # validation error rather than a quiet no-op).
+    watermark: str | None = None
     slides: list[Slide]
 
     _check_version = field_validator("deckifyr")(check_schema_version)
@@ -124,3 +148,27 @@ class PresentationDocument(BaseModel):
                 raise ValueError(f"duplicate slide id {slide.id!r}")
             seen.add(slide.id)
         return slides
+
+    @model_validator(mode="after")
+    def _check_status_indicator_has_watermark_text(self) -> "PresentationDocument":
+        # A full-page watermark with no text would be a large, silently
+        # empty rotated box -- worth failing the build over, unlike a
+        # small corner placement with no text (`deckifyr.plan
+        # ._furniture_layout` simply skips that one, the same "no
+        # content, not required" rule an empty layout zone already
+        # follows). Only `"watermark"` gets this stricter check. `watermark`
+        # unset is fine as long as `metadata.status` supplies the text
+        # instead (`deckifyr.plan.expand_presentation`'s own fallback) --
+        # this only fails when *neither* would give the compositor
+        # anything to show.
+        if (
+            self.status_indicator == "watermark"
+            and self.watermark is None
+            and self.metadata.status is None
+        ):
+            raise ValueError(
+                "status_indicator: watermark requires either a non-null "
+                "'watermark' value or a non-null 'metadata.status' (the "
+                "text to display)"
+            )
+        return self

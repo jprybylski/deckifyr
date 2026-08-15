@@ -270,6 +270,11 @@ slide:
   width: 13.333in
   height: 7.5in
   background: "#FFFFFF"
+  background_gradient:          # optional; paints over `background` as the slide's own fill
+    stops:
+      - {color: "#F7FBFF", position: 0.0}
+      - {color: "#DEEBF7", position: 1.0}
+    angle: 135                  # 0 = left-to-right, increasing = clockwise; 90 = top-to-bottom
   safe_area: 0.35in
 
 fonts:
@@ -297,12 +302,38 @@ text_styles:
     font: body
     size: 8pt
     color: muted
+  watermark:
+    font: heading
+    size: 96pt
+    bold: true
+    color: primary
+    opacity: 0.28                # optional, 0.0-1.0; unset (the default) is fully opaque
+    text_transform: uppercase    # optional; none (default) / uppercase / lowercase / capitalize
 
 defaults:
   overflow: error
   image_fit: contain
   rotation: 0
+
+shape_styles:
+  callout-card:
+    fill:                       # a shape_styles `fill` accepts either a plain color/token
+      stops:                    # (as above) or, as here, a `Gradient` with 2+ stops
+        - {color: primary, position: 0.0}
+        - {color: "#FFFFFF", position: 1.0}
+      angle: 90
 ```
+
+A `Gradient` (either `slide.background_gradient` or a `shape_styles` entry's own `fill`) is a
+list of 2+ `{color, position}` stops plus an `angle`; `color` may be a `colors:` token or a
+literal hex value, the same "token or bare literal" convention every other color-bearing field
+in `design.yaml` already uses.
+
+A `text_styles` entry's `text_transform` (`none`/unset, `uppercase`, `lowercase`, or
+`capitalize`) applies a case transform to that style's own rendered text at compose time — the
+main use case is a status-indicator style (§7.8) turning `presentation.yaml`'s own free-text
+`metadata.status`/`watermark` value ("demo") into the all-caps convention a status/watermark mark
+conventionally uses ("DEMO") without requiring the author to type it that way.
 
 ### 7.5 Example `layouts.yaml`
 
@@ -349,6 +380,14 @@ build:
   output: build/exposure-summary.pptx
   manifest: build/exposure-summary.manifest.json
   previews: true
+
+# Optional (§7.8); selects one of design.yaml's furniture.status
+# placements. Omitting status_indicator (or setting it to "none") shows
+# no status marker at all.
+status_indicator: watermark   # or corner-tr / corner-tl / corner-bl / corner-br / none
+# The mark's own text is metadata.status above ("draft") by default --
+# no separate watermark: field needed here. Set watermark: explicitly
+# only when the mark's text should differ from metadata.status.
 
 slides:
   - id: title
@@ -409,6 +448,7 @@ Common element fields should include:
 | `alt_text` | Accessibility text |
 | `remove` | Remove an inherited layout element |
 | `required` | Fail validation if unresolved or empty |
+| `center` | Center text both horizontally and vertically within `box` (`text`/`markdown` only; default `false`) |
 
 Named elements are essential. Array indices should never be the primary override mechanism.
 
@@ -436,10 +476,18 @@ slide:
 
 furniture:
   status:
-    enabled: false             # e.g. true for draft decks, flipped off at release
-    text: DRAFT
-    box: {x: 0.5in, y: 6.9in, width: 3in, height: 0.35in}
-    style: footnote
+    # Each field is one placement presentation.yaml's own status_indicator
+    # (§7.6) may select -- nothing here is "the" status marker; a build
+    # picks one (or none) and supplies its own text, so design.yaml only
+    # configures the appearance a project actually intends to offer.
+    watermark:
+      box: {x: 0.5in, y: 2.5in, width: 12.3in, height: 2.5in}
+      style: watermark            # a text_styles entry with its own `opacity` (§7.4)
+      rotation: -30               # optional; angles status into a diagonal watermark
+      z_index: 9999                # optional; paints on top of ordinary content instead of behind it
+    corner_br:
+      box: {x: 10.5in, y: 6.9in, width: 2.5in, height: 0.35in}
+      style: footnote
   branding:
     text: "Acme Corp / Biostatistics"
     box: {x: 0.5in, y: 7.05in, width: 6in, height: 0.3in}
@@ -454,8 +502,8 @@ furniture:
 Design notes:
 
 - Furniture fields merge like any other `design.yaml` token (§7.2): an organization base can
-  set `branding.text` and enable `status`, and a project override can disable `status` for a
-  final deliverable, without redefining the whole block.
+  configure `furniture.status`'s placements and set `branding.text`, and a project override can
+  redefine or drop any of them, without redefining the whole block.
 - Each configured furniture item expands, once per slide, into a reserved element id
   (`__furniture_background`, `__furniture_status`, `__furniture_branding`,
   `__furniture_page_number`) merged into that slide's zones *ahead of* its named layout's own
@@ -467,14 +515,19 @@ Design notes:
   and element ids.
 - Furniture never obscures real content by default: `__furniture_background` composes at
   `z_index: -1000`, the other three at `z_index: -10`, both well below the `z_index: 0` every
-  ordinary element defaults to.
+  ordinary element defaults to. `status` is the one exception, and only when its selected
+  placement's own `z_index` (unset by default) is explicitly set: a genuine diagonal watermark
+  needs to read on top of whatever content it crosses (the conventional Word/Google Docs "DRAFT"
+  look), not hide behind it — see the `style: watermark`/`opacity` note below for how it stays
+  legible rather than fully obscuring what it crosses.
 - `background_image` composes with `slide.background`; the color remains the fallback/letterbox
   behind a non-covering image. It gets a fixed alt text ("Background image") rather than an
   author-configurable one, since every image element requires alt text (§13) and a decorative
   background has no author-facing content to describe.
-- `status`/`page_number` carry an `enabled` flag (default `false`/`true` respectively, as in the
-  example above); `branding` does not — whether the `branding` block is present at all *is* the
-  toggle.
+- `page_number` carries an `enabled` flag (default `true`); `branding` does not — whether the
+  `branding` block is present at all *is* the toggle. `status` has no `enabled` flag of its own
+  either: whether a status/watermark mark shows at all, and which placement, is entirely
+  `presentation.yaml`'s own `status_indicator` field (§7.6) — see below.
 - `page_number.format` supports exactly two placeholders, `{page}` (the slide's 1-indexed
   position) and `{total}` (the slide count), substituted via a plain `str.format` — this is a
   narrow, closed-form substitution for values an author cannot hand-write, not general
@@ -485,6 +538,50 @@ Design notes:
 - This does not introduce a new element `type`; furniture expands into ordinary `text`/`image`
   elements during Pass 1 (§6), so it reuses existing validation, styling, and PPTX composition
   rather than a parallel code path.
+- `furniture.status` is a set of named *placements*, not a single marker: `watermark` (a full,
+  diagonal, page-spanning mark) and `corner_tr`/`corner_tl`/`corner_bl`/`corner_br` (a small
+  label pinned to one of the slide's four corners), each its own independent
+  box/style/rotation/z_index. `presentation.yaml`'s `status_indicator` field (§7.6) picks exactly
+  one — `"watermark"`, one of the four `"corner-*"` values (hyphenated, since it's a plain YAML
+  string with no identifier restriction to satisfy, unlike `furniture.status`'s own underscored
+  field names), or `"none"`/unset (the default) for no status indicator at all. Selecting a
+  placement `design.yaml` never configured is a build-time `ContentValidationError`, not a
+  silent no-op — spec section 20 warning 7's "do not silently drop content" applies here as much
+  as anywhere else.
+- The status/watermark mark's actual text is `presentation.yaml`'s own top-level `watermark`
+  field (§7.6, any word, `null` by default) — a build-time choice, not a `design.yaml` constant,
+  since the same placement should be reusable for `DRAFT`, `CONFIDENTIAL`, `APPROVED`, or
+  anything else a project needs across different builds. Left unset (the expected common case),
+  it falls back to `metadata.status` (§7.6's own `title`/`author`/`status` block) — the same
+  free-text field authors already set for descriptive purposes ("draft", "demo", "final", ...),
+  so a deck doesn't need the same word typed in two places; set `watermark` explicitly only when
+  the mark's text should differ from `metadata.status`. It's simply unused when
+  `status_indicator` is `"none"`/unset. Selecting `status_indicator: watermark` with *neither*
+  `watermark` nor `metadata.status` set is a schema-validation error (`PresentationDocument`'s own
+  cross-field check) — a full-page watermark with nothing to say would be a large, silently empty
+  rotated box, worth failing over. A `corner-*` placement with no text from either source is not
+  an error, by contrast: it's simply empty content, skipped the same way any other unfilled,
+  non-required element already is.
+- A status indicator's text is always centered, both horizontally and vertically, within its own
+  box — a `center` field every ordinary `text`/`markdown` element also has (default `false`,
+  unaffected), forced on for `__furniture_status` specifically, since a short label/word (not
+  flowing body text) reads correctly centered and a large rotated watermark reads distractingly
+  off-center otherwise.
+- A placement's own `rotation` (default `0`, like every other element's own rotation default) is
+  what turns it into a genuine diagonal watermark rather than a small upright corner label — a
+  large, bold `text_styles` entry plus a `box` spanning most of the slide plus a `-30`/`45`-degree
+  `rotation` is an ordinary combination of fields this feature already had (this is exactly what
+  the `watermark` placement configures; the four `corner_*` placements typically leave `rotation`
+  at `0`). Two further fields make the `watermark` placement read as a real watermark rather than
+  a large label that happens to be diagonal: the placement's own `z_index` (unset by default, so
+  a plain corner label still paints behind content as every other furniture item does) opts into
+  painting *on top* of ordinary content instead — the conventional watermark placement — and the
+  paired `text_styles` entry's own `opacity` (§7.4, 0.0-1.0, unset means fully opaque) is what
+  keeps that on-top mark legible rather than fully obscuring whatever it crosses. Use a saturated
+  `color` (a `colors:` token like `primary`) with `opacity` doing the softening, not a separately
+  hand-mixed pale color — a flat pale color only looks right against one particular background,
+  where a translucent one reads consistently over images, table fills, or anything else it
+  happens to cross.
 
 ## 8. Quarto integration
 

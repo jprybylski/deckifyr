@@ -5,6 +5,8 @@ import yaml
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_FILL
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 
 from deckifyr.plan import expand_presentation
@@ -15,9 +17,13 @@ from deckifyr.schema.design import (
     DesignDocument,
     Fonts,
     Furniture,
+    Gradient,
+    GradientStop,
     PageNumberFurniture,
+    ShapeStyle,
     SlideSize,
     StatusFurniture,
+    StatusIndicatorStyle,
     TableStyle,
     TextStyle,
 )
@@ -220,7 +226,9 @@ def test_furniture_composes_as_ordinary_shapes(project):
         fonts=Fonts(body="Arial", heading="Arial"),
         furniture=Furniture(
             status=StatusFurniture(
-                enabled=True, box=Box(x="0in", y="0in", width="1in", height="0.3in")
+                watermark=StatusIndicatorStyle(
+                    box=Box(x="0in", y="0in", width="1in", height="0.3in")
+                )
             ),
             branding=BrandingFurniture(
                 text="Acme / R&D", box=Box(x="0in", y="0in", width="2in", height="0.3in")
@@ -236,6 +244,8 @@ def test_furniture_composes_as_ordinary_shapes(project):
         layouts="layouts.yaml",
         metadata=Metadata(title="Test"),
         build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="watermark",
+        watermark="DRAFT",
         slides=[
             Slide(
                 id="s1",
@@ -633,3 +643,294 @@ def test_rpfy_sourced_table_builds_and_footers_from_table_footnotes(project):
     manifest = json.loads(result.manifest_path.read_text())
     (element_entry,) = manifest["elements"]
     assert element_entry["resolved_path"].endswith("pk-summary.csv")
+
+
+# ---------------------------------------------------------------------------
+# Gradients
+# ---------------------------------------------------------------------------
+
+
+def test_shape_gradient_fill_composes_a_multi_stop_gradient(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        colors={"primary": "#2457A6"},
+        shape_styles={
+            "card": ShapeStyle(
+                fill=Gradient(
+                    stops=[
+                        GradientStop(color="primary", position=0.0),
+                        GradientStop(color="#C6DBEF", position=0.5),
+                        GradientStop(color="#FFFFFF", position=1.0),
+                    ],
+                    angle=135,
+                )
+            )
+        },
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="card",
+                        type="shape",
+                        shape_kind="rectangle",
+                        box=Box(x="0in", y="0in", width="3in", height="2in"),
+                        style="card",
+                    )
+                ],
+            )
+        ],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.fill.type == MSO_FILL.GRADIENT
+    stops = list(shape.fill.gradient_stops)
+    assert len(stops) == 3
+    assert [stop.position for stop in stops] == [0.0, 0.5, 1.0]
+    assert [str(stop.color.rgb) for stop in stops] == ["2457A6", "C6DBEF", "FFFFFF"]
+    assert shape.fill.gradient_angle == 135
+
+
+def test_slide_background_gradient_composes_on_every_slide(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(
+            width="10in",
+            height="7.5in",
+            background_gradient=Gradient(
+                stops=[
+                    GradientStop(color="#F7FBFF", position=0.0),
+                    GradientStop(color="#DEEBF7", position=1.0),
+                ],
+                angle=135,
+            ),
+        ),
+        fonts=Fonts(body="Arial", heading="Arial"),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        slides=[
+            Slide(id="s1", layout=None, elements=[]),
+            Slide(id="s2", layout=None, elements=[]),
+        ],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    for slide in prs.slides:
+        fill = slide.background.fill
+        assert fill.type == MSO_FILL.GRADIENT
+        stops = list(fill.gradient_stops)
+        assert [str(stop.color.rgb) for stop in stops] == ["F7FBFF", "DEEBF7"]
+        assert fill.gradient_angle == 135
+
+
+# ---------------------------------------------------------------------------
+# Watermark override (presentation.yaml's `watermark` field)
+# ---------------------------------------------------------------------------
+
+
+def test_status_indicator_watermark_composes_the_status_furniture(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        furniture=Furniture(
+            status=StatusFurniture(
+                watermark=StatusIndicatorStyle(
+                    box=Box(x="1in", y="1in", width="6in", height="1in"), rotation=-30
+                )
+            )
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="watermark",
+        watermark="DRAFT",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.name == "__furniture_status"
+    assert shape.text_frame.text == "DRAFT"
+    # `python-pptx` normalizes a negative rotation into 0-360 range.
+    assert shape.rotation == 330
+    # Centered both horizontally and vertically -- a status/watermark
+    # label is a single short word, not flowing body text.
+    assert shape.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE
+    assert shape.text_frame.paragraphs[0].alignment == PP_ALIGN.CENTER
+
+
+def test_status_indicator_uses_metadata_status_and_style_transform_when_watermark_unset(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        text_styles={
+            "watermark": TextStyle(
+                font="heading", size="60pt", color="#000000", text_transform="uppercase"
+            )
+        },
+        furniture=Furniture(
+            status=StatusFurniture(
+                watermark=StatusIndicatorStyle(
+                    box=Box(x="1in", y="1in", width="6in", height="1in"), style="watermark"
+                )
+            )
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test", status="demo"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="watermark",
+        # watermark left unset on purpose -- falls back to metadata.status.
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.text_frame.text == "DEMO"
+
+
+def test_status_indicator_corner_placement_composes_at_its_own_box(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        furniture=Furniture(
+            status=StatusFurniture(
+                corner_tl=StatusIndicatorStyle(
+                    box=Box(x="0.2in", y="0.2in", width="1.5in", height="0.4in")
+                )
+            )
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="corner-tl",
+        watermark="APPROVED",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.name == "__furniture_status"
+    assert shape.text_frame.text == "APPROVED"
+    assert shape.rotation == 0
+
+
+def test_status_indicator_unconfigured_placement_raises(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        furniture=Furniture(status=StatusFurniture()),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="corner-br",
+        watermark="DRAFT",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    with pytest.raises(ContentValidationError):
+        _build(project, presentation, design)
+
+
+def test_watermark_with_a_high_z_index_paints_on_top_of_ordinary_content(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        text_styles={
+            "watermark": TextStyle(font="heading", size="60pt", color="#A7BCDB", opacity=0.3)
+        },
+        furniture=Furniture(
+            status=StatusFurniture(
+                watermark=StatusIndicatorStyle(
+                    box=Box(x="1in", y="1in", width="6in", height="1in"),
+                    rotation=-30,
+                    style="watermark",
+                    z_index=9999,
+                )
+            )
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="watermark",
+        watermark="DRAFT",
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="body",
+                        type="text",
+                        value="hi",
+                        box=Box(x="0in", y="0in", width="1in", height="1in"),
+                    )
+                ],
+            )
+        ],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    shape_names = [shape.name for shape in slide.shapes]
+    # Painter's-algorithm order: the watermark's z_index (9999) sorts
+    # after the ordinary element's default (0), so it must be added
+    # (and therefore painted) last -- on top, not hidden behind it.
+    assert shape_names == ["body", "__furniture_status"]
+
+    watermark_shape = next(s for s in slide.shapes if s.name == "__furniture_status")
+    run = watermark_shape.text_frame.paragraphs[0].runs[0]
+    alpha = run._r.find(qn("a:rPr")).find(qn("a:solidFill")).find(qn("a:srgbClr")).find(
+        qn("a:alpha")
+    )
+    assert alpha is not None
+    assert alpha.get("val") == "30000"

@@ -17,6 +17,49 @@ from deckifyr.schema.layouts import Box
 from deckifyr.schema.version import check_schema_version
 
 
+class GradientStop(BaseModel):
+    """One color/position pair along a `Gradient`'s path -- mirrors
+    `python-pptx`'s own `a:gs` element, spec section 7.4's "token or bare
+    literal" convention for `color` included: `color` may name a
+    `design.yaml` `colors:` token or a literal hex value, resolved the
+    same way `TextStyle.color`/`ShapeStyle.fill` already are.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    color: str
+    position: float
+
+    @field_validator("position")
+    @classmethod
+    def _check_position_range(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"gradient stop position {value!r} must be between 0.0 and 1.0")
+        return value
+
+
+class Gradient(BaseModel):
+    """A linear gradient fill, usable anywhere a plain color fill is
+    (`SlideSize.background_gradient`, a `ShapeStyle.fill`). `angle`
+    follows `python-pptx`'s own `FillFormat.gradient_angle` convention:
+    0 is left-to-right, increasing angles rotate clockwise, so 90 (the
+    default) is top-to-bottom -- not the CSS `linear-gradient()`
+    convention some authors may expect from other tools.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    stops: list[GradientStop]
+    angle: float = 90
+
+    @field_validator("stops")
+    @classmethod
+    def _check_min_stops(cls, value: list[GradientStop]) -> list[GradientStop]:
+        if len(value) < 2:
+            raise ValueError("a gradient needs at least 2 stops")
+        return value
+
+
 class SlideSize(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -28,6 +71,12 @@ class SlideSize(BaseModel):
     # 7.8's `furniture` design) -- composes with `background` above, which
     # remains the fallback/letterbox color behind a non-covering image.
     background_image: str | None = None
+    # Optional linear gradient painted as the slide's own native
+    # background fill (spec section 7.4), in front of `background` (its
+    # solid-fill fallback is simply unused once this is set) and behind
+    # `background_image`/every other element -- the same "paint order"
+    # `background_image`'s own docstring above describes.
+    background_gradient: Gradient | None = None
 
 
 class Fonts(BaseModel):
@@ -46,6 +95,30 @@ class TextStyle(BaseModel):
     bold: bool = False
     italic: bool = False
     color: str
+    # Text fill opacity, 0.0 (fully transparent) to 1.0 (fully opaque,
+    # the default when unset). `python-pptx` has no public API for run
+    # color alpha, so `deckifyr.pptx.compose._apply_text_alpha` sets it
+    # directly via lxml when this is set -- the primary use case is a
+    # watermark-style `furniture.status` (spec section 7.8) that needs to
+    # read consistently on top of arbitrary slide content, not a general
+    # replacement for `color`.
+    opacity: float | None = None
+    # Case transform applied to this style's own rendered text at compose
+    # time (`deckifyr.pptx.compose._apply_text_transform`) -- `None` (the
+    # default) leaves text exactly as authored. The main use case is a
+    # status-indicator style (spec section 7.8) transforming
+    # `presentation.yaml`'s own free-text `metadata.status`/`watermark`
+    # value ("demo") into the all-caps convention a status/watermark mark
+    # conventionally uses ("DEMO") without requiring the author to type
+    # it that way themselves.
+    text_transform: Literal["none", "uppercase", "lowercase", "capitalize"] | None = None
+
+    @field_validator("opacity")
+    @classmethod
+    def _check_opacity_range(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ValueError(f"text style opacity {value!r} must be between 0.0 and 1.0")
+        return value
 
 
 class ShapeStyle(BaseModel):
@@ -59,7 +132,7 @@ class ShapeStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    fill: str | None = None
+    fill: str | Gradient | None = None
     line_color: str | None = None
     line_width: str | None = None
 
@@ -114,18 +187,65 @@ class Defaults(BaseModel):
     table_style: str | None = None
 
 
-class StatusFurniture(BaseModel):
-    """A draft/final marker (spec section 7.8) -- off by default, flipped
-    on for in-progress decks and off again at release, per the spec's own
-    example.
+class StatusIndicatorStyle(BaseModel):
+    """One `status_indicator` placement's own appearance -- a status/
+    watermark mark has no content of its own (spec section 7.8's
+    `furniture.status` never carries a default word the way, say,
+    `branding.text` does): `presentation.yaml`'s own
+    `PresentationDocument.watermark` supplies the actual text, any build
+    may choose, and this only says where/how it's drawn once chosen.
+
+    `z_index` (unset by default) is what actually chooses which of the
+    two conventional "status mark" designs this is: left unset, it keeps
+    every other furniture item's own default
+    (`_FURNITURE_OVERLAY_Z_INDEX`, well behind ordinary content) -- the
+    right choice for a small, simple corner label (a `corner_*` field
+    below). Set to a large positive value, it paints on top of every
+    ordinary element instead -- a real diagonal watermark (Word/Google
+    Docs style) needs to read on top of whatever content it crosses, not
+    hide behind it, which is also why that use case should pair
+    `rotation` with a low `opacity` on its `style` (`TextStyle.opacity`)
+    rather than relying on placement alone.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
-    text: str = "DRAFT"
     box: Box
     style: str | None = None
+    rotation: float = 0
+    z_index: float | None = None
+
+
+class StatusFurniture(BaseModel):
+    """A draft/final/status marker (spec section 7.8) -- off by default
+    (every field below is independently optional, and
+    `PresentationDocument.status_indicator` defaults to `None`/`"none"`),
+    flipped on for a specific build via `presentation.yaml` rather than
+    baked into `design.yaml` as always-on.
+
+    Each field is one placement `presentation.yaml`'s own
+    `status_indicator` may select -- a full, diagonal, page-spanning
+    watermark, or a small label in one of the slide's four corners --
+    with its own box/style/rotation/z_index (`StatusIndicatorStyle`).
+    `design.yaml` only has to configure the placements a project
+    actually intends to use; selecting one `status_indicator` has no
+    design-level style for it is a build-time
+    `ContentValidationError` (`deckifyr.plan._furniture_layout`), not a
+    silent no-op -- spec section 20 warning 7's "do not silently drop
+    content" applies here as much as anywhere else. Field names are
+    underscored (`corner_tr`, not `corner-tr`) to stay valid Python
+    identifiers; `StatusIndicatorMode`'s own literal values (what
+    `presentation.yaml` actually types) keep the hyphenated spelling,
+    since a YAML string has no such restriction.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    watermark: StatusIndicatorStyle | None = None
+    corner_tr: StatusIndicatorStyle | None = None
+    corner_tl: StatusIndicatorStyle | None = None
+    corner_bl: StatusIndicatorStyle | None = None
+    corner_br: StatusIndicatorStyle | None = None
 
 
 class BrandingFurniture(BaseModel):

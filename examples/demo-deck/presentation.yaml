@@ -52,6 +52,23 @@ build:
   reportifyr:
     standard_footnotes: standard_footnotes.yaml
 
+# Selects one of design.yaml's furniture.status placements (spec
+# section 7.8) -- nothing is on by default there, so an organization
+# base design doesn't force every deck built from it into a draft
+# watermark. `status_indicator: watermark` picks the full, diagonal,
+# on-top placement design.yaml's own furniture.status.watermark
+# configures (box/style/rotation/z_index); `corner-tr`/`corner-tl`/
+# `corner-bl`/`corner-br` would pick one of the four simpler corner
+# placements instead (design.yaml also configures `corner_br`, as an
+# example, though this build doesn't select it).
+#
+# No top-level `watermark:` field here -- it's left unset on purpose, so
+# the mark's text falls back to `metadata.status` above ("demo"), which
+# `design.yaml`'s `watermark` text_styles entry then uppercases
+# (`text_transform: uppercase`) into "DEMO". Setting `watermark:` here
+# explicitly would override that fallback with different text entirely.
+status_indicator: watermark
+
 slides:
   - id: title
     layout: blank

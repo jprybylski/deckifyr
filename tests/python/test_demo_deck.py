@@ -75,7 +75,12 @@ def test_demo_deck_builds_five_slides_with_expected_shapes(demo_deck_dir, tmp_pa
     slides = list(prs.slides)
     assert len(slides) == 5
 
-    furniture = {"__furniture_branding", "__furniture_page_number"}
+    furniture = {
+        "__furniture_background",
+        "__furniture_status",
+        "__furniture_branding",
+        "__furniture_page_number",
+    }
     shape_names_per_slide = [{shape.name for shape in slide.shapes} for slide in slides]
     assert shape_names_per_slide == [
         {"deck-title", "deck-subtitle"} | furniture,
@@ -156,9 +161,13 @@ def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path
     assert manifest["slide_count"] == 5
     # 2 + 3 + 3 + 2 + 3 elements across the five slides (title/
     # deck-subtitle; title/figure/note; title/figure/note; table-title/
-    # pk-table; closing-title/closing-note/logo), plus branding + page
-    # number furniture (spec section 7.8) on each of them.
-    assert len(manifest["elements"]) == 13 + 2 * 5
+    # pk-table; closing-title/closing-note/logo), plus background,
+    # status (watermark), branding, and page-number furniture (spec
+    # section 7.8) on each of them -- design.yaml sets a
+    # `background_image` and presentation.yaml's `status_indicator:
+    # watermark` (spec section 7.8) turns the status marker on for this
+    # build, with its text falling back to `metadata.status: demo`.
+    assert len(manifest["elements"]) == 13 + 4 * 5
 
     figure_entry = next(
         e for e in manifest["elements"] if e["slide_id"] == "concentration-time" and e["element_id"] == "figure"
