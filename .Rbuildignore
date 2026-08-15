@@ -17,6 +17,17 @@
 ^pyproject\.toml$
 ^CONTRIBUTING\.md$
 ^CLAUDE\.md$
+^docs$
+^_pkgdown\.yml$
+^pkgdown$
+^logo-files$
+^VERSION$
+# vignettes/articles/: pkgdown's own "article, not a real vignette" path
+# (same as ../quartifyr's). Site-only content, no VignetteBuilder needed.
+^vignettes/articles$
+# changelog.md: scratch file sync-release-metadata.R writes just before
+# R CMD build runs in the same release.yaml job; not meant to ship.
+^changelog\.md$
 # The Python test suite lives alongside tests/testthat/ for repo
 # convenience (spec section 5.4's planned tests/ layout) but isn't part
 # of the R package's own test story -- it's invoked directly via

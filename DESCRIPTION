@@ -3,7 +3,7 @@ Package: deckifyr
 Title: Declarative, Code-First PowerPoint Compiler
 Version: 0.0.0.9000
 Authors@R: person("John", "Prybylski", email = "jprybylski@gmail.com", role = c("aut", "cre", "cph"), comment = c(ORCID = "0000-0001-5802-0539"))
-URL: https://github.com/jprybylski/deckifyr
+URL: https://github.com/jprybylski/deckifyr, https://jprybylski.github.io/deckifyr/
 BugReports: https://github.com/jprybylski/deckifyr/issues
 Description: Generates .pptx presentations from version-controlled YAML
     and content files. Design tokens, logical layouts, and presentation
@@ -19,7 +19,9 @@ Imports:
     jsonlite
 Suggests:
     testthat (>= 3.0.0),
-    covr
+    covr,
+    rmarkdown,
+    pkgdown
 Config/testthat/edition: 3
 License: GPL (>= 3)
 Encoding: UTF-8

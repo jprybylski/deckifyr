@@ -1,0 +1,74 @@
+url: https://jprybylski.github.io/deckifyr/
+
+title: deckifyr
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#0054AD"
+  includes:
+    # Same fix as ../quartifyr's own _pkgdown.yml (confirmed there against a
+    # real deployed page, ported unmodified): pkgdown's markdown renderer
+    # already emits `<pre class="mermaid">` for ```mermaid fenced code
+    # blocks, but doesn't load mermaid.js itself outside Quarto-authored
+    # vignettes, and mermaid's run()/startOnLoad reads each element's
+    # innerHTML -- which here is `<pre class="mermaid"><code>...</code>
+    # </pre>` (standard pandoc/commonmark output), not the diagram source,
+    # so mermaid's parser rejects it with "Syntax error in text" unless the
+    # nested <code> is unwrapped first.
+    after_body: |
+      <script type="module">
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+        document.querySelectorAll("pre.mermaid > code").forEach((code) => {
+          code.parentElement.textContent = code.textContent;
+        });
+        mermaid.initialize({ startOnLoad: true });
+      </script>
+
+home:
+  title: deckifyr
+  description: >-
+    A declarative, code-first presentation compiler: .pptx decks generated
+    from version-controlled YAML instead of a hand-clicked PowerPoint
+    template.
+
+navbar:
+  structure:
+    left: [articles, reference, news]
+    right: [search, github]
+  components:
+    articles:
+      text: Articles
+      menu:
+        - text: Examples
+          href: articles/examples.html
+        - text: Python engine
+          href: articles/python-engine.html
+
+articles:
+  - title: Articles
+    navbar: ~
+    contents:
+      - articles/examples
+      - articles/python-engine
+
+reference:
+  - title: Build a deck
+    desc: Validate and compile a `presentation.yaml` into a `.pptx`.
+    contents:
+      - deck_validate
+      - deck_build
+  - title: Project setup
+    desc: One-time-per-project scaffolding and schema introspection.
+    contents:
+      - initialize_deck_project
+      - deck_schema
+  - title: Not yet implemented
+    desc: >-
+      Argument parsing is real; the bundled Python CLI raises
+      `NotImplementedFeatureError` for each of these today (see
+      CLAUDE.md's status table).
+    contents:
+      - deck_preview
+      - deck_inspect
+      - deck_serve

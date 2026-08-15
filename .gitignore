@@ -26,3 +26,9 @@ tests/testthat/testthat-problems.rds
 
 # Personal Claude Code permissions/settings, not project source
 .claude/
+
+# pkgdown build output -- source lives in man/, README.md, _pkgdown.yml;
+# docs/ itself is pure generated output (pkgdown's own default
+# `destination:`), deployed via .github/workflows/pages.yml's
+# upload-pages-artifact step, never committed.
+docs/
