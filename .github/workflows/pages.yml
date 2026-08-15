@@ -47,13 +47,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libuv1-dev libgit2-dev libcurl4-openssl-dev libssl-dev libxml2-dev
 
-      # The repo-root .Rprofile adds a2-ai.r-universe.dev to options(repos=)
-      # automatically once R starts here, so pak resolves pyro (no CRAN
-      # release for it) the same way local dev does.
-      - name: Install deckifyr and pkgdown
+      # Identical to R-CMD-check.yaml/test-coverage.yaml/release.yaml's own
+      # step -- keep all four in sync if DESCRIPTION's
+      # Additional_repositories ever changes. See CLAUDE.md's architecture
+      # notes on why the repo-root .Rprofile alone isn't trusted to cover
+      # every job/action combination here.
+      - name: Add Additional_repositories from DESCRIPTION (pyro via a2-ai.r-universe.dev)
         run: |
-          Rscript -e 'install.packages("pak", repos = "https://r-lib.github.io/p/pak/stable/")'
-          Rscript -e 'pak::pkg_install(c("local::.", "pkgdown"), dependencies = TRUE)'
+          raw <- read.dcf("DESCRIPTION", fields = "Additional_repositories")[1, 1]
+          if (!is.na(raw) && nzchar(raw)) {
+            repos <- trimws(strsplit(raw, ",")[[1]])
+            cat(sprintf("options(repos = c(getOption('repos'), %s))\n", deparse(repos)),
+                file = path.expand("~/.Rprofile"), append = TRUE)
+          }
+        shell: Rscript {0}
+
+      # r-lib's own canonical pkgdown.yaml example workflow
+      # (r-lib/actions/examples/pkgdown.yaml) uses exactly this action/needs
+      # combination. Previously this step called `pak::pkg_install(...,
+      # dependencies = TRUE)` directly -- that recursively pulls every
+      # Suggests of every transitive dependency (not just deckifyr's own)
+      # and, unlike this action, has no cross-run cache, which made a cold
+      # run take 15+ minutes for what R-CMD-check.yaml's own dependency
+      # install (same action, same repo) finishes in under a minute.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::pkgdown, local::.
+          needs: website
 
       - name: Build pkgdown site
         run: Rscript -e 'pkgdown::build_site(new_process = FALSE, install = FALSE)'
