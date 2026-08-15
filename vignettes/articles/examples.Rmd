@@ -44,6 +44,15 @@ Rendered output from a real `build/demo-deck.pptx`:
 <div><img src="../man/figures/demo-deck-closing.png" alt="demo-deck closing slide, showing freeform text and a rotated logo image" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Closing (freeform, rotated logo)</p></div>
 </div>
 
+Download the real built file:
+<!-- pkgdown copies man/figures/ to docs/reference/figures/ (confirmed via
+     a local pkgdown::build_site() run) and auto-rewrites <img> src paths
+     accordingly, but NOT plain markdown link hrefs -- an
+     `../man/figures/...` link here would 404 on the built site, so this
+     points straight at the real built location, same as
+     ../quartifyr's own examples.Rmd. -->
+[`demo-deck.pptx`](../reference/figures/demo-deck.pptx).
+
 See [`examples/demo-deck/README.md`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck)
 for exactly where the figure and table data come from, and which
 `design.yaml`/`layouts.yaml` fields each slide exercises.
