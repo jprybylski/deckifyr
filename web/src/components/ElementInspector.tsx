@@ -49,6 +49,14 @@ export default function ElementInspector({ plan }: Props) {
     );
   }
 
+  // `__furniture_*` ids (background/status/branding/page number, spec
+  // section 7.8) are synthesized once per slide at plan-time from
+  // design.yaml's `furniture` block, not stored per-slide -- there's no
+  // `PATCH .../elements/{id}` target for one no matter its `type`, so
+  // this note takes priority over the ordinary "not draggable yet" copy
+  // below (which implies future per-slide support that will never
+  // apply here).
+  const isFurniture = element.id.startsWith("__furniture_");
   const isPlaceholder = !["text", "markdown", "image"].includes(element.type);
   // Re-bind as plain (non-optional) locals right after the guard above
   // -- TypeScript can't carry narrowing from an outer `if` into a
@@ -92,11 +100,21 @@ export default function ElementInspector({ plan }: Props) {
     <aside className="element-inspector">
       <h3>{element.type}</h3>
       <p className="element-inspector__id">{element.id}</p>
-      {isPlaceholder && (
+      {isFurniture ? (
         <p className="element-inspector__note">
-          {element.type} elements aren't draggable on the canvas yet -- edit this element via
-          the config editor instead.
+          This is a deck-wide furniture element (design.yaml's <code>furniture</code> block), not
+          part of this slide -- it's fixed here. Uncheck &ldquo;Show furniture&rdquo; in the
+          toolbar to hide it while editing (view-only, doesn&rsquo;t change the built deck); toggle
+          the watermark/status placement itself above the slide list, or edit
+          background/branding/page-number furniture via the Config tab.
         </p>
+      ) : (
+        isPlaceholder && (
+          <p className="element-inspector__note">
+            {element.type} elements aren't draggable on the canvas yet -- edit this element via
+            the config editor instead.
+          </p>
+        )
       )}
 
       <label>

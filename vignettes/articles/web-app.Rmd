@@ -40,6 +40,28 @@ deck_stop_server(server)
 (how long to wait for the server to become reachable). See
 `?deck_serve` for the full argument list.
 
+The header always shows which project directory the running server is
+bound to -- useful since `deck_serve()`/`deckifyr serve` only ever
+serve one project per process, and it's easy to lose track of which
+one after switching terminals or `deck_stop_server()`-ing a few:
+
+<div style="margin: 1rem 0;">
+<!-- pkgdown copies man/figures/ to docs/reference/figures/ (confirmed via
+     a local pkgdown::build_site() run) and auto-rewrites <img> src paths
+     accordingly -- see examples.Rmd's own identical comment. -->
+<img src="../man/figures/web-app-editor.png" alt="The deckifyr web editor open against examples/demo-deck, showing the bound project path in the header, a Deck-wide options bar with Status/watermark set to Watermark, an unchecked Show furniture toolbar toggle, the title slide's real content unobstructed, and the slide list/inspector panels" width="700" loading="lazy">
+<p style="font-size:0.85em;">The editor open against <code>examples/demo-deck</code> -- furniture hidden (the default)</p>
+</div>
+
+If `deck_serve()`/`deckifyr serve` is started outside a real project
+(no `presentation.yaml` at the resolved path), the editor shows one
+plain message instead of a broken/empty canvas:
+
+<div style="margin: 1rem 0;">
+<img src="../man/figures/web-app-no-project.png" alt="The deckifyr web editor's project-not-found screen: a red file-not-found message and a short list of next steps (deckifyr init, or restart deckifyr serve --project pointed at a real project) -- no tabs, toolbar, or editor chrome shown" width="700" loading="lazy">
+<p style="font-size:0.85em;">Started outside a real project -- no tabs or editor chrome, just what to do next</p>
+</div>
+
 ## What the editor does today
 
 Once open, the editor shows the current presentation's resolved slide
@@ -50,6 +72,26 @@ plan and lets you:
 * Drag, resize, and rotate `text`, `markdown`, and `image` elements.
 * Click a selected `text`/`markdown` element again to edit its text
   inline.
+* Toggle the deck-wide status/watermark placement (`presentation.yaml`'s
+  `status_indicator`, spec section 7.8) on or off, and set its text,
+  from a "Deck-wide" bar above the slide list -- without opening the
+  config editor. This is a real, persisted edit: it writes to
+  `presentation.yaml` and changes what the *built* deck looks like.
+  This is deliberately the *only* furniture option exposed as a real
+  toggle (see the gap below for why).
+* Hide document furniture (background/watermark/branding/page number)
+  from the canvas entirely with the toolbar's "Show furniture"
+  checkbox -- **unchecked by default**. Unlike the toggle above, this
+  is purely a local view setting; it never touches any file, and it
+  exists specifically because a full-slide, on-top `watermark`
+  placement otherwise sits right in the way of selecting and dragging
+  the real content underneath it. Check it back on when you want to
+  see where furniture actually lands:
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-furniture.png" alt="The same slide with Show furniture checked: the diagonal watermark and the branding/page-number corner placeholders are now visible on top of and around the real content, each labeled furniture: status / furniture: branding / furniture: page_number" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Same slide, "Show furniture" checked</p>
+  </div>
 * Edit `design.yaml`/`layouts.yaml`/`presentation.yaml` directly, as
   raw JSON, with server-side schema validation before anything is
   written back to disk.
@@ -77,6 +119,22 @@ before you reach for it instead of editing YAML directly:
   just without a preview inside it.
 * **No image cropping or snapping guides.** Positioning is freehand;
   there's no ruler/grid snap or alignment assist yet.
+* **Document furniture (background/status/branding/page number, spec
+  section 7.8) is fixed on the canvas, not draggable.** These elements
+  are synthesized fresh from `design.yaml`'s `furniture` block at
+  plan time -- they don't exist as addressable per-slide elements in
+  `presentation.yaml`, so there's nothing for a drag to write back to.
+  They render as labeled placeholder boxes (`furniture: status`,
+  `furniture: branding`, ...) so you can see where they land, but
+  moving/resizing them means editing `design.yaml`'s `furniture` block
+  (via the config editor or `deck_set_config()`) instead. The one
+  exception is the status/watermark *placement choice itself*
+  (`none`/`watermark`/`corner-tr`/...), which is a real toggle in the
+  "Deck-wide" bar, since it's already a clean enum on
+  `presentation.yaml` -- `furniture.background`/`branding`/
+  `page_number` don't get an equivalent on/off switch here, since
+  enabling one means supplying a whole box/style sub-object, not
+  flipping a boolean.
 * **The config editor is raw JSON, not a schema-driven form.** You're
   editing the same document `deck_set_config()` would write, just as a
   whole file in a text box rather than one field at a time -- there's

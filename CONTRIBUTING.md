@@ -50,6 +50,14 @@ rerun the command above and commit the resulting diff under
 `web/`) runs the frontend's own vitest suite; run it before opening a
 PR that touches `web/src/`.
 
+`man/figures/web-app-editor.png`/`web-app-no-project.png`/
+`web-app-furniture.png` (real screenshots of a running editor, used in
+`vignettes/articles/web-app.Rmd`) are a second, separate rendered-doc-
+asset group from the `demo-deck-*` one above -- the pre-commit hook
+flags a `web/src/` change that doesn't also touch these two files; see
+`.githooks/pre-commit`'s own header comment for the exact Playwright-
+based regeneration recipe.
+
 ## R setup
 
 ```bash

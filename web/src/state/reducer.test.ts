@@ -28,6 +28,21 @@ describe("selection", () => {
   });
 });
 
+describe("showFurniture", () => {
+  it("defaults to hidden", () => {
+    expect(initialAppState.showFurniture).toBe(false);
+  });
+
+  it("toggles independently of every other field", () => {
+    const shown = appReducer(initialAppState, { type: "SET_SHOW_FURNITURE", show: true });
+    expect(shown.showFurniture).toBe(true);
+    expect(shown.selectedSlideId).toBe(initialAppState.selectedSlideId);
+
+    const hiddenAgain = appReducer(shown, { type: "SET_SHOW_FURNITURE", show: false });
+    expect(hiddenAgain.showFurniture).toBe(false);
+  });
+});
+
 describe("zoom", () => {
   it("sets zoom within range", () => {
     const next = appReducer(initialAppState, { type: "SET_ZOOM", zoom: 2 });

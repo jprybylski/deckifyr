@@ -20,6 +20,7 @@ import type {
   ConfigDocName,
   ConfigDocument,
   ElementPatchBody,
+  HealthResponse,
   Job,
   JobArtifactsResponse,
   PlanResponse,
@@ -71,7 +72,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-export function getHealth(): Promise<{ status: string }> {
+export function getHealth(): Promise<HealthResponse> {
   return request("/api/health");
 }
 

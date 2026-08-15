@@ -55,6 +55,14 @@ export default function Toolbar({ plan }: Props) {
       <button type="button" disabled={!plan.canRedo} onClick={() => void handleRedo()}>
         Redo
       </button>
+      <label className="toolbar__furniture-toggle">
+        <input
+          type="checkbox"
+          checked={state.showFurniture}
+          onChange={(e) => dispatch({ type: "SET_SHOW_FURNITURE", show: e.target.checked })}
+        />
+        Show furniture (background/watermark/branding/page number)
+      </label>
       {error && (
         <span className="toolbar__error" role="alert">
           {error}

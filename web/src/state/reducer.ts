@@ -32,6 +32,17 @@ export interface AppState {
   zoom: number;
   past: HistoryEntry[];
   future: HistoryEntry[];
+  /** Purely a canvas *rendering* choice, never sent to the server --
+   * distinct from `DeckOptions`' `status_indicator` toggle, which
+   * actually turns the watermark/status placement on or off in
+   * `presentation.yaml` for the built deck. This one just hides
+   * `__furniture_*` elements (background/status/branding/page number)
+   * from `SlideCanvas` so they stop sitting on top of (or under) the
+   * real content you're trying to select/drag -- default `false`
+   * (hidden) since that obstruction, not merely wanting to peek at
+   * furniture placement, is the actual day-to-day editing complaint
+   * this exists for. */
+  showFurniture: boolean;
 }
 
 export const initialAppState: AppState = {
@@ -40,6 +51,7 @@ export const initialAppState: AppState = {
   zoom: 1,
   past: [],
   future: [],
+  showFurniture: false,
 };
 
 export type AppAction =
@@ -48,7 +60,8 @@ export type AppAction =
   | { type: "SET_ZOOM"; zoom: number }
   | { type: "PUSH_HISTORY"; entry: HistoryEntry }
   | { type: "UNDO" }
-  | { type: "REDO" };
+  | { type: "REDO" }
+  | { type: "SET_SHOW_FURNITURE"; show: boolean };
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -89,6 +102,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const [entry, ...rest] = state.future;
       return { ...state, past: [...state.past, entry], future: rest };
     }
+
+    case "SET_SHOW_FURNITURE":
+      return { ...state, showFurniture: action.show };
 
     default:
       return state;

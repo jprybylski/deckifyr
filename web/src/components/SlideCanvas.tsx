@@ -34,7 +34,33 @@ import type { ElementPatchBody, ResolvedElement } from "../types";
 
 const DRAGGABLE_TYPES = new Set(["text", "markdown", "image"]);
 
-function elementLabel(element: ResolvedElement): string {
+// `__furniture_background`/`__furniture_status`/`__furniture_branding`/
+// `__furniture_page_number` (`inst/python/deckifyr/plan.py`'s own
+// `_FURNITURE_*_ID` constants) are synthesized once per slide at
+// plan-time from `design.yaml`'s `furniture` block + `presentation.yaml`'s
+// top-level `status_indicator` -- they don't exist in any slide's own
+// `elements` in the raw `presentation.yaml`, so `PATCH
+// /api/slides/{id}/elements/{id}` has nothing to find for one (a real
+// 404, confirmed against the API) and dragging one is a dead end no
+// matter its `type`. They render fixed (like the other non-draggable
+// placeholder types below) instead -- deck-wide options belong in
+// `DeckOptions`/the Config tab, not as a draggable per-slide element.
+const FURNITURE_PREFIX = "__furniture_";
+
+// Exported for direct unit testing (`SlideCanvas.logic.test.ts`) --
+// pure functions of an element, no DOM/Konva involved.
+export function isFurnitureElement(element: ResolvedElement): boolean {
+  return element.id.startsWith(FURNITURE_PREFIX);
+}
+
+export function isDraggableElement(element: ResolvedElement): boolean {
+  return DRAGGABLE_TYPES.has(element.type) && !isFurnitureElement(element);
+}
+
+export function elementLabel(element: ResolvedElement): string {
+  if (isFurnitureElement(element)) {
+    return `furniture: ${element.id.slice(FURNITURE_PREFIX.length)}`;
+  }
   if (element.type === "image") return `image: ${element.source ?? "?"}`;
   return `${element.type}: ${element.id}`;
 }
@@ -70,7 +96,7 @@ export default function SlideCanvas({ plan }: Props) {
     const transformer = transformerRef.current;
     if (!transformer) return;
     const node =
-      state.selectedElementId && DRAGGABLE_TYPES.has(selectedElement?.type ?? "")
+      state.selectedElementId && selectedElement && isDraggableElement(selectedElement)
         ? shapeRefs.current[state.selectedElementId]
         : undefined;
     transformer.nodes(node ? [node] : []);
@@ -100,9 +126,20 @@ export default function SlideCanvas({ plan }: Props) {
   const zoom = state.zoom;
   const baseWidthPx = inchesToPixels(slideSize.widthIn, 1);
   const baseHeightPx = inchesToPixels(slideSize.heightIn, 1);
+  // A pure view-time filter, not a data change -- `slide.elements` itself
+  // is untouched (ElementInspector/undo-redo/etc. still see furniture via
+  // the full plan), this only decides what SlideCanvas paints. Distinct
+  // from DeckOptions' status_indicator toggle: that one is persisted to
+  // presentation.yaml and changes what the *built* deck looks like;
+  // `showFurniture` never leaves the browser and exists specifically so
+  // the always-on-top watermark/status furniture (z_index 9999) doesn't
+  // sit in the way while dragging/selecting real slide content.
+  const visibleElements = state.showFurniture
+    ? slide.elements
+    : slide.elements.filter((element) => !isFurnitureElement(element));
 
   function selectOrEdit(element: ResolvedElement) {
-    if (state.selectedElementId === element.id && DRAGGABLE_TYPES.has(element.type) && element.type !== "image") {
+    if (state.selectedElementId === element.id && isDraggableElement(element) && element.type !== "image") {
       setEditingElementId(element.id);
       setEditingValue(typeof element.value === "string" ? element.value : "");
     } else {
@@ -201,14 +238,15 @@ export default function SlideCanvas({ plan }: Props) {
               fill="#ffffff"
               stroke="#cccccc"
             />
-            {slide.elements.map((element) => {
+            {visibleElements.map((element) => {
               const box = boxToInches(element.box);
               const x = inchesToPixels(box.x, 1);
               const y = inchesToPixels(box.y, 1);
               const width = inchesToPixels(box.width, 1);
               const height = inchesToPixels(box.height, 1);
               const isSelected = state.selectedElementId === element.id;
-              const isDraggable = DRAGGABLE_TYPES.has(element.type);
+              const isDraggable = isDraggableElement(element);
+              const isFurniture = isFurnitureElement(element);
 
               if (!isDraggable) {
                 return (
@@ -216,8 +254,8 @@ export default function SlideCanvas({ plan }: Props) {
                     <Rect
                       width={width}
                       height={height}
-                      fill="#f2f2f2"
-                      stroke={isSelected ? "#2457a6" : "#999999"}
+                      fill={isFurniture ? "#eef2f7" : "#f2f2f2"}
+                      stroke={isSelected ? "#2457a6" : isFurniture ? "#7a93b8" : "#999999"}
                       dash={[6, 4]}
                       onClick={() => dispatch({ type: "SELECT_ELEMENT", elementId: element.id })}
                       onTap={() => dispatch({ type: "SELECT_ELEMENT", elementId: element.id })}

@@ -90,7 +90,12 @@ def _serialize_slide(slide: ResolvedSlide) -> dict[str, Any]:
     }
 
 
-def create_app(project_root: Path, presentation_name: str = "presentation.yaml") -> FastAPI:
+def create_app(
+    project_root: Path,
+    presentation_name: str = "presentation.yaml",
+    *,
+    launcher: str = "cli",
+) -> FastAPI:
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
     job_manager = JobManager()
@@ -138,7 +143,14 @@ def create_app(project_root: Path, presentation_name: str = "presentation.yaml")
 
     @app.get("/api/health")
     def get_health() -> dict[str, Any]:
-        return {"status": "ok"}
+        # `launcher` deliberately rides on /api/health, not /api/project:
+        # it must be available even when the bound project itself fails to
+        # load (that's exactly when the frontend's "no project found"
+        # screen needs it, to show CLI- vs R-flavored next-step
+        # instructions -- `presentation.yaml`/`design.yaml`/`layouts.yaml`
+        # not existing yet is the whole point of that screen, so it can't
+        # depend on a route that requires them).
+        return {"status": "ok", "launcher": launcher}
 
     @app.get("/api/project")
     def get_project() -> dict[str, Any]:

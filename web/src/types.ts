@@ -74,6 +74,18 @@ export interface ProjectInfo {
   layouts: string;
 }
 
+/** Who launched this `deckifyr serve` process -- `cli.py`'s `serve
+ * --launcher` flag, default `"cli"`; `R/serve.R`'s `deck_serve()` passes
+ * `"r"`. Carried on `GET /api/health` (not `/api/project`, which is
+ * exactly the route that fails when there's no project to show
+ * launcher-appropriate "no project found" instructions for). */
+export type Launcher = "cli" | "r";
+
+export interface HealthResponse {
+  status: string;
+  launcher: Launcher;
+}
+
 export type ConfigDocName = "design" | "layouts" | "presentation";
 
 /** Raw, already-parsed YAML -- shape varies by document, so this is

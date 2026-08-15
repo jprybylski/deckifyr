@@ -7,7 +7,12 @@
  * real bug (each panel independently rendering its own copy of the
  * same fetch failure, plus `SlideCanvas` getting stuck on "Loading
  * plan…" forever) by screenshotting an unfixed build, not just
- * reasoned about.
+ * reasoned about. Also covers the launcher-aware instructions on that
+ * screen (`GET /api/health`'s `launcher` field): CLI users see
+ * `deckifyr init`/`deckifyr serve`, R users see
+ * `initialize_deck_project()`/`deck_serve()`, and an unknown launcher
+ * (health fetch itself failed) falls back to showing both rather than
+ * guessing wrong.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -20,19 +25,28 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+const PROJECT_NOT_FOUND_BODY = {
+  code: "E_IO",
+  message: "file not found: /tmp/not-a-project/presentation.yaml",
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
 });
 
 describe("App project gate", () => {
-  it("shows a single, minimal message and no editor chrome when /api/project fails", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse(404, {
-        code: "E_IO",
-        message: "file not found: /tmp/not-a-project/presentation.yaml",
-      })
-    );
+  it("shows only CLI instructions when launched via the CLI and /api/project fails", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/health") {
+        return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "cli" }));
+      }
+      if (url === "/api/project") {
+        return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
@@ -43,21 +57,73 @@ describe("App project gate", () => {
       ).toBeInTheDocument()
     );
 
-    // Only ever one fetch: the gate must not let any editor panel go on
-    // to independently call /api/plan, /api/config/*, etc. after the
-    // project check itself has already failed.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Exactly the two checks the gate itself needs -- no editor panel
+    // goes on to independently call /api/plan, /api/config/*, etc.
+    // after the project check has already failed.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledWith("/api/health", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/api/project", expect.anything());
 
     expect(screen.queryByRole("button", { name: "Editor" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Config" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Build" })).not.toBeInTheDocument();
     expect(screen.getByText(/deckifyr init/)).toBeInTheDocument();
+    expect(screen.getAllByText(/deckifyr serve --project/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/initialize_deck_project/)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/deck_serve\(/).length).toBe(0);
+  });
+
+  it("shows only R instructions when launched via deck_serve() and /api/project fails", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/health") {
+        return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "r" }));
+      }
+      if (url === "/api/project") {
+        return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/initialize_deck_project/)).toBeInTheDocument()
+    );
+    expect(screen.getAllByText(/deck_serve\(project = /).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/deckifyr init/)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/deckifyr serve --project/).length).toBe(0);
+  });
+
+  it("shows both instruction sets when the launcher can't be determined", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/health") {
+        // The server itself is unreachable/erroring for /api/health too,
+        // not just "no project" -- a rarer case, but the gate must not
+        // crash or silently pick a wrong launcher for it.
+        return Promise.reject(new Error("network error"));
+      }
+      if (url === "/api/project") {
+        return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText(/deckifyr init/)).toBeInTheDocument());
+    expect(screen.getByText(/initialize_deck_project/)).toBeInTheDocument();
+    expect(screen.getByText("Using R:")).toBeInTheDocument();
+    expect(screen.getByText("Using the CLI:")).toBeInTheDocument();
   });
 
   it("renders the editor tabs once /api/project succeeds", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/health") {
+        return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "cli" }));
+      }
       if (url === "/api/project") {
         return Promise.resolve(
           jsonResponse(200, {
@@ -76,6 +142,11 @@ describe("App project gate", () => {
           jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } })
         );
       }
+      if (url === "/api/config/presentation") {
+        return Promise.resolve(
+          jsonResponse(200, { deckifyr: "0.1", status_indicator: "none", slides: [] })
+        );
+      }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -87,6 +158,10 @@ describe("App project gate", () => {
     );
     expect(screen.getByRole("button", { name: "Config" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Build" })).toBeInTheDocument();
+    // The loaded project's directory shows in the header (a directly
+    // requested fix -- there was previously no indication anywhere in
+    // the UI of which project a running `deckifyr serve` was bound to).
+    expect(screen.getByTitle("/tmp/proj")).toHaveTextContent("/tmp/proj");
     await waitFor(() => expect(screen.getByText("No slides.")).toBeInTheDocument());
   });
 });

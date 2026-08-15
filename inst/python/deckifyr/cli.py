@@ -430,7 +430,7 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
     from deckifyr.web.app import create_app
 
     project_root = Path(args.project or ".").resolve()
-    app = create_app(project_root, args.presentation)
+    app = create_app(project_root, args.presentation, launcher=args.launcher)
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
     # default graceful shutdown handling, nothing custom here.
     uvicorn.run(app, host=args.host, port=args.port)
@@ -605,6 +605,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--presentation",
         default="presentation.yaml",
         help="presentation.yaml path, relative to --project (default: presentation.yaml)",
+    )
+    serve_parser.add_argument(
+        "--launcher",
+        choices=["cli", "r"],
+        default="cli",
+        help=(
+            "who's launching this (default: cli) -- surfaced via GET /api/health "
+            "so the frontend's 'no project found' screen can show deckifyr-CLI vs "
+            "R-facade instructions; R/serve.R's deck_serve() passes --launcher r"
+        ),
     )
     serve_parser.set_defaults(handler=_cmd_serve)
 

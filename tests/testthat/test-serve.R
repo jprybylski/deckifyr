@@ -154,7 +154,8 @@ test_that("deck_serve() launches the expected uv invocation and returns a deckif
       "run", "-m", "deckifyr", "serve",
       "--host", "127.0.0.1", "--port", "8321",
       "--project", normalizePath(project_dir),
-      "--presentation", "presentation.yaml"
+      "--presentation", "presentation.yaml",
+      "--launcher", "r"
     )
   )
 })

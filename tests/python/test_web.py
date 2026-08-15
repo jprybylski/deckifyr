@@ -33,7 +33,22 @@ def client(project_dir):
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    # `launcher` defaults to "cli" -- see test_health_reports_r_launcher
+    # for create_app(..., launcher="r").
+    assert response.json() == {"status": "ok", "launcher": "cli"}
+
+
+def test_health_reports_r_launcher(tmp_path):
+    # /api/health must carry `launcher` even when the bound project fails
+    # to load (an empty tmp_path, no presentation.yaml) -- it's the one
+    # route the "no project found" screen can rely on to pick CLI- vs
+    # R-flavored next-step instructions, precisely when /api/project
+    # itself 404s.
+    app = create_app(tmp_path, launcher="r")
+    with TestClient(app) as local_client:
+        response = local_client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "launcher": "r"}
 
 
 def test_project_reports_bound_paths(client, project_dir):

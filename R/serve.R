@@ -177,7 +177,13 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
   cli_args <- c(
     "run", "-m", "deckifyr", "serve",
     "--host", host, "--port", as.character(port),
-    "--project", project, "--presentation", presentation
+    "--project", project, "--presentation", presentation,
+    # Surfaced back via GET /api/health so the web editor's "no project
+    # found" screen shows initialize_deck_project()/deck_serve() (R)
+    # rather than deckifyr init/deckifyr serve (CLI) next-step
+    # instructions -- see inst/python/deckifyr/web/app.py's own comment
+    # on why this rides on /api/health specifically.
+    "--launcher", "r"
   )
   env_vars <- c("current", VIRTUAL_ENV = paths$venv, PYTHONPATH = python_src)
 
