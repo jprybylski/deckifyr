@@ -1,5 +1,20 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `deckifyr get`/`set` CLI subcommands and R's `deck_get_config()`/
+  `deck_set_config()`: read or write one value in a `design.yaml`/
+  `layouts.yaml`/`presentation.yaml` file by dotted path (e.g.
+  `colors.primary`, `slides[0].notes`), validated against the right
+  schema (and, for a slide's `layout`, cross-checked against
+  `layouts.yaml`) before anything is written to disk.
+* `deckifyr slide list/add/remove/update/move` and R's
+  `deck_list_slides()`/`deck_add_slide()`/`deck_remove_slide()`/
+  `deck_update_slide()`/`deck_move_slide()`: id-keyed slide management
+  for `presentation.yaml`'s own `slides` list, per issue #10.
+
 # deckifyr 0.1.0
 
 ## Added
