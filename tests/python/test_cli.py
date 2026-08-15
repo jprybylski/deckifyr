@@ -69,6 +69,58 @@ def test_validate_rejects_unknown_layout_reference(tmp_path, capsys):
     assert output["code"] == "E_REFERENCE_NOT_FOUND"
 
 
+def test_build_composes_a_color_derived_from_another_token(tmp_path, capsys):
+    import colorsys
+
+    (tmp_path / "design.yaml").write_text(
+        "deckifyr: '0.1'\n"
+        "slide: {width: 1in, height: 1in}\n"
+        "fonts: {body: Arial, heading: Arial}\n"
+        "colors:\n"
+        "  primary: '#2457A6'\n"
+        "  secondary:\n"
+        "    base: primary\n"
+        "    darken: 0.2\n"
+        "text_styles:\n"
+        "  derived:\n"
+        "    font: body\n"
+        "    size: 12pt\n"
+        "    color: secondary\n"
+    )
+    (tmp_path / "layouts.yaml").write_text("deckifyr: '0.1'\nlayouts: {}\n")
+    (tmp_path / "presentation.yaml").write_text(
+        "deckifyr: '0.1'\n"
+        "design: {base: design.yaml}\n"
+        "layouts: layouts.yaml\n"
+        "metadata: {title: Test}\n"
+        "build: {output: build/out.pptx}\n"
+        "slides:\n"
+        "  - id: only-slide\n"
+        "    layout: null\n"
+        "    elements:\n"
+        "      - id: label\n"
+        "        type: text\n"
+        "        value: hi\n"
+        "        style: derived\n"
+        "        box: {x: 0in, y: 0in, width: 1in, height: 1in}\n"
+    )
+
+    exit_code = main(["--json", "build", str(tmp_path / "presentation.yaml")])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+
+    r, g, b = (int("2457A6"[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    expected_rgb = colorsys.hls_to_rgb(h, max(0.0, l - 0.2), s)
+    expected_hex = "".join(f"{round(c * 255):02X}" for c in expected_rgb)
+
+    prs = Presentation(output["output"])
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    run = shape.text_frame.paragraphs[0].runs[0]
+    assert str(run.font.color.rgb) == expected_hex
+
+
 def test_schema_command_prints_json_schema(capsys):
     exit_code = main(["schema", "presentation"])
     assert exit_code == EXIT_OK

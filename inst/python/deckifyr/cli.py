@@ -49,6 +49,7 @@ from pydantic import ValidationError as PydanticValidationError
 from deckifyr import editor
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx import compose_and_write
+from deckifyr.schema.colors import resolve_color_tokens
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode, NotImplementedFeatureError
 from deckifyr.schema.layouts import LayoutsDocument
@@ -152,6 +153,21 @@ def _load_project(
             _format_pydantic_error(exc, str(design_path)),
             code=ErrorCode.SCHEMA_VALIDATION,
         ) from exc
+
+    # Resolve any `colors:` derivations (issue #11) to literal hex strings
+    # here, once, right after `design.yaml` is parsed -- `deckifyr.plan`
+    # and `deckifyr.pptx.compose` both read `design.colors` directly off
+    # this same object independently of one another, so every existing
+    # `design.colors.get(token, token)` call site in both keeps working
+    # unchanged only if the derivations are already gone by the time
+    # either sees `design`. `ColorResolutionError` (raised only for a
+    # circular derivation chain) is already a `DeckifyrError` subclass,
+    # so it propagates through this function's normal error path with no
+    # extra wrapping -- and `deckifyr validate` gets this check for free
+    # since it also calls `_load_project`.
+    design = design.model_copy(
+        update={"colors": resolve_color_tokens(design.colors)}
+    )
 
     try:
         layouts = LayoutsDocument.model_validate(

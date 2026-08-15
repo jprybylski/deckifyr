@@ -17,3 +17,10 @@ The CLI result (invisibly).
 \description{
 Remove a slide from a presentation.yaml
 }
+\examples{
+\dontrun{
+# See deck_add_slide()'s example for setting up a scratch project_dir.
+presentation <- file.path(project_dir, "presentation.yaml")
+deck_remove_slide(presentation, id = "new-slide")
+}
+}

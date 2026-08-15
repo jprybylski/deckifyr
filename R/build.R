@@ -14,6 +14,17 @@
 #'   (the written `.pptx` path), `manifest` (the manifest path, or `NULL`
 #'   if `presentation.yaml`'s `build.manifest` is unset), and
 #'   `slide_count`.
+#' @examples
+#' \dontrun{
+#' # Build the bundled minimal example project (requires a provisioned
+#' # Python/uv/pyro toolchain -- see vignette("getting-started")).
+#' presentation <- system.file(
+#'   "examples", "minimal-deck", "presentation.yaml",
+#'   package = "deckifyr"
+#' )
+#' result <- deck_build(presentation)
+#' result$output
+#' }
 #' @export
 deck_build <- function(presentation, strict = TRUE) {
   args <- c("build", presentation)

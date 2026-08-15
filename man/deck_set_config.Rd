@@ -42,3 +42,16 @@ changed \code{slide.layout} is cross-checked against the project's
 \code{layouts.yaml} -- \emph{before} anything is written to \code{file}, so a bad
 edit never corrupts it.
 }
+\examples{
+\dontrun{
+# Copy the bundled example into a scratch directory first -- deck_set_config()
+# writes to `file` in place.
+project_dir <- file.path(tempdir(), "my-deck")
+dir.create(project_dir)
+file.copy(
+  system.file("examples", "minimal-deck", "design.yaml", package = "deckifyr"),
+  file.path(project_dir, "design.yaml")
+)
+deck_set_config(file.path(project_dir, "design.yaml"), "colors.primary", "#2457A6")
+}
+}

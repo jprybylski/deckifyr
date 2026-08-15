@@ -7,6 +7,12 @@
 #'
 #' @param presentation Path to `presentation.yaml`.
 #' @return A parsed list from the CLI's JSON output.
+#' @examples
+#' \dontrun{
+#' # Not implemented yet -- always errors today; shown for the intended
+#' # future usage.
+#' deck_preview("presentation.yaml")
+#' }
 #' @export
 deck_preview <- function(presentation) {
   .run_deckifyr_cli(c("preview", presentation))

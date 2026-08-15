@@ -38,3 +38,10 @@ meaningful, valid values in their own right (spec section 7.6) -- so
 way it usually would in R. Pass \code{NA} instead to explicitly clear
 \code{layout}/\code{notes}; \code{NULL} (the default) leaves that field untouched.
 }
+\examples{
+\dontrun{
+# See deck_add_slide()'s example for setting up a scratch project_dir.
+presentation <- file.path(project_dir, "presentation.yaml")
+deck_update_slide(presentation, id = "new-slide", notes = "Remember to mention Q3.")
+}
+}

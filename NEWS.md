@@ -1,5 +1,24 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `design.yaml` `colors:` entries may now be derived from another color
+  token via a simple HSL-space transform (`lighten`/`darken`/`saturate`/
+  `desaturate`, or `mix` toward a second color) instead of always being a
+  hand-picked literal hex value, per issue #11. Derivations may chain to
+  arbitrary depth; a circular chain is a build-time error.
+* A new vignette, "YAML Configuration Reference"
+  (`vignette("config-schema")`), documents the `design.yaml`/
+  `layouts.yaml`/`presentation.yaml` schema field by field, closing
+  issue #16.
+
+## Documentation
+
+* Every exported R function now has a runnable (`\dontrun{}`-wrapped)
+  `@examples` block, closing issue #15.
+
 # deckifyr 0.1.1
 
 ## Added

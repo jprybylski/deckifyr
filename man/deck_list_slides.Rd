@@ -21,3 +21,12 @@ Prints a compact cli-formatted summary (id, layout, element count,
 whether it carries speaker notes) and returns the same data as a list
 of R lists, one per slide, in slide order.
 }
+\examples{
+\dontrun{
+presentation <- system.file(
+  "examples", "minimal-deck", "presentation.yaml",
+  package = "deckifyr"
+)
+deck_list_slides(presentation)
+}
+}

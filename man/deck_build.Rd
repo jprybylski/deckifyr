@@ -26,3 +26,15 @@ the external \code{quarto} binary on \code{PATH} (spec section 8.1, issue #3);
 every other element type needs nothing beyond this package's own
 Python dependencies.
 }
+\examples{
+\dontrun{
+# Build the bundled minimal example project (requires a provisioned
+# Python/uv/pyro toolchain -- see vignette("getting-started")).
+presentation <- system.file(
+  "examples", "minimal-deck", "presentation.yaml",
+  package = "deckifyr"
+)
+result <- deck_build(presentation)
+result$output
+}
+}

@@ -2,6 +2,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from deckifyr.schema.colors import ColorDerivation
 from deckifyr.schema.design import (
     Box,
     DesignDocument,
@@ -231,3 +232,56 @@ def test_text_style_text_transform_defaults_to_none_and_accepts_uppercase():
 
     with pytest.raises(ValidationError):
         TextStyle(font="body", size="12pt", color="text", text_transform="sideways")
+
+
+def test_color_derivation_accepts_exactly_one_numeric_operation():
+    darker = ColorDerivation.model_validate({"base": "primary", "darken": 0.2})
+    assert darker.darken == 0.2
+    assert darker.mix is None
+
+    lighter = ColorDerivation.model_validate({"base": "primary", "lighten": 0.2})
+    assert lighter.lighten == 0.2
+
+
+def test_color_derivation_rejects_zero_or_multiple_operations():
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary"})
+
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary", "darken": 0.2, "lighten": 0.1})
+
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary", "mix": "accent", "darken": 0.1})
+
+
+def test_color_derivation_weight_requires_mix():
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary", "darken": 0.2, "weight": 0.5})
+
+    mixed = ColorDerivation.model_validate({"base": "primary", "mix": "accent", "weight": 0.3})
+    assert mixed.weight == 0.3
+
+
+def test_color_derivation_numeric_fields_must_be_in_unit_range():
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary", "darken": 1.5})
+
+    with pytest.raises(ValidationError):
+        ColorDerivation.model_validate({"base": "primary", "mix": "accent", "weight": -0.1})
+
+
+def test_design_document_colors_accepts_a_mix_of_literals_and_derivations():
+    design = DesignDocument.model_validate(
+        {
+            "deckifyr": "0.1",
+            "slide": {"width": "1in", "height": "1in"},
+            "fonts": {"body": "Arial", "heading": "Arial"},
+            "colors": {
+                "primary": "#2457A6",
+                "secondary": {"base": "primary", "darken": 0.2},
+            },
+        }
+    )
+    assert design.colors["primary"] == "#2457A6"
+    assert isinstance(design.colors["secondary"], ColorDerivation)
+    assert design.colors["secondary"].base == "primary"

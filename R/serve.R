@@ -5,6 +5,12 @@
 #'
 #' @param target Path to a `presentation.yaml` or a built `.pptx`.
 #' @return A parsed list from the CLI's JSON output.
+#' @examples
+#' \dontrun{
+#' # Not implemented yet -- always errors today; shown for the intended
+#' # future usage.
+#' deck_inspect("presentation.yaml")
+#' }
 #' @export
 deck_inspect <- function(target) {
   .run_deckifyr_cli(c("inspect", target))
@@ -18,6 +24,11 @@ deck_inspect <- function(target) {
 #'
 #' @param document One of `"design"`, `"layouts"`, or `"presentation"`.
 #' @return A parsed list representing the document type's JSON Schema.
+#' @examples
+#' \dontrun{
+#' schema <- deck_schema("design")
+#' schema$title
+#' }
 #' @export
 deck_schema <- function(document = c("design", "layouts", "presentation")) {
   document <- match.arg(document)
@@ -34,6 +45,12 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @param host Host to bind. Default `"127.0.0.1"`.
 #' @param port Port to bind. Default `8000`.
 #' @return A parsed list from the CLI's JSON output.
+#' @examples
+#' \dontrun{
+#' # Not implemented yet -- always errors today; shown for the intended
+#' # future usage.
+#' deck_serve()
+#' }
 #' @export
 deck_serve <- function(host = "127.0.0.1", port = 8000) {
   .run_deckifyr_cli(c("serve", "--host", host, "--port", as.character(port)))

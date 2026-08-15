@@ -18,3 +18,10 @@ Delegates to \verb{deckifyr preview} in the bundled Python engine.
 Phase 3 work; this currently always errors with a clear "not
 implemented" message.
 }
+\examples{
+\dontrun{
+# Not implemented yet -- always errors today; shown for the intended
+# future usage.
+deck_preview("presentation.yaml")
+}
+}
