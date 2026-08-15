@@ -18,6 +18,7 @@ class ErrorCode:
     NOT_IMPLEMENTED = "E_NOT_IMPLEMENTED"
     IO = "E_IO"
     CONTENT_VALIDATION = "E_CONTENT_VALIDATION"
+    PATH_NOT_FOUND = "E_PATH_NOT_FOUND"
 
 
 class DeckifyrError(Exception):

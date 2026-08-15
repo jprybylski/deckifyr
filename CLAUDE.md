@@ -33,6 +33,7 @@ learned while building the scaffold.
 | `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
+| `deckifyr.editor` + CLI `get`/`set`/`slide` (config/slide editing, spec §11.1/§11.2, issue #10) | Real, tested |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
 | `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, `Slide.notes`, and reportifyr footers (§9.1) -- Phase 1 and Phase 2's Quarto slice (§18, issue #3) are done |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1), and `QuartoResolver` (fragment execution, spec §9.2/§8.1) are real |
@@ -627,17 +628,112 @@ integration, and a venv-forcing hack only complicates the standard
 workflows for no real benefit -- coverage numbers being lower because
 of this is honest, not a problem to hide.
 
+**Config/slide editing (`deckifyr.editor`, CLI `get`/`set`/`slide`, the
+`deck_get_config()`/`deck_set_config()`/`deck_*_slide()` R family, issue
+#10) is real, tested, and follows the same "mechanism in its own module,
+orchestration in `cli.py`" split `deckifyr.plan`/`deckifyr.pptx.compose`
+already established.** `deckifyr/editor.py` only ever touches plain
+`dict`/`list` data (whatever `yaml.safe_load` returns) -- never a
+`pydantic` model, never a filesystem path -- and provides two
+independent capabilities: a small dotted-path get/set accessor
+(`get_value`/`set_value`, `.`/`[N]` syntax, e.g. `colors.primary` or
+`slides[0].notes`) usable against any of the three document shapes, and
+slide CRUD (`list_slides`/`add_slide`/`remove_slide`/`update_slide`/
+`move_slide`) scoped to `presentation.yaml`'s own `slides` list, id-keyed
+throughout per spec §7.6's "Array indices should never be the primary
+override mechanism." `deckifyr.cli` owns every actual file read/write:
+it validates the edited dict against the right `deckifyr.schema` model
+(and, for a changed `slide.layout`, cross-checks it against a readable
+sibling `layouts.yaml`, mirroring `_load_project`'s own check) *before*
+calling `_write_yaml` -- confirmed by test
+(`test_set_rejects_an_edit_that_breaks_schema_validation`,
+`test_set_rejects_edit_that_introduces_a_dangling_layout_reference`) that
+a rejected edit never touches the file on disk. `_write_yaml` itself
+writes to a sibling `.tmp` file and renames it into place
+(`Path.replace`, i.e. `os.replace`) so a mid-write crash can't leave a
+half-written config behind, and dumps with `sort_keys=False` to keep the
+mapping key order a human actually wrote (Python dicts are
+order-preserving; PyYAML respects that when told not to re-sort) --
+comments are not preserved on a round trip through `get`/`set`/`slide`
+(plain PyYAML, not `ruamel.yaml`, to avoid a second YAML-library
+dependency across both facades for a v1 feature), which is a real,
+accepted limitation, not an oversight.
+
+**`set`'s value parser is JSON, not YAML -- confirmed the hard way, not
+a stylistic choice.** The obvious first design was "parse the CLI's
+`value` argument the same way the file itself is parsed, with
+`yaml.safe_load`" -- tried, and it silently breaks on the single most
+common kind of value this command exists to write: `design.yaml`'s own
+hex colors. `#` opens a YAML comment, so `yaml.safe_load("#123456")`
+doesn't error, it quietly returns `None` -- caught only by actually
+running `deckifyr set design.yaml colors.primary "#123456"` by hand
+while smoke-testing this feature, not by reasoning about it in advance
+(now pinned down as a regression test,
+`test_set_writes_a_hex_color_without_quoting`). `deckifyr.cli
+._parse_set_value` uses `json.loads` instead: JSON has no comment
+syntax at all, so it either parses `value` unambiguously as a
+number/bool/null/array/object (the same vocabulary `--elements-json`
+already uses) or raises -- at which point `value` was never valid JSON
+to begin with, so it's used as a literal string. An ordinary bare
+word/hex color/font name therefore needs no quoting on the command line,
+while `true`/`null`/`[1, 2]`/`'"12pt"'` still parse as their typed
+values when a caller actually wants that; `--string` forces the literal-
+string branch for the rare case a value would otherwise parse as
+something else (writing the literal text `"true"`, say).
+
+**`update_slide`'s `layout`/`notes` keyword arguments needed a sentinel,
+not `None`, for "leave this field alone" -- `Slide.layout: null`
+(freeform) and "no notes" are both meaningful, valid values in their own
+right (spec §7.6), so `None` can't double as both "unset this field" and
+"I didn't pass this argument."** `deckifyr.editor.UNSET` is that
+sentinel on the Python side; the R wrappers
+(`deck_update_slide()`/`R/slides.R`) face the identical problem one
+layer up and solve it the same shape of way but with R's own idiom
+instead of a sentinel object: `NULL` (R's natural "leave alone" default)
+stays "leave alone", and `NA` -- otherwise unused here -- means "clear
+this field" (`--no-layout`/`--clear-notes`), rather than reusing `NULL`
+for both meanings the way an R function normally would.
+
+**`R/slides.R`/`R/config.R` add `cli` as a real `Imports:` dependency
+(previously used transitively via `devtools`/`roxygen2` in this repo's
+own dev environment, never declared as a package dependency) -- every
+`deck_*_slide()`/`deck_set_config()` call reports success via
+`cli::cli_alert_success()`/`cli::cli_h3()`/`cli::cli_li()`, per issue
+#10's own ask ("make use of the cli package for nice output"). `cli` is
+lightweight and has no r-universe-only dependency of its own, so this
+needed no `Additional_repositories`/`.Rprofile` changes (contrast
+`pyro`'s own repo-resolution story earlier in this file) -- just adding
+it to `DESCRIPTION`'s `Imports:` and re-running `roxygen2::roxygenise()`.
+`.placement_args()` (shared by `deck_add_slide()`/`deck_move_slide()`)
+is the one piece of real argument validation done in R rather than
+delegated to Python -- rejecting more than one of `after`/`before`/
+`index` before ever shelling out, per spec §11.2's "Validate arguments
+in R when inexpensive"; `deckifyr.editor.AmbiguousPlacementError` and
+argparse's own mutually-exclusive-group check on the Python/CLI side
+still exist too, as defense in depth for any caller that reaches
+`deckifyr.editor`/the CLI directly rather than through these R wrappers.
+
 ## Testing strategy
 
 Today's tests are unit-level plus two kinds of true integration test:
 `tests/python/` covers units/merge/schema/CLI exit codes in isolation,
-plus `test_plan.py` (layout/slide expansion) and `test_pptx.py` (fit-mode
+plus `test_plan.py` (layout/slide expansion), `test_pptx.py` (fit-mode
 geometry, manifest shape, opening the written `.pptx` back up with
-`python-pptx` to check slide/shape counts and names);
+`python-pptx` to check slide/shape counts and names), `test_editor.py`
+(dotted-path get/set and slide-CRUD edge cases against plain dicts, no
+CLI/filesystem involved), and `test_cli_editing.py` (the `get`/`set`/
+`slide` subcommands end to end against real files in `tmp_path`,
+including the JSON-vs-YAML value-parsing regression and the
+validate-before-write guarantee -- see this file's own config/slide-
+editing architecture note above);
 `tests/testthat/test-wiring.R` is the only test that actually invokes
 the real R -> pyro -> Python bridge (the other two R-side gotchas above
 were both caught by *running* this test against a live toolchain, not
-by reasoning about the code). `test_renderers_quarto.py`/
+by reasoning about the code) -- its own last `test_that()` block does
+the same for `deck_get_config()`/`deck_set_config()`/the `deck_*_slide()`
+family, while `tests/testthat/test-config.R`/`test-slides.R` cover their
+arg-assembly logic with `.run_deckifyr_cli()` mocked, the same split
+`test-build.R`/`test-validate.R` already established. `test_renderers_quarto.py`/
 `test_resolvers_quarto.py`/the end-to-end tests in `test_pptx_quarto.py`
 are the second kind: real integration tests against a live `quarto`
 binary (Typst rendering, R-chunk execution, timeout/output-size
