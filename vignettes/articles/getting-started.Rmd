@@ -1,0 +1,65 @@
+---
+title: "Getting Started"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+deckifyr is a single Python engine (`inst/python/deckifyr/`) with an R
+package as a thin facade over it; install only the piece you need.
+
+## 1. The Python engine (standalone)
+
+No R required. From a checkout of the repo:
+
+```bash
+git clone https://github.com/jprybylski/deckifyr && cd deckifyr
+uv sync --extra dev   # provisions .venv/ from pyproject.toml
+uv run deckifyr --help
+```
+
+This gets you the `deckifyr` CLI directly; see [Python engine](python-engine.html)
+for every subcommand and the two-pass architecture behind them.
+
+## 2. The `deckifyr` R package
+
+```r
+pak::pak("jprybylski/deckifyr")   # or remotes::install_github("jprybylski/deckifyr")
+```
+
+Pulls in [`pyro`](https://github.com/A2-ai/pyro) transitively (no CRAN
+release; resolves from `a2-ai.r-universe.dev`, declared in
+`DESCRIPTION`'s `Additional_repositories:`). This is a thin wrapper that
+delegates every real operation to the bundled Python engine via `pyro`
+-- it's optional; you can call `deckifyr` the CLI directly instead (step
+1 above).
+
+## First build
+
+Scaffold a new project from the bundled minimal example, then validate
+and build it:
+
+```bash
+uv run deckifyr init my-deck
+uv run deckifyr validate my-deck/presentation.yaml
+uv run deckifyr build my-deck/presentation.yaml
+# -> my-deck/build/my-deck.pptx, my-deck/build/my-deck.manifest.json
+```
+
+```r
+initialize_deck_project("my-deck")
+deck_validate("my-deck/presentation.yaml")
+deck_build("my-deck/presentation.yaml")
+```
+
+`my-deck/` now has three YAML files -- `design.yaml` (tokens: colors,
+fonts, furniture), `layouts.yaml` (named zone geometry), and
+`presentation.yaml` (the actual slides, referencing a layout per slide)
+-- edit those and rebuild; nothing about a deckifyr project is a binary
+file to hand-click through.
+
+For a richer working example than `init`'s minimal scaffold -- a real
+`reportifyr` figure reference, a native PowerPoint table with its own
+fill/border chrome, speaker notes, and more -- see
+[Examples](examples.html).

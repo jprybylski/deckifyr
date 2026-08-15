@@ -34,9 +34,12 @@ home:
 
 navbar:
   structure:
-    left: [articles, reference, news]
+    left: [intro, articles, reference, news]
     right: [search, github]
   components:
+    intro:
+      text: Get started
+      href: articles/getting-started.html
     articles:
       text: Articles
       menu:
@@ -49,6 +52,7 @@ articles:
   - title: Articles
     navbar: ~
     contents:
+      - articles/getting-started
       - articles/examples
       - articles/python-engine
 
