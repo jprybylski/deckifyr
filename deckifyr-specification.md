@@ -753,7 +753,26 @@ deckifyr preview PRESENTATION_YAML
 deckifyr inspect PRESENTATION_OR_PPTX
 deckifyr schema [design|layouts|presentation]
 deckifyr serve [--host HOST] [--port PORT]
+deckifyr get FILE PATH
+deckifyr set FILE PATH VALUE [--string] [--type auto|design|layouts|presentation]
+deckifyr slide list PRESENTATION_YAML
+deckifyr slide add PRESENTATION_YAML --id ID [--layout LAYOUT] [--notes NOTES]
+    [--elements-json JSON] [--after ID | --before ID | --index N]
+deckifyr slide remove PRESENTATION_YAML ID
+deckifyr slide update PRESENTATION_YAML ID [--layout LAYOUT | --no-layout]
+    [--notes NOTES | --clear-notes] [--elements-json JSON]
+deckifyr slide move PRESENTATION_YAML ID [--after ID | --before ID | --index N]
 ```
+
+`get`/`set` read or write one value in a design/layouts/presentation YAML
+file by dotted path (`.` for mapping keys, `[N]` for a 0-based list
+index -- `colors.primary`, `slides[0].notes`); `slide` manages
+`presentation.yaml`'s own `slides` list by id rather than by array
+index, per §7.6's "Named elements are essential. Array indices should
+never be the primary override mechanism." `set`/`slide` always validate
+the edited document against its schema (and, for a slide's `layout`,
+cross-check it against `layouts.yaml`) before writing, so a rejected
+edit never corrupts the file on disk (issue #10).
 
 Requirements:
 
@@ -774,7 +793,20 @@ deck_preview("presentation.yaml")
 deck_inspect("build/deck.pptx")
 deck_schema("presentation")
 deck_serve()
+deck_get_config("design.yaml", "colors.primary")
+deck_set_config("design.yaml", "colors.primary", "#123456")
+deck_list_slides("presentation.yaml")
+deck_add_slide("presentation.yaml", id = "new", layout = "blank", after = "title")
+deck_remove_slide("presentation.yaml", "old")
+deck_update_slide("presentation.yaml", "a", notes = "updated notes")
+deck_move_slide("presentation.yaml", "a", index = 0)
 ```
+
+The `deck_*_slide()`/`deck_*_config()` family (issue #10) wraps the
+`get`/`set`/`slide` CLI subcommands above one-to-one and reports via
+`{cli}` on success, matching the rest of this section's own
+delegate-to-Python, thin-facade posture -- no independent R
+implementation of slide/config editing exists or should be added.
 
 R functions should:
 

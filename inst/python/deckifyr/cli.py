@@ -13,6 +13,15 @@ for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/
 server are Phase 3/4 work (see deckifyr-specification.md) and
 deliberately do not pretend to succeed.
 
+`get`/`set` and the `slide` subcommand group (issue #10) round-trip a
+design/layouts/presentation YAML file through `deckifyr.editor`'s pure
+dict-manipulation helpers: this module owns reading the file, validating
+the edited result against the right `deckifyr.schema` model *before*
+writing it back (so a bad edit never corrupts the file on disk), and
+turning `deckifyr.editor`'s plain exceptions into `DeckifyrError`s with a
+stable code -- `deckifyr.editor`'s own module docstring has the fuller
+design writeup. These are real, tested, not stubs.
+
 Exit codes are stable and independent of message wording, per spec
 section 11.1:
     0  success
@@ -37,6 +46,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError as PydanticValidationError
 
+from deckifyr import editor
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx import compose_and_write
 from deckifyr.schema.design import DesignDocument
@@ -170,6 +180,86 @@ def _load_project(
     return presentation, design, layouts
 
 
+# --- Shared helpers for `get`/`set`/`slide` (issue #10) -----------------
+
+
+def _read_yaml(path: Path) -> Any:
+    if not path.is_file():
+        raise DeckifyrError(f"file not found: {path}", code=ErrorCode.IO)
+    try:
+        return yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise DeckifyrError(f"{path}: invalid YAML: {exc}", code=ErrorCode.IO) from exc
+
+
+def _write_yaml(path: Path, data: Any) -> None:
+    # Written to a sibling temp file and atomically renamed into place
+    # (`Path.replace` is `os.replace` under the hood) so a crash
+    # mid-write can never leave a half-written config file behind.
+    # `sort_keys=False` preserves the mapping key order editor.py's
+    # mutations leave dicts in (Python dicts are order-preserving, and
+    # PyYAML respects that when told not to re-sort) -- important since
+    # these functions edit a document a human wrote and will read again,
+    # not just round-trip machine state.
+    text = yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
+
+
+def _parse_json_arg(text: str, flag: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DeckifyrError(f"{flag}: invalid JSON: {exc}", code=ErrorCode.IO) from exc
+
+
+def _load_presentation_raw(path: Path) -> dict[str, Any]:
+    data = _read_yaml(path)
+    if not isinstance(data, dict) or "slides" not in data:
+        raise DeckifyrError(
+            f"{path} does not look like a presentation.yaml (no top-level 'slides' key)",
+            code=ErrorCode.SCHEMA_VALIDATION,
+        )
+    return data
+
+
+def _validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
+    """Shared tail of every `slide` mutation and a `set` targeting a
+    presentation.yaml: validate the edited dict against
+    `PresentationDocument`, best-effort cross-check any `slide.layout`
+    against a readable sibling `layouts.yaml` (mirroring `_load_project`'s
+    own check, so an edit can't silently introduce a dangling layout
+    reference), and only then write -- never on a document that would
+    fail its own schema.
+    """
+    try:
+        presentation = PresentationDocument.model_validate(data)
+    except PydanticValidationError as exc:
+        raise DeckifyrError(
+            _format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
+        ) from exc
+
+    layouts_path = path.parent / presentation.layouts
+    if layouts_path.is_file():
+        try:
+            layouts = LayoutsDocument.model_validate(
+                yaml.safe_load(layouts_path.read_text())
+            )
+        except (PydanticValidationError, yaml.YAMLError):
+            layouts = None
+        if layouts is not None:
+            for slide in presentation.slides:
+                if slide.layout is not None and slide.layout not in layouts.layouts:
+                    raise DeckifyrError(
+                        f"slide {slide.id!r} references unknown layout {slide.layout!r}",
+                        code=ErrorCode.REFERENCE_NOT_FOUND,
+                    )
+
+    _write_yaml(path, data)
+    return {"presentation": str(path), "slide_count": len(presentation.slides)}
+
+
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
     target = Path(args.directory)
     target.mkdir(parents=True, exist_ok=True)
@@ -231,6 +321,158 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
     }
+
+
+_DOCUMENT_MODELS = {
+    "design": DesignDocument,
+    "layouts": LayoutsDocument,
+    "presentation": PresentationDocument,
+}
+
+
+def _resolve_document_type(args_type: str, data: Any) -> str:
+    if args_type != "auto":
+        return args_type
+    try:
+        return editor.detect_document_type(data)
+    except ValueError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.SCHEMA_VALIDATION) from exc
+
+
+def _cmd_get(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.file)
+    data = _read_yaml(path)
+    try:
+        value = editor.get_value(data, args.path)
+    except editor.PathError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.PATH_NOT_FOUND) from exc
+    return {"file": str(path), "path": args.path, "value": value}
+
+
+def _parse_set_value(raw: str) -> Any:
+    # JSON, not YAML: a YAML scalar parser would treat a bare hex color
+    # ("#123456", extremely common in design.yaml) as a comment opener
+    # and silently parse it as `None` -- confirmed the hard way while
+    # smoke-testing this command by hand. JSON has no comment syntax at
+    # all, so `json.loads` either parses `raw` unambiguously as a
+    # number/bool/null/array/object (matching --elements-json's own
+    # vocabulary) or raises -- at which point `raw` was never valid JSON
+    # to begin with, so it's used as a literal string. This means an
+    # ordinary bare word/hex color/font name needs no quoting on the
+    # command line, while `'"12pt"'`/`true`/`[1, 2]` still work when a
+    # caller actually wants a typed value.
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.file)
+    data = _read_yaml(path)
+
+    value: Any = args.value if args.string else _parse_set_value(args.value)
+
+    try:
+        editor.set_value(data, args.path, value)
+    except editor.PathError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.PATH_NOT_FOUND) from exc
+
+    doc_type = _resolve_document_type(args.type, data)
+    if doc_type == "presentation":
+        extra = _validate_and_write_presentation(path, data)
+    else:
+        model = _DOCUMENT_MODELS[doc_type]
+        try:
+            model.model_validate(data)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                _format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
+            ) from exc
+        _write_yaml(path, data)
+        extra = {}
+
+    return {"file": str(path), "path": args.path, "type": doc_type, **extra}
+
+
+def _cmd_slide_list(args: argparse.Namespace) -> dict[str, Any]:
+    data = _load_presentation_raw(Path(args.presentation))
+    return {"presentation": args.presentation, "slides": editor.list_slides(data)}
+
+
+def _cmd_slide_add(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.presentation)
+    data = _load_presentation_raw(path)
+    elements = (
+        _parse_json_arg(args.elements_json, "--elements-json")
+        if args.elements_json is not None
+        else None
+    )
+    try:
+        editor.add_slide(
+            data,
+            id=args.id,
+            layout=args.layout,
+            elements=elements,
+            notes=args.notes,
+            index=args.index,
+            after=args.after,
+            before=args.before,
+        )
+    except editor.DuplicateSlideIdError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+    except editor.SlideNotFoundError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+    except editor.AmbiguousPlacementError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+    return _validate_and_write_presentation(path, data)
+
+
+def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.presentation)
+    data = _load_presentation_raw(path)
+    try:
+        editor.remove_slide(data, args.id)
+    except editor.SlideNotFoundError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+    return _validate_and_write_presentation(path, data)
+
+
+def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.presentation)
+    data = _load_presentation_raw(path)
+
+    kwargs: dict[str, Any] = {}
+    if args.no_layout:
+        kwargs["layout"] = None
+    elif args.layout is not None:
+        kwargs["layout"] = args.layout
+    if args.clear_notes:
+        kwargs["notes"] = None
+    elif args.notes is not None:
+        kwargs["notes"] = args.notes
+    if args.elements_json is not None:
+        kwargs["elements"] = _parse_json_arg(args.elements_json, "--elements-json")
+
+    try:
+        editor.update_slide(data, args.id, **kwargs)
+    except editor.SlideNotFoundError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+    return _validate_and_write_presentation(path, data)
+
+
+def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.presentation)
+    data = _load_presentation_raw(path)
+    try:
+        editor.move_slide(
+            data, args.id, index=args.index, after=args.after, before=args.before
+        )
+    except editor.SlideNotFoundError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+    except editor.AmbiguousPlacementError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+    return _validate_and_write_presentation(path, data)
 
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
@@ -314,6 +556,99 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     schema_parser = subparsers.add_parser("schema", help="print a document type's JSON Schema")
     schema_parser.add_argument("document", choices=sorted(_SCHEMA_MODELS))
     schema_parser.set_defaults(handler=_cmd_schema)
+
+    get_parser = subparsers.add_parser(
+        "get", help="read a config value from a design/layouts/presentation YAML file"
+    )
+    get_parser.add_argument("file")
+    get_parser.add_argument(
+        "path", help="dotted path, e.g. colors.primary or slides[0].notes"
+    )
+    get_parser.set_defaults(handler=_cmd_get)
+
+    set_parser = subparsers.add_parser(
+        "set", help="write a config value into a design/layouts/presentation YAML file"
+    )
+    set_parser.add_argument("file")
+    set_parser.add_argument("path")
+    set_parser.add_argument("value")
+    set_parser.add_argument(
+        "--string",
+        action="store_true",
+        help=(
+            "treat value as a literal string, never as JSON -- needed only for a "
+            "value that would otherwise parse as a number/bool/null/array/object "
+            "(e.g. the literal text 'true' or 'null')"
+        ),
+    )
+    set_parser.add_argument(
+        "--type",
+        choices=["auto", "design", "layouts", "presentation"],
+        default="auto",
+        help="which schema to validate the edited document against (default: auto-detect)",
+    )
+    set_parser.set_defaults(handler=_cmd_set)
+
+    def add_placement_flags(p: argparse.ArgumentParser) -> None:
+        group = p.add_mutually_exclusive_group()
+        group.add_argument("--index", type=int, default=None, help="0-based position")
+        group.add_argument("--after", default=None, help="place immediately after this slide id")
+        group.add_argument("--before", default=None, help="place immediately before this slide id")
+
+    slide_parser = subparsers.add_parser(
+        "slide", help="add, remove, update, move, or list presentation.yaml's slides"
+    )
+    slide_subparsers = slide_parser.add_subparsers(dest="slide_command", required=True)
+
+    slide_list_parser = slide_subparsers.add_parser("list", help="list slides in order")
+    slide_list_parser.add_argument("presentation")
+    slide_list_parser.set_defaults(handler=_cmd_slide_list)
+
+    slide_add_parser = slide_subparsers.add_parser("add", help="add a new slide")
+    slide_add_parser.add_argument("presentation")
+    slide_add_parser.add_argument("--id", required=True, help="the new slide's unique id")
+    slide_add_parser.add_argument(
+        "--layout", default=None, help="layout name (omit for a freeform 'layout: null' slide)"
+    )
+    slide_add_parser.add_argument("--notes", default=None, help="speaker notes text")
+    slide_add_parser.add_argument(
+        "--elements-json",
+        default=None,
+        help="JSON object/array to use as the slide's 'elements' block",
+    )
+    add_placement_flags(slide_add_parser)
+    slide_add_parser.set_defaults(handler=_cmd_slide_add)
+
+    slide_remove_parser = slide_subparsers.add_parser("remove", help="remove a slide by id")
+    slide_remove_parser.add_argument("presentation")
+    slide_remove_parser.add_argument("id")
+    slide_remove_parser.set_defaults(handler=_cmd_slide_remove)
+
+    slide_update_parser = slide_subparsers.add_parser(
+        "update", help="update an existing slide's layout, notes, or elements"
+    )
+    slide_update_parser.add_argument("presentation")
+    slide_update_parser.add_argument("id")
+    layout_group = slide_update_parser.add_mutually_exclusive_group()
+    layout_group.add_argument("--layout", default=None, help="new layout name")
+    layout_group.add_argument(
+        "--no-layout", action="store_true", help="clear the layout (freeform 'layout: null')"
+    )
+    notes_group = slide_update_parser.add_mutually_exclusive_group()
+    notes_group.add_argument("--notes", default=None, help="new speaker notes text")
+    notes_group.add_argument("--clear-notes", action="store_true", help="remove speaker notes")
+    slide_update_parser.add_argument(
+        "--elements-json",
+        default=None,
+        help="JSON object/array to replace the slide's 'elements' block",
+    )
+    slide_update_parser.set_defaults(handler=_cmd_slide_update)
+
+    slide_move_parser = slide_subparsers.add_parser("move", help="reorder a slide")
+    slide_move_parser.add_argument("presentation")
+    slide_move_parser.add_argument("id")
+    add_placement_flags(slide_move_parser)
+    slide_move_parser.set_defaults(handler=_cmd_slide_move)
 
     serve_parser = subparsers.add_parser(
         "serve", help="run the local web application (not implemented yet)"
