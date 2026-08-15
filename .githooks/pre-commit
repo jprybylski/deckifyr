@@ -1,0 +1,69 @@
+#!/bin/sh
+# Reminder, not an enforcer: warns when a commit touches a source that
+# feeds one of man/figures/demo-deck-*.png (or the downloadable
+# man/figures/demo-deck.pptx alongside them), but the commit doesn't
+# also touch that asset group. Mirrors ../quartifyr's own
+# .githooks/pre-commit for the same reason -- these are committed,
+# rendered artifacts, not something regenerated at build/check time, so
+# nothing else catches them drifting from the source that produced them
+# (see the "demo-deck-pk-summary.png/demo-deck-concentration-time.png
+# went stale" incident this hook was added for: table_styles chrome and
+# the reportifyr footer both landed in the engine and demo-deck's own
+# YAML without the screenshots or the downloadable .pptx ever being
+# regenerated against them).
+#
+# Skip with SKIP_DOCS_ASSET_CHECK=1 or `git commit --no-verify` for
+# changes that don't actually alter what's on screen (e.g. a comment or
+# a refactor with identical composed output) -- this can't tell the
+# difference, it only knows the source file changed.
+#
+# Regenerate the asset group with:
+#   uv run deckifyr build examples/demo-deck/presentation.yaml
+#   soffice --headless --convert-to pdf --outdir /tmp examples/demo-deck/build/demo-deck.pptx
+#   # rasterize each PDF page at 110dpi (matches the existing PNGs'
+#   # 1467x825 -- see e.g. `python3 -c "import fitz; ..."` using
+#   # page.get_pixmap(dpi=110)) into man/figures/demo-deck-{title,
+#   # concentration-time,pk-summary,closing}.png, in slide order
+#   cp examples/demo-deck/build/demo-deck.pptx man/figures/demo-deck.pptx
+#
+# Add a case here whenever a new rendered-doc-asset group is added,
+# alongside a matching note in CONTRIBUTING.md -- this is the
+# machine-checkable half of the same rule, kept next to it so they're
+# easy to update together.
+
+if [ -n "$SKIP_DOCS_ASSET_CHECK" ]; then
+  exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+assets_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/demo-deck(-[a-z-]+\.png|\.pptx)$')
+found=0
+
+check_group() {
+  label="$1"
+  pattern="$2"
+  [ "$assets_touched" -gt 0 ] && return
+  if printf '%s\n' "$staged" | grep -qE "$pattern"; then
+    echo "pre-commit reminder: staged changes touch a source for $label" >&2
+    echo "  (man/figures/demo-deck-*.png and demo-deck.pptx may now be stale -- see this hook's own header for the regeneration recipe)" >&2
+    found=1
+  fi
+}
+
+check_group "the demo-deck example" \
+  '^examples/demo-deck/(design\.yaml|layouts\.yaml|presentation\.yaml|standard_footnotes\.yaml|assets/|OUTPUTS/)'
+
+check_group "the PPTX compositor/planner/resolvers demo-deck exercises" \
+  '^inst/python/deckifyr/(schema/|plan\.py|pptx/|resolvers/)'
+
+if [ "$found" = "1" ]; then
+  echo "" >&2
+  echo "If the change is purely cosmetic (comments, refactors with identical" >&2
+  echo "composed output), commit anyway with SKIP_DOCS_ASSET_CHECK=1 git commit ..." >&2
+  echo "or git commit --no-verify." >&2
+  exit 1
+fi
+
+exit 0

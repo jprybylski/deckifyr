@@ -1,5 +1,22 @@
 # Contributing
 
+## Git hooks
+
+```bash
+git config core.hooksPath .githooks
+```
+
+One-time, per clone. Currently just `.githooks/pre-commit`: a reminder
+(not a hard requirement, mirroring `../quartifyr`'s own hook) that warns
+when a commit touches a source that feeds `man/figures/demo-deck-*.png`
+or the downloadable `man/figures/demo-deck.pptx` -- e.g.
+`examples/demo-deck/presentation.yaml` or the PPTX compositor in
+`inst/python/deckifyr/pptx/` -- without also touching that asset group.
+See the hook script itself for the exact trigger list and the
+regeneration recipe. Skip a false positive (a comment or refactor with
+identical composed output, say) with `SKIP_DOCS_ASSET_CHECK=1 git commit`
+or `git commit --no-verify`.
+
 ## Python setup
 
 ```bash
