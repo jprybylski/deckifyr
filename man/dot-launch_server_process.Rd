@@ -32,4 +32,17 @@ internal function" seam this file's own \code{.wait_for_server()} uses for
 \code{socketConnection()}, just applied to an R6 method instead of a base
 function.
 }
+\details{
+Its own body is marked \verb{# nocov} for the same reason it exists at all:
+every unit test replaces this whole function (there's nothing finer to
+mock, unlike e.g. \code{.run_deckifyr_cli()}'s own call to
+\code{pyro::run_python_script()} -- an ordinary function, directly mockable
+at the call site, so \code{.run_deckifyr_cli()}'s own body stays covered by
+its mocked-pyro unit tests). The real \code{processx::process$new()} call
+here only executes for real inside \code{tests/testthat/test-wiring.R}'s
+gated end-to-end block, which needs a real \code{.venv}/\code{uv}/\code{pyro} install
+and correctly skips without one -- including in \code{test-coverage.yaml}'s
+own CI job, per this repo's already-established "an honest, accepted
+coverage gap, not a problem to hide" precedent (CLAUDE.md).
+}
 \keyword{internal}

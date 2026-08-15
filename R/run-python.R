@@ -29,6 +29,11 @@ Sys.which <- NULL
 # TCP-connect readiness check.
 socketConnection <- NULL
 
+# Same seam, same reason, for `.open_server_url()` (`R/serve.R`), which
+# calls unqualified `requireNamespace()` to soft-check for the optional
+# `rstudioapi` package.
+requireNamespace <- NULL
+
 # Same seam, same reason, for `R/serve.R`'s port-by-PID helpers
 # (`.pids_listening_on_port()`/`.pid_looks_like_deckifyr_server()`/
 # `.kill_deckifyr_server_pid()`), which shell out via unqualified
@@ -36,6 +41,12 @@ socketConnection <- NULL
 # deckifyr server process this R session doesn't hold a `processx`
 # handle for.
 system2 <- NULL
+
+# Same seam, same reason, for `deck_serve()`'s `force = TRUE` port-freed
+# wait loop (`R/serve.R`), which calls unqualified `Sys.time()` to poll a
+# deadline -- lets a test simulate the deadline passing without a real
+# multi-second sleep.
+Sys.time <- NULL
 
 #' Invoke the bundled Python CLI via pyro
 #'

@@ -55,6 +55,18 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' `socketConnection()`, just applied to an R6 method instead of a base
 #' function.
 #'
+#' Its own body is marked `# nocov` for the same reason it exists at all:
+#' every unit test replaces this whole function (there's nothing finer to
+#' mock, unlike e.g. `.run_deckifyr_cli()`'s own call to
+#' `pyro::run_python_script()` -- an ordinary function, directly mockable
+#' at the call site, so `.run_deckifyr_cli()`'s own body stays covered by
+#' its mocked-pyro unit tests). The real `processx::process$new()` call
+#' here only executes for real inside `tests/testthat/test-wiring.R`'s
+#' gated end-to-end block, which needs a real `.venv`/`uv`/`pyro` install
+#' and correctly skips without one -- including in `test-coverage.yaml`'s
+#' own CI job, per this repo's already-established "an honest, accepted
+#' coverage gap, not a problem to hide" precedent (CLAUDE.md).
+#'
 #' @param uv_path Path to the `uv` binary, from `pyro::get_venv_uv_paths()`.
 #' @param args CLI arguments to pass to `uv` (`c("run", "-m", "deckifyr",
 #'   "serve", ...)`).
@@ -63,6 +75,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @return A `processx::process` object, not yet awaited.
 #' @keywords internal
 .launch_server_process <- function(uv_path, args, env_vars) {
+  # nocov start
   processx::process$new(
     command = uv_path,
     args = args,
@@ -82,6 +95,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
     # explicit-kill half of this same fix.
     cleanup_tree = TRUE
   )
+  # nocov end
 }
 
 #' Check whether something is already listening on `host`:`port`
@@ -127,6 +141,10 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @keywords internal
 .pids_listening_on_port <- function(port) {
   if (identical(Sys.info()[["sysname"]], "Windows")) {
+    # nocov start -- `test-coverage.yaml` (the only job that measures
+    # coverage) runs on ubuntu-latest only; this branch is real, but
+    # genuinely never measured, the same honest gap `.launch_server_process()`'s
+    # own docs explain in more detail.
     out <- suppressWarnings(system2(
       "powershell",
       c(
@@ -138,6 +156,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
       ),
       stdout = TRUE, stderr = FALSE
     ))
+    # nocov end
   } else {
     if (!nzchar(Sys.which("lsof"))) {
       stop(
@@ -168,6 +187,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @keywords internal
 .pid_looks_like_deckifyr_server <- function(pid) {
   if (identical(Sys.info()[["sysname"]], "Windows")) {
+    # nocov start -- see .pids_listening_on_port()'s own identical note.
     cmd <- suppressWarnings(system2(
       "powershell",
       c(
@@ -179,6 +199,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
       ),
       stdout = TRUE, stderr = FALSE
     ))
+    # nocov end
   } else {
     cmd <- suppressWarnings(system2(
       "ps", c("-o", "command=", "-p", as.character(pid)),
@@ -206,10 +227,12 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @keywords internal
 .kill_deckifyr_server_pid <- function(pid) {
   if (identical(Sys.info()[["sysname"]], "Windows")) {
+    # nocov start -- see .pids_listening_on_port()'s own identical note.
     # `/T` kills the whole process tree in one call -- no separate
     # parent-lookup step needed on this platform.
     system2("taskkill", c("/PID", as.character(pid), "/T", "/F"), stdout = FALSE, stderr = FALSE)
     return(invisible(NULL))
+    # nocov end
   }
   ppid_raw <- suppressWarnings(system2(
     "ps", c("-o", "ppid=", "-p", as.character(pid)),
@@ -309,6 +332,28 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
     }
     Sys.sleep(0.2)
   }
+}
+
+#' Open a `deckifyr serve` URL in the RStudio/Positron Viewer or a browser
+#'
+#' Isolated behind its own function -- rather than inlined in
+#' [deck_serve()] -- for the same reason `.launch_server_process()` is:
+#' testability. `deck_serve()`'s own tests all pass `open_browser = FALSE`
+#' and mock this function directly to assert it *would* have been called
+#' with the right URL, rather than exercising the real
+#' `rstudioapi`/`browseURL` branching through every one of them; this
+#' function gets its own dedicated tests for that branching instead.
+#'
+#' @param url The server's URL.
+#' @return `NULL`, invisibly.
+#' @keywords internal
+.open_server_url <- function(url) {
+  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+    rstudioapi::viewer(url)
+  } else {
+    utils::browseURL(url)
+  }
+  invisible(NULL)
 }
 
 #' Start the local web application
@@ -448,11 +493,7 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
 
   url <- sprintf("http://%s:%s", host, port)
   if (isTRUE(open_browser)) {
-    if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-      rstudioapi::viewer(url)
-    } else {
-      utils::browseURL(url)
-    }
+    .open_server_url(url)
   }
 
   structure(

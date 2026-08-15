@@ -251,6 +251,37 @@ test_that(".stop_deckifyr_server_on_port() refuses to kill a non-deckifyr occupa
   expect_false(pskill_called)
 })
 
+test_that(".stop_deckifyr_server_on_port() kills every matching pid and returns TRUE", {
+  local_mock_unix()
+  local_mocked_bindings(Sys.which = function(...) "/usr/sbin/lsof")
+  local_mocked_bindings(system2 = function(command, args, ...) {
+    if (identical(command, "lsof")) return(c("29095", "29200"))
+    if (identical(args, c("-o", "command=", "-p", "29095"))) {
+      return("python3 -m deckifyr serve --port 8351")
+    }
+    if (identical(args, c("-o", "command=", "-p", "29200"))) {
+      return("python3 -m deckifyr serve --port 8351")
+    }
+    # ppid lookups for both pids -- neither has a deckifyr-looking
+    # parent in this fixture, so only the two listening pids themselves
+    # get killed.
+    character(0)
+  })
+  killed <- integer(0)
+  local_mocked_bindings(
+    pskill = function(pid, signal) {
+      killed <<- c(killed, pid)
+      invisible(TRUE)
+    },
+    .package = "tools"
+  )
+
+  result <- .stop_deckifyr_server_on_port("127.0.0.1", 8351)
+
+  expect_true(result)
+  expect_setequal(killed, c(29095, 29200))
+})
+
 test_that("deck_serve() launches the expected uv invocation and returns a deckifyr_server", {
   project_dir <- file.path(tempdir(), "deckifyr-serve-launch-test")
   unlink(project_dir, recursive = TRUE)
@@ -344,13 +375,15 @@ test_that("deck_serve(force = TRUE) kills an existing deckifyr server on that po
   )
 
   # 1st call: deck_serve()'s own pre-flight check (port busy -- an
-  # existing server is there). 2nd call: the post-kill wait loop (port
-  # now free). 3rd+ call: .wait_for_server()'s own readiness poll for
-  # the newly-launched process (port open again).
+  # existing server is there). 2nd-3rd calls: the post-kill wait loop
+  # still sees it busy once (exercising the loop's Sys.sleep() retry,
+  # not just its first-iteration success) before reporting free on the
+  # 3rd. 4th+ call: .wait_for_server()'s own readiness poll for the
+  # newly-launched process (port open again).
   socket_calls <- 0L
   local_mocked_bindings(socketConnection = function(...) {
     socket_calls <<- socket_calls + 1L
-    if (socket_calls == 2L) stop("connection refused")
+    if (socket_calls == 3L) stop("connection refused")
     textConnection("")
   })
 
@@ -378,6 +411,115 @@ test_that("deck_serve(force = TRUE) kills an existing deckifyr server on that po
   expect_true(stopped_existing)
   expect_true(launched)
   expect_s3_class(server, "deckifyr_server")
+})
+
+test_that("deck_serve(force = TRUE) errors if the port never frees up after killing", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-force-timeout-test")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+
+  # The port always looks busy, even after "killing" the existing
+  # server -- simulates something else immediately re-occupying it (or
+  # the kill genuinely not having taken effect).
+  local_mocked_bindings(socketConnection = function(...) textConnection(""))
+  local_mocked_bindings(.stop_deckifyr_server_on_port = function(host, port) TRUE)
+
+  # A fake clock that jumps straight past deck_serve()'s 5-second
+  # deadline on the wait loop's very first check, rather than a real
+  # multi-second sleep -- Sys.sleep() itself is not mocked, but the
+  # loop never reaches it: the deadline check comes first each
+  # iteration.
+  base_time <- Sys.time()
+  call_n <- 0L
+  local_mocked_bindings(Sys.time = function() {
+    call_n <<- call_n + 1L
+    if (call_n == 1L) base_time else base_time + 10
+  })
+
+  launched <- FALSE
+  local_mocked_bindings(.launch_server_process = function(...) {
+    launched <<- TRUE
+  })
+
+  expect_error(
+    deck_serve(project = project_dir, port = 8321, force = TRUE, open_browser = FALSE),
+    "did not free up"
+  )
+  expect_false(launched)
+})
+
+test_that("deck_serve() errors clearly when the bundled Python source can't be found", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-no-python-src-test")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+
+  local_mocked_bindings(socketConnection = function(...) stop("connection refused"))
+  local_mocked_bindings(`system.file` = function(...) "")
+
+  expect_error(
+    deck_serve(project = project_dir, port = 8321, open_browser = FALSE),
+    "bundled Python source"
+  )
+})
+
+test_that("deck_serve() opens the server URL via .open_server_url() when open_browser = TRUE", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-open-browser-test")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+
+  local_mocked_bindings(`system.file` = function(...) "/fake/python/src")
+  local_mocked_bindings(
+    get_venv_uv_paths = function() list(uv = "fake-uv", venv = "fake-venv"),
+    .package = "pyro"
+  )
+  # 1st call: deck_serve()'s own pre-flight check -- port free. 2nd+
+  # call: .wait_for_server()'s readiness poll for the newly-launched
+  # process -- port open.
+  socket_calls <- 0L
+  local_mocked_bindings(socketConnection = function(...) {
+    socket_calls <<- socket_calls + 1L
+    if (socket_calls == 1L) stop("connection refused")
+    textConnection("")
+  })
+  local_mocked_bindings(.launch_server_process = function(...) make_fake_process(TRUE))
+
+  opened_url <- NULL
+  local_mocked_bindings(.open_server_url = function(url) {
+    opened_url <<- url
+  })
+
+  deck_serve(project = project_dir, port = 8321, open_browser = TRUE)
+
+  expect_equal(opened_url, "http://127.0.0.1:8321")
+})
+
+test_that(".open_server_url() opens the RStudio/Positron Viewer when rstudioapi is available", {
+  local_mocked_bindings(requireNamespace = function(...) TRUE)
+  viewed_url <- NULL
+  local_mocked_bindings(
+    isAvailable = function() TRUE,
+    viewer = function(url) {
+      viewed_url <<- url
+    },
+    .package = "rstudioapi"
+  )
+  browsed <- FALSE
+  local_mocked_bindings(browseURL = function(...) browsed <<- TRUE, .package = "utils")
+
+  .open_server_url("http://127.0.0.1:8000")
+
+  expect_equal(viewed_url, "http://127.0.0.1:8000")
+  expect_false(browsed)
+})
+
+test_that(".open_server_url() falls back to the default browser otherwise", {
+  local_mocked_bindings(requireNamespace = function(...) FALSE)
+  browsed_url <- NULL
+  local_mocked_bindings(browseURL = function(url) browsed_url <<- url, .package = "utils")
+
+  .open_server_url("http://127.0.0.1:8000")
+
+  expect_equal(browsed_url, "http://127.0.0.1:8000")
 })
 
 test_that("deck_stop_server(port = ) stops whatever's listening there", {
