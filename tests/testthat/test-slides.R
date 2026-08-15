@@ -31,6 +31,31 @@ test_that("deck_list_slides() returns $slides and can stay quiet", {
   expect_equal(result[[1]]$id, "a")
 })
 
+test_that("deck_list_slides() prints a cli summary by default (quiet = FALSE)", {
+  # Exercises the printing branch itself, and both sides of each of its
+  # conditionals: a freeform (NULL) layout vs. a named one, singular vs.
+  # plural element counts, and with vs. without notes.
+  local_mocked_bindings(
+    .run_deckifyr_cli = function(args) {
+      list(slides = list(
+        list(id = "a", layout = NULL, element_count = 1L, has_notes = TRUE),
+        list(id = "b", layout = "title-content", element_count = 2L, has_notes = FALSE)
+      ))
+    }
+  )
+
+  # cli writes via message conditions, not stdout -- capture_messages(),
+  # not capture_output(), is what actually sees it (confirmed directly:
+  # capture_output() around a bare cli:: call returns "").
+  messages <- testthat::capture_messages(
+    result <- deck_list_slides("presentation.yaml")
+  )
+  output <- paste(messages, collapse = "")
+  expect_match(output, "a")
+  expect_match(output, "b")
+  expect_equal(length(result), 2)
+})
+
 test_that("deck_add_slide() assembles id/layout/notes/placement flags", {
   captured_args <- NULL
   local_mocked_bindings(
@@ -142,6 +167,20 @@ test_that("deck_update_slide() leaves layout/notes untouched when NULL", {
 
   deck_update_slide("presentation.yaml", "a")
   expect_equal(captured_args, c("slide", "update", "presentation.yaml", "a"))
+})
+
+test_that("deck_update_slide() encodes elements as JSON", {
+  captured_args <- NULL
+  local_mocked_bindings(
+    .run_deckifyr_cli = function(args) {
+      captured_args <<- args
+      list(slide_count = 1)
+    }
+  )
+
+  deck_update_slide("presentation.yaml", "a", elements = list(title = list(value = "Hi")))
+  json_arg <- captured_args[which(captured_args == "--elements-json") + 1]
+  expect_equal(jsonlite::fromJSON(json_arg)$title$value, "Hi")
 })
 
 test_that("deck_move_slide() assembles placement flags", {
