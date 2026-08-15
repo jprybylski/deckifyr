@@ -77,6 +77,19 @@ export default function SlideCanvas({ plan }: Props) {
     transformer.getLayer()?.batchDraw();
   }, [state.selectedElementId, selectedElement?.type, slide]);
 
+  // `plan.error` must be checked before the loading fallback below --
+  // once a fetch fails, `plan.loading` settles to `false` but `slides`/
+  // `slideSize` stay `null` forever, so without this check the canvas
+  // was stuck showing "Loading plan…" indefinitely instead of the real
+  // error (caught by screenshotting a failed fetch, not by reasoning
+  // about the state machine in the abstract).
+  if (plan.error) {
+    return (
+      <div className="slide-canvas slide-canvas--empty" role="alert">
+        {plan.error}
+      </div>
+    );
+  }
   if (!slides || !slideSize) {
     return <div className="slide-canvas slide-canvas--loading">Loading plan…</div>;
   }

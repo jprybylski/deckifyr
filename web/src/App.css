@@ -42,6 +42,45 @@ body {
   padding: 1rem;
 }
 
+.no-project {
+  max-width: 40rem;
+  margin: 3rem auto;
+  padding: 0 1.5rem;
+  text-align: left;
+}
+
+.no-project--checking {
+  text-align: center;
+  color: #5f6368;
+}
+
+.no-project h1 {
+  font-size: 1.4rem;
+}
+
+.no-project__message {
+  font-family: Consolas, monospace;
+  font-size: 0.85rem;
+  background: #fdecea;
+  color: #b3261e;
+  border: 1px solid #f5c6c2;
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+  word-break: break-all;
+}
+
+.no-project code {
+  background: #eeeeee;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  font-family: Consolas, monospace;
+}
+
+.no-project__hint {
+  color: #5f6368;
+  font-size: 0.9rem;
+}
+
 .editor-layout__body {
   display: flex;
   gap: 1rem;
@@ -87,6 +126,15 @@ body {
   display: block;
   font-size: 0.75rem;
   color: #5f6368;
+}
+
+.slide-list__error {
+  color: #b3261e;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  border: 1px solid #f5c6c2;
+  border-radius: 4px;
+  background: #fdecea;
 }
 
 .slide-canvas {

@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppProvider } from "./state/AppContext";
 import { usePlan } from "./state/usePlan";
+import { ApiError, getProject } from "./api/client";
 import SlideCanvas from "./components/SlideCanvas";
 import SlideList from "./components/SlideList";
 import ElementInspector from "./components/ElementInspector";
@@ -30,8 +31,77 @@ function EditorTab() {
   );
 }
 
+type ProjectStatus =
+  | { state: "checking" }
+  | { state: "ready"; root: string }
+  | { state: "error"; message: string };
+
+/**
+ * Gates the whole editor UI behind one `GET /api/project` check (which
+ * itself fails whenever `presentation.yaml`/`design.yaml`/`layouts.yaml`
+ * can't be loaded, per `app.py`'s `_project_paths()`) so a `deckifyr
+ * serve` started outside a real project shows one clear, minimal
+ * message instead of the tabs/toolbar/three-panel editor rendering
+ * anyway with each panel independently hitting (and displaying) its own
+ * copy of the same underlying fetch failure -- confirmed as the actual
+ * failure mode by screenshotting an unfixed build against an empty
+ * directory before writing this gate.
+ */
+function useProjectStatus(): ProjectStatus {
+  const [status, setStatus] = useState<ProjectStatus>({ state: "checking" });
+
+  useEffect(() => {
+    let cancelled = false;
+    getProject()
+      .then((info) => {
+        if (!cancelled) setStatus({ state: "ready", root: info.root });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof ApiError ? err.message : String(err);
+        setStatus({ state: "error", message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return status;
+}
+
+function NoProjectScreen({ message }: { message: string }) {
+  return (
+    <div className="no-project">
+      <h1>deckifyr</h1>
+      <p className="no-project__message">{message}</p>
+      <p>
+        This directory doesn&rsquo;t look like a deckifyr project. Either:
+      </p>
+      <ul>
+        <li>
+          run <code>deckifyr init &lt;directory&gt;</code> to scaffold a new project, then restart{" "}
+          <code>deckifyr serve --project &lt;directory&gt;</code> pointed at it, or
+        </li>
+        <li>
+          restart <code>deckifyr serve --project &lt;directory&gt;</code> pointed at an existing
+          project directory (one containing <code>presentation.yaml</code>).
+        </li>
+      </ul>
+      <p className="no-project__hint">Reload this page once the project is in place.</p>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("editor");
+  const projectStatus = useProjectStatus();
+
+  if (projectStatus.state === "checking") {
+    return <div className="no-project no-project--checking">Loading&hellip;</div>;
+  }
+  if (projectStatus.state === "error") {
+    return <NoProjectScreen message={projectStatus.message} />;
+  }
 
   return (
     <AppProvider>
