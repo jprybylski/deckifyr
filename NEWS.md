@@ -1,18 +1,9 @@
 # deckifyr
 
-# deckifyr 0.1.2
+# deckifyr (development version)
 
 ## Added
 
-* `design.yaml` `colors:` entries may now be derived from another color
-  token via a simple HSL-space transform (`lighten`/`darken`/`saturate`/
-  `desaturate`, or `mix` toward a second color) instead of always being a
-  hand-picked literal hex value, per issue #11. Derivations may chain to
-  arbitrary depth; a circular chain is a build-time error.
-* A new vignette, "YAML Configuration Reference"
-  (`vignette("config-schema")`), documents the `design.yaml`/
-  `layouts.yaml`/`presentation.yaml` schema field by field, closing
-  issue #16.
 * `deckifyr preview`/`deck_preview()` render each slide to a standalone
   PNG via LibreOffice + PyMuPDF (requires the external `soffice` binary
   on `PATH`); `build.previews: true` also renders them as part of an
@@ -30,11 +21,28 @@
 
 ## Documentation
 
-* Every exported R function now has a runnable (`\dontrun{}`-wrapped)
-  `@examples` block, closing issue #15.
 * README's status summary, architecture diagram, component table, and
   quick-start examples updated to match what's actually implemented
   (config/slide editing, `preview`, `inspect`).
+
+# deckifyr 0.1.2
+
+## Added
+
+* `design.yaml` `colors:` entries may now be derived from another color
+  token via a simple HSL-space transform (`lighten`/`darken`/`saturate`/
+  `desaturate`, or `mix` toward a second color) instead of always being a
+  hand-picked literal hex value, per issue #11. Derivations may chain to
+  arbitrary depth; a circular chain is a build-time error.
+* A new vignette, "YAML Configuration Reference"
+  (`vignette("config-schema")`), documents the `design.yaml`/
+  `layouts.yaml`/`presentation.yaml` schema field by field, closing
+  issue #16.
+
+## Documentation
+
+* Every exported R function now has a runnable (`\dontrun{}`-wrapped)
+  `@examples` block, closing issue #15.
 
 # deckifyr 0.1.1
 
