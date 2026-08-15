@@ -158,3 +158,66 @@ test_that(".handle_missing_dependency() never attempts an install non-interactiv
     "No automatic install available"
   )
 })
+
+# The three tests below mock `interactive`/`Sys.info`/`Sys.which`/`system`
+# (each given a local NULL placeholder binding at the top of run-python.R
+# for exactly this reason) plus `utils::askYesNo`, to exercise the
+# Homebrew-offer branch a real testthat session never takes on its own --
+# see .handle_missing_dependency()'s own docstring for why this branch
+# only ever fires on macOS, with Homebrew present, interactively.
+local_mock_macos_with_homebrew <- function(env = parent.frame()) {
+  local_mocked_bindings(
+    interactive = function() TRUE,
+    `Sys.info` = function() c(sysname = "Darwin"),
+    `Sys.which` = function(name) if (identical(name, "brew")) "/opt/homebrew/bin/brew" else "",
+    .env = env
+  )
+}
+
+test_that(".handle_missing_dependency() installs via Homebrew when accepted and it succeeds", {
+  local_mock_macos_with_homebrew()
+  local_mocked_bindings(askYesNo = function(...) TRUE, .package = "utils")
+
+  system_calls <- character(0)
+  local_mocked_bindings(system = function(command, ...) {
+    system_calls <<- c(system_calls, command)
+    0L
+  })
+
+  dependency <- list(
+    name = "quarto", display_name = "Quarto",
+    install_url = "https://quarto.org/docs/get-started/"
+  )
+  expect_message(.handle_missing_dependency(dependency), "installed -- re-run")
+  expect_equal(system_calls, "brew install --cask quarto")
+})
+
+test_that(".handle_missing_dependency() reports a failed Homebrew install clearly", {
+  local_mock_macos_with_homebrew()
+  local_mocked_bindings(askYesNo = function(...) TRUE, .package = "utils")
+  local_mocked_bindings(system = function(...) 1L)
+
+  dependency <- list(
+    name = "soffice", display_name = "LibreOffice",
+    install_url = "https://www.libreoffice.org/download/download/"
+  )
+  expect_message(.handle_missing_dependency(dependency), "Install failed")
+})
+
+test_that(".handle_missing_dependency() never calls system() when the user declines", {
+  local_mock_macos_with_homebrew()
+  local_mocked_bindings(askYesNo = function(...) FALSE, .package = "utils")
+
+  called <- FALSE
+  local_mocked_bindings(system = function(...) {
+    called <<- TRUE
+    0L
+  })
+
+  dependency <- list(
+    name = "quarto", display_name = "Quarto",
+    install_url = "https://quarto.org/docs/get-started/"
+  )
+  .handle_missing_dependency(dependency)
+  expect_false(called)
+})

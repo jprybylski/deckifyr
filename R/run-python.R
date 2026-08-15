@@ -8,6 +8,22 @@
 # roxygen2 doesn't mistake it for the next block's documented object.
 system.file <- NULL
 
+# Same seam, same reason, for the four base functions
+# `.handle_missing_dependency()`'s Homebrew-install branch calls
+# unqualified: without these, testthat's tests could observe the
+# "declined/non-interactive" fallback (real `interactive()` is FALSE
+# under testthat anyway) but never the "accepted" branch --
+# `Sys.info()`/`Sys.which()`/`interactive()`/`system()` would need to be
+# genuinely faked at the OS level otherwise. `utils::askYesNo` doesn't
+# need this treatment: it's called `::`-qualified, so
+# `local_mocked_bindings(.package = "utils")` already works on it
+# directly, the same way `pyro::run_python_script` is mocked elsewhere
+# in this file's own tests.
+interactive <- NULL
+system <- NULL
+Sys.info <- NULL
+Sys.which <- NULL
+
 #' Invoke the bundled Python CLI via pyro
 #'
 #' Internal helper every exported `deck_*()`/`initialize_deck_project()`
