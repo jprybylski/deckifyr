@@ -186,15 +186,33 @@ marker on its own:
   -- a translucent brand color, not a separately hand-mixed pale one, so
   it reads consistently whether it's crossing the plain background, the
   reportifyr figure, the native table, or the rasterized equation image.
-- `corner_br` and `corner_tr`: smaller, simpler, bottom-right/top-right
-  labels using the same `footnote` style branding/page-number already
-  use, with no `rotation`/`z_index`/`opacity` -- alternatives this
-  deck's own `presentation.yaml` could select instead
+- `corner_br` and `corner_tr`: smaller, simpler bottom-right/top-right
+  labels using their own dedicated `status-corner` style (bold, `accent`
+  color, 18pt -- noticeably bigger and bolder than the `footnote` style
+  branding/page-number use, per issue #13: an earlier version of this
+  demo reused `footnote` here and it read as too small to actually
+  catch a viewer's eye), with no `z_index`/`opacity` -- alternatives
+  this deck's own `presentation.yaml` could select instead
   (`status_indicator: corner-br`/`corner-tr`) but doesn't, configured
   here to show the option exists (`corner_tl`/`corner_bl` are the same
-  idea, just not configured in this particular demo).
+  idea, just not configured in this particular demo). Both also set
+  `rotation: -90`, turning the label on its side so it reads
+  bottom-to-top as a narrow vertical strip flush against the right
+  margin, rather than a wide horizontal box -- but that rotation is this
+  demo's own styling choice, not something `StatusIndicatorStyle`
+  applies by default (every placement's `rotation` is 0, an ordinary
+  upright label, unless a `design.yaml` author sets it); a left-edge
+  placement would use `rotation: 90` instead, mirroring it the other
+  way. Getting the label to actually sit flush in the corner (rather
+  than centered along the middle of that rotated strip) additionally
+  needs `Element.align` (issue #13's second ask, `deckifyr.plan`
+  derives it automatically as `"right"` for these two fields, `"left"`
+  for `corner_tl`/`corner_bl` -- not something set in `design.yaml`
+  itself); design.yaml's own comment above the two placements has the
+  fuller geometry explanation, including why `corner_br`'s box sits
+  well below the slide's own height.
 
-<img src="../../man/figures/demo-deck-corner-tr-example.png" alt="demo-deck title slide with status_indicator: corner-tr selected instead of watermark, showing a small, upright &quot;demo&quot; label in the top-right corner" width="480">
+<img src="../../man/figures/demo-deck-corner-tr-example.png" alt="demo-deck title slide with status_indicator: corner-tr selected instead of watermark, showing a bold, orange, vertical &quot;demo&quot; label reading bottom-to-top, tucked flush into the top-right corner" width="480">
 
 The screenshot above is *not* part of this deck's own tracked build --
 `presentation.yaml` here sets `status_indicator: watermark`, so
@@ -216,8 +234,8 @@ soffice --headless --convert-to pdf --outdir /tmp/corner-tr-demo \
 ```
 
 Note the lowercase "demo" in that screenshot, unlike the diagonal
-watermark's all-caps "DEMO": `corner_tr` uses `style: footnote`, which
-sets no `text_transform` (unlike `style: watermark`'s own
+watermark's all-caps "DEMO": `corner_tr` uses `style: status-corner`,
+which sets no `text_transform` (unlike `style: watermark`'s own
 `text_transform: uppercase`) -- each placement is free to style its
 text however fits a small corner label versus a large diagonal mark.
 

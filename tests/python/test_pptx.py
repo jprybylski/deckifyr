@@ -852,6 +852,42 @@ def test_status_indicator_corner_placement_composes_at_its_own_box(project):
     assert shape.name == "__furniture_status"
     assert shape.text_frame.text == "APPROVED"
     assert shape.rotation == 0
+    # `corner_tl` pushes text to the left end of its box (issue #13) --
+    # still vertically centered (`center: True` on every status
+    # placement), but not horizontally, unlike the full-page watermark.
+    assert shape.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE
+    assert shape.text_frame.paragraphs[0].alignment == PP_ALIGN.LEFT
+
+
+def test_status_indicator_corner_tr_is_right_aligned(project):
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        furniture=Furniture(
+            status=StatusFurniture(
+                corner_tr=StatusIndicatorStyle(
+                    box=Box(x="7in", y="0.2in", width="1.5in", height="0.4in")
+                )
+            )
+        ),
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
+        status_indicator="corner-tr",
+        watermark="APPROVED",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    result = _build(project, presentation, design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (shape,) = list(slide.shapes)
+    assert shape.text_frame.paragraphs[0].alignment == PP_ALIGN.RIGHT
 
 
 def test_status_indicator_unconfigured_placement_raises(project):

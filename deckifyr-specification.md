@@ -448,7 +448,8 @@ Common element fields should include:
 | `alt_text` | Accessibility text |
 | `remove` | Remove an inherited layout element |
 | `required` | Fail validation if unresolved or empty |
-| `center` | Center text both horizontally and vertically within `box` (`text`/`markdown` only; default `false`) |
+| `center` | Anchor text vertically in the middle of `box` (`text`/`markdown` only; default `false`) |
+| `align` | Horizontal text alignment within `box` — `left`, `center`, or `right` (`text`/`markdown` only; default `null`, which falls back to `center` when `center: true` and to left-aligned otherwise) |
 
 Named elements are essential. Array indices should never be the primary override mechanism.
 
@@ -562,21 +563,34 @@ Design notes:
   rotated box, worth failing over. A `corner-*` placement with no text from either source is not
   an error, by contrast: it's simply empty content, skipped the same way any other unfilled,
   non-required element already is.
-- A status indicator's text is always centered, both horizontally and vertically, within its own
-  box — a `center` field every ordinary `text`/`markdown` element also has (default `false`,
-  unaffected), forced on for `__furniture_status` specifically, since a short label/word (not
-  flowing body text) reads correctly centered and a large rotated watermark reads distractingly
-  off-center otherwise.
+- A status indicator's text is always vertically centered within its own box — the `center` field
+  every ordinary `text`/`markdown` element also has (default `false`, unaffected), forced on for
+  `__furniture_status` specifically, since a short label/word (not flowing body text) reads
+  correctly centered vertically and a large rotated watermark reads distractingly off-center
+  otherwise. Horizontal alignment is a separate matter (§7.6's `align` field): `deckifyr.plan`
+  derives it automatically from which placement was selected, not something a `design.yaml`
+  author sets on the placement itself — `"center"` for `watermark` (the original, still-current
+  full-centering behavior), `"right"` for `corner_tr`/`corner_br`, `"left"` for `corner_tl`/
+  `corner_bl`. This matters once a corner placement is rotated (below): a rotated box's text is
+  still vertically centered *within that box*, but "left"/"right" alignment is what pushes it to
+  one end of the box rather than sitting in the middle of it — the difference between a label
+  that reads centered somewhere along a rotated strip and one flush against the actual corner.
 - A placement's own `rotation` (default `0`, like every other element's own rotation default) is
-  what turns it into a genuine diagonal watermark rather than a small upright corner label — a
-  large, bold `text_styles` entry plus a `box` spanning most of the slide plus a `-30`/`45`-degree
-  `rotation` is an ordinary combination of fields this feature already had (this is exactly what
-  the `watermark` placement configures; the four `corner_*` placements typically leave `rotation`
-  at `0`). Two further fields make the `watermark` placement read as a real watermark rather than
-  a large label that happens to be diagonal: the placement's own `z_index` (unset by default, so
-  a plain corner label still paints behind content as every other furniture item does) opts into
-  painting *on top* of ordinary content instead — the conventional watermark placement — and the
-  paired `text_styles` entry's own `opacity` (§7.4, 0.0-1.0, unset means fully opaque) is what
+  what turns it into a genuine diagonal watermark, or a corner label turned on its side to hug an
+  edge, rather than a small upright corner label — a large, bold `text_styles` entry plus a `box`
+  spanning most of the slide plus a `-30`/`45`-degree `rotation` is an ordinary combination of
+  fields this feature already had (this is exactly what the `watermark` placement configures).
+  Nothing about `rotation`/`align` is automatic or edge-aware on its own: a `corner_*` placement
+  that leaves `rotation` at its `0` default renders as an ordinary upright label, exactly like any
+  other element — a `design.yaml` author choosing to rotate a right-edge corner placement (e.g.
+  `-90`, so the text reads bottom-to-top as a vertical strip) is a deliberate styling choice, not
+  something this feature imposes; see `examples/demo-deck/design.yaml`'s own `corner_tr`/
+  `corner_br` for a worked example, including the box-geometry math a rotated, edge-flush corner
+  label needs. Two further fields make the `watermark` placement read as a real watermark rather
+  than a large label that happens to be diagonal: the placement's own `z_index` (unset by default,
+  so a plain corner label still paints behind content as every other furniture item does) opts
+  into painting *on top* of ordinary content instead — the conventional watermark placement — and
+  the paired `text_styles` entry's own `opacity` (§7.4, 0.0-1.0, unset means fully opaque) is what
   keeps that on-top mark legible rather than fully obscuring whatever it crosses. Use a saturated
   `color` (a `colors:` token like `primary`) with `opacity` doing the softening, not a separately
   hand-mixed pale color — a flat pale color only looks right against one particular background,

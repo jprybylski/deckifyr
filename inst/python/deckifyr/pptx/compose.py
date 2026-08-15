@@ -359,6 +359,13 @@ def _inline_spans(text: str) -> list[tuple[str, bool, bool]]:
     return spans
 
 
+_TEXT_ALIGN = {
+    "left": PP_ALIGN.LEFT,
+    "center": PP_ALIGN.CENTER,
+    "right": PP_ALIGN.RIGHT,
+}
+
+
 def _apply_text_transform(text: str, transform: str | None) -> str:
     """Apply a `TextStyle.text_transform` case transform (spec section
     7.4) to one run's text. `None`/`"none"` (the vast majority of
@@ -408,10 +415,14 @@ def _add_text_shape(slide: Any, element: ResolvedElement, design: DesignDocument
     else:
         paragraphs = [(0, [(str(element.value), False, False)])]
 
+    horizontal_align = _TEXT_ALIGN.get(element.align)
+    if horizontal_align is None and element.center:
+        horizontal_align = PP_ALIGN.CENTER
+
     for index, (level, spans) in enumerate(paragraphs):
         paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
-        if element.center:
-            paragraph.alignment = PP_ALIGN.CENTER
+        if horizontal_align is not None:
+            paragraph.alignment = horizontal_align
         for text, span_bold, span_italic in spans:
             run = paragraph.add_run()
             run.text = _apply_text_transform(text, text_transform)

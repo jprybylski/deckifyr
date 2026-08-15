@@ -135,7 +135,41 @@ inert everywhere else): `deckifyr.pptx.compose._add_text_shape` sets
 placement -- a short label/word reads correctly centered, and a large
 rotated watermark reads distractingly off-center without it (this was
 the actual visual bug that prompted the field: an uncentered "DRAFT"
-sat visibly left-of-center once rotated). A placement's own `rotation`
+sat visibly left-of-center once rotated). Vertical centering and
+horizontal alignment were the same bool until issue #13 asked for them
+independently: a corner placement (`corner_tr`/`corner_br`/`corner_tl`/
+`corner_bl`) rotated to hug an edge still needs to stay vertically
+centered *within its own box*, but centering it horizontally too just
+leaves the text sitting in the middle of the rotated strip instead of
+flush against the actual corner. `Element.align` (`Literal["left",
+"center", "right"] | None`, default `None`) is the fix -- independent
+of `center`, and only meaningful when set; `None` falls back to
+`center`'s own original all-or-nothing behavior (`"center"` if
+`center=True`, otherwise the compositor's ordinary left-aligned
+default), so every pre-existing `center: true` usage (`watermark`,
+still `align=None`) is unaffected. `_furniture_layout`'s own
+`_STATUS_CORNER_ALIGN` sets it automatically from which corner field is
+selected (`corner_tr`/`corner_br` -> `"right"`, `corner_tl`/`corner_bl`
+-> `"left"`) -- not a `design.yaml`-authored field on
+`StatusIndicatorStyle` itself, since it's determined entirely by which
+edge the corner is on, not a per-placement style choice.
+`deckifyr.pptx.compose._add_text_shape`'s `_TEXT_ALIGN` maps it to
+`PP_ALIGN` and sets `paragraph.alignment` whenever it (or the
+`center`-derived fallback) resolves to something, independent of the
+`vertical_anchor = MIDDLE` line `center` alone still controls. Neither
+`rotation` nor `align` is automatic or edge-aware within the engine
+itself, though -- a `corner_*` placement that leaves `rotation` at its
+`0` default renders as an ordinary upright label like any other element;
+rotating a corner to hug an edge (and getting the box geometry right so
+the rotated, aligned text actually lands flush against that edge rather
+than off-slide or floating away from it) is a `design.yaml` authoring
+choice, worked out in `examples/demo-deck/design.yaml`'s own
+`corner_tr`/`corner_br` comments -- including why `corner_br`'s `box.y`
+is deliberately declared well past the slide's own height (the box is a
+virtual frame the rotation pivots around, not literal on-slide bounds,
+so solving for where the *rotated* text lands took precedence over the
+declared rectangle looking like it belongs on the slide). A placement's
+own `rotation`
 (0 by default, like every other element's own rotation) is what makes
 the `watermark` placement diagonal rather than upright, and its `z_index`
 (unset by default, so it paints behind content like every other
