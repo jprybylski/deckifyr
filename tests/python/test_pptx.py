@@ -18,6 +18,7 @@ from deckifyr.schema.design import (
     PageNumberFurniture,
     SlideSize,
     StatusFurniture,
+    TableStyle,
     TextStyle,
 )
 from deckifyr.schema.errors import ContentValidationError
@@ -297,7 +298,9 @@ def test_shape_without_style_gets_default_outline(project):
     assert shape.line.color.rgb == RGBColor.from_string("000000")
 
 
-def _table_presentation(*, source: str = "data.csv") -> PresentationDocument:
+def _table_presentation(
+    *, source: str = "data.csv", table_style: str | None = None
+) -> PresentationDocument:
     return PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
@@ -313,6 +316,7 @@ def _table_presentation(*, source: str = "data.csv") -> PresentationDocument:
                         id="tbl",
                         type="table",
                         source=source,
+                        table_style=table_style,
                         box=Box(x="0in", y="0in", width="4in", height="2in"),
                     )
                 ],
@@ -341,6 +345,73 @@ def test_table_element_builds_a_native_table_from_csv(project):
     assert element_entry["editability"] == "fully_editable"
     assert element_entry["resolved_path"].endswith("data.csv")
     assert "sha256" in element_entry
+
+
+def test_table_style_applies_fills_header_text_color_and_borders(project):
+    (project / "data.csv").write_text("name,score\nAda,10\nGrace,9\n")
+    design = DesignDocument(
+        deckifyr="0.1",
+        slide=SlideSize(width="10in", height="7.5in"),
+        fonts=Fonts(body="Arial", heading="Arial"),
+        colors={"primary": "#2457A6", "accent": "#D14D32"},
+        table_styles={
+            "branded": TableStyle(
+                header_fill="primary",
+                header_text_color="#FFFFFF",
+                body_fill="#FFFFFF",
+                band_fill="#EEF2FA",
+                border_color="accent",
+                border_width="1.5pt",
+            )
+        },
+    )
+
+    result = _build(project, _table_presentation(table_style="branded"), design)
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (graphic_frame,) = list(slide.shapes)
+    table = graphic_frame.table
+
+    header_cell = table.cell(0, 0)
+    assert header_cell.fill.fore_color.rgb == RGBColor.from_string("2457A6")
+    header_run = header_cell.text_frame.paragraphs[0].runs[0]
+    assert header_run.font.color.rgb == RGBColor.from_string("FFFFFF")
+
+    body_cell = table.cell(1, 0)
+    assert body_cell.fill.fore_color.rgb == RGBColor.from_string("FFFFFF")
+    band_cell = table.cell(2, 0)
+    assert band_cell.fill.fore_color.rgb == RGBColor.from_string("EEF2FA")
+
+    tcPr = header_cell._tc.get_or_add_tcPr()
+    border_children = [qn("a:lnL"), qn("a:lnR"), qn("a:lnT"), qn("a:lnB")]
+    for tag in border_children:
+        line = tcPr.find(tag)
+        assert line is not None
+        assert line.get("w") == str(int(1.5 * 12700))
+        fill_color = line.find(qn("a:solidFill")).find(qn("a:srgbClr"))
+        assert fill_color.get("val") == "D14D32"
+
+    # Border elements must precede the fill element (OOXML schema order),
+    # otherwise PowerPoint would treat the file as corrupted.
+    child_tags = [child.tag for child in tcPr]
+    assert child_tags.index(qn("a:lnB")) < child_tags.index(qn("a:solidFill"))
+
+
+def test_table_without_table_style_keeps_default_look(project):
+    (project / "data.csv").write_text("name,score\nAda,10\n")
+
+    result = _build(project, _table_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (graphic_frame,) = list(slide.shapes)
+    table = graphic_frame.table
+    header_cell = table.cell(0, 0)
+    # No `table_style` set anywhere -- no explicit per-cell fill/border was
+    # ever applied, so `a:tcPr` on the header cell has no fill/line children.
+    tcPr = header_cell._tc.get_or_add_tcPr()
+    assert len(tcPr) == 0
 
 
 def test_table_source_not_found_raises(project):

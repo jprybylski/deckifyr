@@ -64,6 +64,34 @@ class ShapeStyle(BaseModel):
     line_width: str | None = None
 
 
+class TableStyle(BaseModel):
+    """A named fill/border style for `table` elements, alongside
+    `shape_styles`. Every field is optional and, when unset, leaves
+    `python-pptx`'s own default table-template look (banding, header
+    fill, no explicit border) untouched for that aspect -- the same
+    "no style token = compositor's own built-in default" convention
+    `ShapeStyle` uses. Font/size/bold/italic and the body text color
+    remain governed by `text_styles` via a table element's ordinary
+    `style` field (unchanged); `TableStyle` only controls the fill/
+    border chrome `text_styles` has no vocabulary for. `header_fill`
+    overrides the default template's own header band; pair it with
+    `header_text_color` when the new fill would leave the template's
+    own (unshown, theme-inherited) header text color illegible --
+    `deckifyr.pptx.compose` does not infer one from the other.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    header_fill: str | None = None
+    header_text_color: str | None = None
+    body_fill: str | None = None
+    # Alternate-row fill for banding; unset means every body row uses
+    # `body_fill` (or, if that's also unset, the template's own default).
+    band_fill: str | None = None
+    border_color: str | None = None
+    border_width: str | None = None
+
+
 class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -79,6 +107,11 @@ class Defaults(BaseModel):
     # small built-in default, same "token or bare literal" convention
     # `TextStyle`'s own fields use.
     footer_style: str | None = None
+    # `table_styles` name a `table` element falls back to when it sets no
+    # `table_style` of its own -- unset means every table keeps
+    # `python-pptx`'s bundled default template look, same "unset here is
+    # not the same as unset on the element" precedent `footer_style` sets.
+    table_style: str | None = None
 
 
 class StatusFurniture(BaseModel):
@@ -152,6 +185,7 @@ class DesignDocument(BaseModel):
     colors: dict[str, str] = {}
     text_styles: dict[str, TextStyle] = {}
     shape_styles: dict[str, ShapeStyle] = {}
+    table_styles: dict[str, TableStyle] = {}
     defaults: Defaults = Defaults()
     furniture: Furniture = Furniture()
 

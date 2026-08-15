@@ -33,11 +33,18 @@ from PIL import Image
 from pptx import Presentation as PptxPresentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
 
 from deckifyr import __version__ as DECKIFYR_VERSION
-from deckifyr.plan import ResolvedElement, ResolvedSlide, ResolvedTextStyle, resolve_text_style
+from deckifyr.plan import (
+    ResolvedElement,
+    ResolvedSlide,
+    ResolvedTableStyle,
+    ResolvedTextStyle,
+    resolve_text_style,
+)
 from deckifyr.resolvers import (
     BuildContext,
     LocalFileResolver,
@@ -94,6 +101,11 @@ _DEFAULT_FOOTER_STYLE = ResolvedTextStyle(
     italic=False,
     color=_DEFAULT_FOOTER_COLOR,
 )
+
+# Border weight applied when a `table_style` sets `border_color` but no
+# `border_width` (mirrors `ShapeStyle`'s own "color set, width unset"
+# case having a sane hairline default rather than requiring every field).
+_DEFAULT_TABLE_BORDER_WIDTH_PT = 0.75
 
 # `deckifyr.schema.layouts.ShapeKind`'s values, mapped to their
 # `MSO_SHAPE` member. Keep in sync with that Literal -- schema validation
@@ -556,6 +568,67 @@ def _add_reportifyr_shape(
 # Tables
 # ---------------------------------------------------------------------------
 
+_LINE_XML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def _set_cell_borders(cell: Any, *, color: str, width_pt: float) -> None:
+    """Set all four sides of a table cell's border to a uniform color/width.
+
+    `python-pptx` exposes no public API for table-cell borders at all --
+    `CT_TableCellProperties` (`a:tcPr`) only models fill/margin/anchor,
+    not the `<a:lnL>/<a:lnR>/<a:lnT>/<a:lnB>` line elements OOXML's own
+    schema allows there -- so this builds them directly via lxml,
+    confined to this one function per spec section 10.2's warning about
+    isolating OOXML workarounds behind narrowly tested adapters (the
+    same pattern `_set_alt_text` above uses). Must run before this same
+    cell's `cell.fill.solid()` is called: OOXML orders `a:tcPr`'s border
+    children ahead of its fill child, and `python-pptx`'s own fill-
+    insertion logic doesn't know these undeclared siblings exist, so it
+    only lands after them if they're already present when fill is set.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    width_emu = int(Pt(width_pt))
+    rgb = color.lstrip("#")
+    for tag in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
+        line = parse_xml(
+            f'<{tag} xmlns:a="{_LINE_XML_NS}" w="{width_emu}">'
+            f'<a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill>'
+            f"</{tag}>"
+        )
+        tcPr.append(line)
+
+
+def _apply_table_chrome(
+    table: Any, style: ResolvedTableStyle, *, row_count: int, col_count: int
+) -> None:
+    """Apply a `table_style`'s fill/border chrome on top of whatever
+    `python-pptx`'s own default table template already drew (spec
+    section 10.1). Every field on `style` is independently optional --
+    an unset field leaves that aspect of the default template alone,
+    the same "token or literal, else built-in default" convention
+    `ShapeStyle` uses -- so setting only `header_fill`, say, changes
+    nothing about banding or borders.
+    """
+    border_width_pt = (
+        style.border_width_pt
+        if style.border_width_pt is not None
+        else _DEFAULT_TABLE_BORDER_WIDTH_PT
+    )
+    for row_index in range(row_count):
+        if row_index == 0:
+            fill_color = style.header_fill
+        elif style.band_fill is not None and (row_index - 1) % 2 == 1:
+            fill_color = style.band_fill
+        else:
+            fill_color = style.body_fill
+        for col_index in range(col_count):
+            cell = table.cell(row_index, col_index)
+            if style.border_color is not None:
+                _set_cell_borders(cell, color=style.border_color, width_pt=border_width_pt)
+            if fill_color is not None:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = _hex_to_rgbcolor(fill_color)
+
 
 def _add_table_shape(
     slide: Any,
@@ -624,7 +697,9 @@ def _add_table_shape(
     font_color = style.color if style else design.colors.get("text", "#000000")
     style_italic = style.italic if style else False
 
-    def _fill_cell(row: int, col: int, text: str, *, bold: bool, apply_color: bool) -> None:
+    def _fill_cell(
+        row: int, col: int, text: str, *, bold: bool, apply_color: bool, text_color: str | None = None
+    ) -> None:
         cell = table.cell(row, col)
         cell.text = text
         run = cell.text_frame.paragraphs[0].runs[0]
@@ -639,15 +714,24 @@ def _add_table_shape(
         # background, not the header's fill, so it's applied to data rows
         # only -- forcing it onto the header would fight the theme's own
         # contrast choice (e.g. `footnote`'s muted gray unreadable on a
-        # dark header band).
-        if apply_color:
+        # dark header band). `text_color` is the one explicit override to
+        # that rule: a `table_style.header_text_color` the author set on
+        # purpose, typically paired with a `header_fill` that would
+        # otherwise fight the template's own inherited header text color.
+        if text_color is not None:
+            run.font.color.rgb = _hex_to_rgbcolor(text_color)
+        elif apply_color:
             run.font.color.rgb = _hex_to_rgbcolor(font_color)
 
+    header_text_color = element.table_style.header_text_color if element.table_style else None
     for col_index, header in enumerate(data.headers):
-        _fill_cell(0, col_index, header, bold=True, apply_color=False)
+        _fill_cell(0, col_index, header, bold=True, apply_color=False, text_color=header_text_color)
     for row_index, row in enumerate(data.rows, start=1):
         for col_index, value in enumerate(row):
             _fill_cell(row_index, col_index, value, bold=False, apply_color=True)
+
+    if element.table_style is not None:
+        _apply_table_chrome(table, element.table_style, row_count=row_count, col_count=col_count)
 
     if element.alt_text:
         _set_alt_text(graphic_frame, element.alt_text)

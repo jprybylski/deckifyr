@@ -48,10 +48,27 @@ with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
 than silently dropping that content. `table` elements resolve their
 `source` (a `.csv` or `.parquet` file, project-relative like an image's
 `source`) to a native, fully-editable PowerPoint table -- first row is
-always the header, mirroring `pandas`' own `header=0` default; there is
-no `design.yaml` table-style token yet, so `style` on a `table` element
-reuses an ordinary `text_styles` entry applied uniformly to every cell
-(header cells are bold regardless of the style). `shape`'s autoshape kinds are a small
+always the header, mirroring `pandas`' own `header=0` default; `style`
+on a `table` element still reuses an ordinary `text_styles` entry for
+typography, applied uniformly to every cell (header cells are bold
+regardless of the style). Chrome -- fill/border, the part `text_styles`
+has no vocabulary for -- is a separate, optional `table_style` field
+naming a `design.yaml` `table_styles` entry (`deckifyr.schema.design.
+TableStyle`; `defaults.table_style` sets a project-wide fallback,
+mirroring `defaults.footer_style`); unset on both the element and
+`defaults` means every table keeps `python-pptx`'s bundled default
+template look untouched, exactly as before this field existed. Fill
+(`header_fill`/`body_fill`/`band_fill`/`header_text_color`) goes
+through `python-pptx`'s public `cell.fill`/`run.font.color` API; border
+(`border_color`/`border_width`) does not have a public API at all in
+`python-pptx` (`CT_TableCellProperties` models fill/margin/anchor only,
+not `a:lnL/lnR/lnT/lnB`) so `deckifyr.pptx.compose._set_cell_borders`
+builds those elements directly via lxml -- confined to that one
+function per spec §10.2's warning, the same pattern `_set_alt_text`
+already uses, and it must run before that cell's `cell.fill.solid()`
+touches the same `a:tcPr` since OOXML orders border children ahead of
+the fill child and `python-pptx`'s own fill-insertion logic doesn't
+know these undeclared siblings exist. `shape`'s autoshape kinds are a small
 named subset of `MSO_SHAPE` (`deckifyr.schema.layouts.ShapeKind`), not
 the full enum; `group` nests any supported element (including another
 group) and composes via `python-pptx`'s `add_group_shape`, reparenting

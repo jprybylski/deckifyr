@@ -81,6 +81,22 @@ class ResolvedShapeStyle:
 
 
 @dataclass
+class ResolvedTableStyle:
+    """A `design.yaml` table style with its color/border tokens already
+    resolved to literal values, mirroring `ResolvedShapeStyle`. Governs
+    only fill/border chrome; a table's typography still comes from
+    `style`/`ResolvedTextStyle` as before.
+    """
+
+    header_fill: str | None
+    header_text_color: str | None
+    body_fill: str | None
+    band_fill: str | None
+    border_color: str | None
+    border_width_pt: float | None
+
+
+@dataclass
 class ResolvedElement:
     id: str
     type: str
@@ -102,6 +118,7 @@ class ResolvedElement:
     footer_placement: str | None = None
     shape_kind: str | None = None
     shape_style: ResolvedShapeStyle | None = None
+    table_style: ResolvedTableStyle | None = None
     # `group`-only: already-resolved children, sorted by paint order the
     # same way `ResolvedSlide.elements` is.
     children: list["ResolvedElement"] = field(default_factory=list)
@@ -178,6 +195,37 @@ def _resolve_shape_style(
     )
 
     return ResolvedShapeStyle(fill=fill, line_color=line_color, line_width_pt=line_width_pt)
+
+
+def _resolve_table_style(
+    design: DesignDocument, style_name: str | None
+) -> ResolvedTableStyle | None:
+    if style_name is None:
+        return None
+    style = design.table_styles.get(style_name)
+    if style is None:
+        raise ContentValidationError(
+            f"unknown table_style {style_name!r}: not defined in "
+            "design.yaml's table_styles"
+        )
+
+    def _color(token: str | None) -> str | None:
+        return design.colors.get(token, token) if token is not None else None
+
+    border_width_pt = (
+        parse_length(style.border_width, strict=True) / EMU_PER_POINT
+        if style.border_width is not None
+        else None
+    )
+
+    return ResolvedTableStyle(
+        header_fill=_color(style.header_fill),
+        header_text_color=_color(style.header_text_color),
+        body_fill=_color(style.body_fill),
+        band_fill=_color(style.band_fill),
+        border_color=_color(style.border_color),
+        border_width_pt=border_width_pt,
+    )
 
 
 def _merge_element(layout_element: Element | None, override: Element | None) -> dict[str, Any]:
@@ -347,6 +395,18 @@ def _resolve_element(
         _resolve_shape_style(design, merged.get("style")) if element_type == "shape" else None
     )
 
+    table_style_name = merged.get("table_style")
+    if table_style_name is not None and element_type != "table":
+        raise ContentValidationError(
+            f"slide {slide_id!r}, element {element_id!r}: table_style is "
+            "only valid on a 'table' element"
+        )
+    if element_type == "table" and table_style_name is None:
+        table_style_name = design.defaults.table_style
+    table_style = (
+        _resolve_table_style(design, table_style_name) if element_type == "table" else None
+    )
+
     children: list[ResolvedElement] = []
     if element_type == "group":
         context = f"slide {slide_id!r}, group {element_id!r}"
@@ -406,6 +466,7 @@ def _resolve_element(
         footer_placement=footer_placement,
         shape_kind=merged.get("shape_kind"),
         shape_style=shape_style,
+        table_style=table_style,
         children=children,
     )
 

@@ -96,6 +96,11 @@ class Element(BaseModel):
     rotation: float | None = None
     z_index: int | None = None
     style: str | None = None
+    # `table`-only: a `design.yaml` `table_styles` name controlling fill/
+    # border chrome, separate from `style` above (which still governs a
+    # table's text_styles-driven typography). `deckifyr.plan` rejects it
+    # set anywhere else, mirroring `footer_placement`'s own validation.
+    table_style: str | None = None
     fit: FitMode | None = None
     overflow: OverflowMode | None = None
     render_mode: RenderMode | None = None

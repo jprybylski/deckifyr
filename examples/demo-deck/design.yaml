@@ -36,6 +36,30 @@ text_styles:
     font: body
     size: 8pt
     color: muted
+  # The `pk-table` element's own typography -- deliberately a separate
+  # entry from `footnote` (still used by branding/page-number furniture
+  # and the reportifyr figure's footer) so bumping this table's font
+  # size doesn't also grow those unrelated elements sharing the same
+  # named style.
+  table-body:
+    font: body
+    size: 13pt
+    color: text
+
+# Fill/border chrome for the `pk-summary` slide's `pk-table` element --
+# `style: table-body` above still governs its typography; this is the
+# separate, optional knob for the part `text_styles` has no vocabulary
+# for. `band_fill` is a one-off tint for this table's own banding, not a
+# reusable brand token, hence the bare literal rather than a `colors:`
+# entry.
+table_styles:
+  pk-summary:
+    header_fill: primary
+    header_text_color: "#FFFFFF"
+    body_fill: "#FFFFFF"
+    band_fill: "#EEF3FB"
+    border_color: muted
+    border_width: 0.75pt
 
 defaults:
   overflow: error

@@ -18,7 +18,8 @@ real `reportifyr` artifact rather than placeholder content.
 3. **Per-Subject PK Summary** -- a `table` element (`layout: blank`,
    list-form elements) rendered from `OUTPUTS/tables/pk-summary.csv` as
    a native, fully-editable PowerPoint table, exercising
-   `deckifyr.resolvers.TableResolver` (spec section 9.2).
+   `deckifyr.resolvers.TableResolver` (spec section 9.2) and, for its
+   fill/border colors, a `design.yaml` `table_styles` entry.
 4. **Closing** -- a freeform (`layout: null`) slide combining text, a
    markdown note, and a rotated logo image, to exercise `z_index` and
    `rotation` together.
@@ -60,8 +61,15 @@ over each subject's observed profile rather than any PK modeling. The
 `pk-summary` slide's `pk-table` element resolves it with
 `deckifyr.resolvers.TableResolver` (CSV support is built in; the same
 resolver also reads `.parquet`, via the optional `pyarrow` extra) into a
-native, fully-editable PowerPoint table -- first row as header, `style:
-footnote` keeping thirteen rows legible in the slide's box.
+native, fully-editable PowerPoint table -- first row as header. Its
+typography comes from `style: table-body`, a `text_styles` entry of its
+own (13pt/`text`) rather than the shared `footnote` style branding/
+page-number furniture and the reportifyr footer use -- bumping this
+table's font size doesn't touch theirs. Its fill/border chrome (blue
+header band, alternating row tint, thin gray grid lines) comes from
+`table_style: pk-summary`, a `design.yaml` `table_styles` entry
+exercising the deck's own brand colors (`primary`/`muted`) rather than
+`python-pptx`'s bundled default table look.
 
 ## Building it
 

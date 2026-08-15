@@ -93,7 +93,8 @@ slides:
         type: table
         source: OUTPUTS/tables/pk-summary.csv
         box: {x: 0.9in, y: 1.35in, width: 11.5in, height: 5.0in}
-        style: footnote
+        style: table-body
+        table_style: pk-summary
         alt_text: >-
           Table of weight, dose, peak concentration, and time to peak
           concentration for each of the 12 participants in the Theoph

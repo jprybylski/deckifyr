@@ -10,6 +10,7 @@ from deckifyr.schema.design import (
     ShapeStyle,
     SlideSize,
     StatusFurniture,
+    TableStyle,
     TextStyle,
 )
 from deckifyr.schema.errors import ContentValidationError
@@ -144,6 +145,105 @@ def test_table_element_is_supported():
     (element,) = resolved.elements
     assert element.type == "table"
     assert element.source == "data.csv"
+
+
+def test_table_style_resolves_color_tokens_and_border_width():
+    design = _design(
+        table_styles={
+            "branded": TableStyle(
+                header_fill="primary",
+                header_text_color="#FFFFFF",
+                body_fill="#FFFFFF",
+                band_fill="#EEEEEE",
+                border_color="text",
+                border_width="1.5pt",
+            )
+        }
+    )
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="tbl",
+                type="table",
+                source="data.csv",
+                table_style="branded",
+                box=_box(),
+            )
+        ],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.table_style.header_fill == "#111111"
+    assert element.table_style.header_text_color == "#FFFFFF"
+    assert element.table_style.body_fill == "#FFFFFF"
+    assert element.table_style.band_fill == "#EEEEEE"
+    assert element.table_style.border_color == "#000000"
+    assert element.table_style.border_width_pt == pytest.approx(1.5)
+
+
+def test_table_style_unset_leaves_table_style_none():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="tbl", type="table", source="data.csv", box=_box())],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.table_style is None
+
+
+def test_unknown_table_style_raises():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="tbl", type="table", source="data.csv", table_style="nope", box=_box()
+            )
+        ],
+    )
+    with pytest.raises(ContentValidationError):
+        expand_slide(slide, None, design, strict=True)
+
+
+def test_table_style_rejected_on_non_table_element():
+    design = _design(
+        table_styles={"branded": TableStyle(header_fill="primary")}
+    )
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="txt",
+                type="text",
+                value="hi",
+                table_style="branded",
+                box=_box(),
+            )
+        ],
+    )
+    with pytest.raises(ContentValidationError):
+        expand_slide(slide, None, design, strict=True)
+
+
+def test_table_style_falls_back_to_design_default():
+    design = _design(
+        table_styles={"branded": TableStyle(header_fill="primary")},
+    )
+    design = design.model_copy(update={"defaults": design.defaults.model_copy(update={"table_style": "branded"})})
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="tbl", type="table", source="data.csv", box=_box())],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.table_style.header_fill == "#111111"
 
 
 def test_reportifyr_element_is_supported():
