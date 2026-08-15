@@ -22,7 +22,7 @@ from deckifyr.renderers.quarto import (
     render_native,
     select_auto_render_mode,
 )
-from deckifyr.schema.errors import ContentValidationError
+from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 
 requires_quarto = pytest.mark.skipif(
     shutil.which("quarto") is None, reason="quarto binary not found on PATH"
@@ -107,6 +107,25 @@ def test_render_native_raises_clearly_when_quarto_missing(tmp_path):
     config = QuartoExecutionConfig(binary="definitely-not-a-real-quarto-binary")
     with pytest.raises(ContentValidationError, match="not found on PATH"):
         render_native(qmd, config=config)
+
+
+def test_render_native_raises_a_structured_dependency_error_when_quarto_missing(tmp_path):
+    # R/run-python.R's .handle_missing_dependency() reacts to this exact
+    # shape (see CLAUDE.md's "Preview rendering" note) -- pin it down so
+    # a refactor here can't silently drop the `dependency` payload R
+    # depends on.
+    qmd = tmp_path / "frag.qmd"
+    qmd.write_text("Hello.\n")
+    config = QuartoExecutionConfig(binary="definitely-not-a-real-quarto-binary")
+    with pytest.raises(MissingDependencyError) as exc_info:
+        render_native(qmd, config=config)
+    payload = exc_info.value.to_dict()
+    assert payload["code"] == "E_MISSING_DEPENDENCY"
+    assert payload["dependency"] == {
+        "name": "quarto",
+        "display_name": "Quarto",
+        "install_url": "https://quarto.org/docs/get-started/",
+    }
 
 
 # ---------------------------------------------------------------------------

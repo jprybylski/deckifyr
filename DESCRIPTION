@@ -17,7 +17,8 @@ Description: Generates .pptx presentations from version-controlled YAML
 Imports:
     pyro,
     jsonlite,
-    cli
+    cli,
+    utils
 Suggests:
     testthat (>= 3.0.0),
     covr,

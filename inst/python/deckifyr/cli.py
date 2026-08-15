@@ -1,17 +1,21 @@
 """The `deckifyr` command-line interface (spec section 11.1).
 
 Every subcommand from the spec is wired up with real argument parsing.
-`init`, `validate`, `build`, and `schema` do real work today: `init`
-copies the bundled minimal example, `validate` loads and
-pydantic-validates a project (design + layouts + presentation,
+`init`, `validate`, `build`, `preview`, `inspect`, and `schema` do real
+work today: `init` copies the bundled minimal example, `validate` loads
+and pydantic-validates a project (design + layouts + presentation,
 cross-checking layout references and box unit strings), `build` plans
 (`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest
 for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/
-`quarto` elements, and `schema` dumps a document type's JSON Schema.
-`preview`, `inspect`, and `serve` parse their arguments fully but raise
-`NotImplementedFeatureError` -- the preview renderer, inspector, and web
-server are Phase 3/4 work (see deckifyr-specification.md) and
-deliberately do not pretend to succeed.
+`quarto` elements, `preview` builds the same way and then rasterizes
+each slide to a PNG via `deckifyr.renderers.preview` (LibreOffice +
+PyMuPDF -- requires `soffice` on PATH), `inspect` reports a
+presentation.yaml's resolved plan or a built .pptx's real slide/shape
+structure (detected by file extension), and `schema` dumps a document
+type's JSON Schema. `serve` parses its arguments fully but raises
+`NotImplementedFeatureError` -- the local web application is Phase 3
+work (see deckifyr-specification.md section 12) and deliberately does
+not pretend to succeed.
 
 `get`/`set` and the `slide` subcommand group (issue #10) round-trip a
 design/layouts/presentation YAML file through `deckifyr.editor`'s pure
@@ -336,6 +340,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "manifest": str(result.manifest_path) if result.manifest_path else None,
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
+        "previews": [str(p) for p in result.preview_paths],
     }
 
 
@@ -492,16 +497,136 @@ def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
-    raise NotImplementedFeatureError(
-        "slide preview rendering is not implemented yet -- see "
-        "deckifyr-specification.md section 18, Phase 3"
+    presentation_path = Path(args.presentation).resolve()
+    presentation, design, layouts = _load_project(
+        Path(args.presentation), strict=args.strict
     )
+
+    project_root = presentation_path.parent
+    resolved_slides = expand_presentation(
+        presentation, design, layouts, strict=args.strict
+    )
+    # `force_previews=True`: an explicit `deckifyr preview` invocation
+    # always renders, regardless of the project's own `build.previews`
+    # flag -- see `compose_and_write`'s own docstring note on this.
+    result = compose_and_write(
+        presentation,
+        design,
+        resolved_slides,
+        project_root=project_root,
+        presentation_path=presentation_path,
+        design_path=(project_root / presentation.design.base).resolve(),
+        layouts_path=(project_root / presentation.layouts).resolve(),
+        force_previews=True,
+    )
+
+    return {
+        "output": str(result.output_path),
+        "previews": [str(p) for p in result.preview_paths],
+        "slide_count": result.slide_count,
+    }
+
+
+def _inspect_presentation(path: Path, *, strict: bool) -> dict[str, Any]:
+    presentation, design, layouts = _load_project(path, strict=strict)
+    resolved_slides = expand_presentation(presentation, design, layouts, strict=strict)
+    return {
+        "target": "presentation",
+        "path": str(path),
+        "schema_version": presentation.deckifyr,
+        "slide_count": len(resolved_slides),
+        "layout_count": len(layouts.layouts),
+        "status_indicator": presentation.status_indicator,
+        "slides": [
+            {
+                "id": slide.id,
+                "element_count": len(slide.elements),
+                "element_types": sorted({element.type for element in slide.elements}),
+                "has_notes": slide.notes is not None,
+            }
+            for slide in resolved_slides
+        ],
+    }
+
+
+def _inspect_pptx(path: Path) -> dict[str, Any]:
+    # Imported lazily so `deckifyr inspect some.yaml` never pays for
+    # importing python-pptx's own presentation-reading machinery, the
+    # same lazy-import posture `deckifyr.resolvers.table` already takes
+    # for pyarrow.
+    from pptx import Presentation as PptxPresentation
+
+    try:
+        prs = PptxPresentation(str(path))
+    except Exception as exc:  # python-pptx raises a mix of exception types
+        raise DeckifyrError(
+            f"{path}: not a readable .pptx package: {exc}", code=ErrorCode.IO
+        ) from exc
+
+    slides = []
+    for index, slide in enumerate(prs.slides):
+        shapes = [
+            {
+                "name": shape.name,
+                "shape_type": str(shape.shape_type),
+                "has_text_frame": shape.has_text_frame,
+                "rotation": shape.rotation,
+            }
+            for shape in slide.shapes
+        ]
+        has_notes = (
+            slide.has_notes_slide
+            and slide.notes_slide.notes_text_frame.text.strip() != ""
+        )
+        slides.append(
+            {
+                "index": index,
+                "shape_count": len(shapes),
+                "shapes": shapes,
+                "has_notes": has_notes,
+            }
+        )
+
+    manifest_summary = None
+    manifest_path = path.with_name(path.stem + ".manifest.json")
+    if manifest_path.is_file():
+        try:
+            manifest_data = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            manifest_data = None
+        if isinstance(manifest_data, dict):
+            manifest_summary = {
+                "path": str(manifest_path),
+                "deckifyr_version": manifest_data.get("deckifyr_version"),
+                "slide_count": manifest_data.get("slide_count"),
+                "warnings": manifest_data.get("warnings", []),
+            }
+
+    return {
+        "target": "pptx",
+        "path": str(path),
+        "slide_width_emu": prs.slide_width,
+        "slide_height_emu": prs.slide_height,
+        "slide_count": len(slides),
+        "slides": slides,
+        "manifest": manifest_summary,
+    }
 
 
 def _cmd_inspect(args: argparse.Namespace) -> dict[str, Any]:
-    raise NotImplementedFeatureError(
-        "inspecting a presentation or .pptx is not implemented yet -- see "
-        "deckifyr-specification.md section 18, Phase 1/4"
+    target = Path(args.target)
+    if not target.is_file():
+        raise DeckifyrError(f"target not found: {target}", code=ErrorCode.IO)
+
+    suffix = target.suffix.lower()
+    if suffix in (".yaml", ".yml"):
+        return _inspect_presentation(target, strict=args.strict)
+    if suffix == ".pptx":
+        return _inspect_pptx(target)
+    raise DeckifyrError(
+        f"cannot infer target type from extension {suffix!r} -- expected "
+        "a presentation .yaml/.yml or a built .pptx",
+        code=ErrorCode.IO,
     )
 
 
@@ -558,15 +683,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     build_parser.set_defaults(handler=_cmd_build)
 
     preview_parser = subparsers.add_parser(
-        "preview", help="render slide previews (not implemented yet)"
+        "preview", help="render each slide to a PNG (requires LibreOffice on PATH)"
     )
     preview_parser.add_argument("presentation")
+    add_strict_flag(preview_parser)
     preview_parser.set_defaults(handler=_cmd_preview)
 
     inspect_parser = subparsers.add_parser(
-        "inspect", help="inspect a presentation or .pptx (not implemented yet)"
+        "inspect", help="inspect a presentation.yaml's resolved plan or a built .pptx"
     )
     inspect_parser.add_argument("target")
+    add_strict_flag(inspect_parser)
     inspect_parser.set_defaults(handler=_cmd_inspect)
 
     schema_parser = subparsers.add_parser("schema", help="print a document type's JSON Schema")

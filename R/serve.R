@@ -1,15 +1,18 @@
 #' Inspect a presentation or .pptx
 #'
-#' Delegates to `deckifyr inspect` in the bundled Python engine.
-#' **Not implemented yet** -- see spec section 18, Phase 1/4.
+#' Delegates to `deckifyr inspect` in the bundled Python engine. The
+#' target type is detected from its file extension: a `.yaml`/`.yml`
+#' presentation reports its resolved slide plan (element counts/types,
+#' notes), while a `.pptx` reports its real, opened-back-up shape
+#' structure (per slide: shape names/types, rotation, notes) plus a
+#' summary of its sibling `<stem>.manifest.json`, if one exists.
 #'
 #' @param target Path to a `presentation.yaml` or a built `.pptx`.
 #' @return A parsed list from the CLI's JSON output.
 #' @examples
 #' \dontrun{
-#' # Not implemented yet -- always errors today; shown for the intended
-#' # future usage.
 #' deck_inspect("presentation.yaml")
+#' deck_inspect("build/my-deck.pptx")
 #' }
 #' @export
 deck_inspect <- function(target) {

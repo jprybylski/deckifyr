@@ -2,9 +2,14 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from pptx import Presentation
 
 from deckifyr.cli import EXIT_OK, EXIT_VALIDATION_ERROR, main
+
+requires_soffice = pytest.mark.skipif(
+    shutil.which("soffice") is None, reason="soffice binary not found on PATH"
+)
 
 
 def test_validate_exits_ok_on_minimal_deck(minimal_deck_dir, capsys):
@@ -143,3 +148,58 @@ def test_init_refuses_nonempty_directory_without_force(tmp_path):
     (target / "stray.txt").write_text("hi")
     exit_code = main(["--json", "init", str(target)])
     assert exit_code != EXIT_OK
+
+
+def test_inspect_presentation_reports_the_resolved_plan(minimal_deck_dir, capsys):
+    exit_code = main(
+        ["--json", "inspect", str(minimal_deck_dir / "presentation.yaml")]
+    )
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["target"] == "presentation"
+    assert output["slide_count"] == 2
+    slide_ids = [slide["id"] for slide in output["slides"]]
+    assert slide_ids == ["title", "content-slide"]
+    assert output["slides"][1]["element_types"] == ["markdown", "text"]
+
+
+def test_inspect_pptx_reports_real_shape_structure(minimal_deck_dir, tmp_path, capsys):
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+    exit_code = main(["--json", "build", str(tmp_path / "presentation.yaml")])
+    assert exit_code == EXIT_OK
+    build_output = json.loads(capsys.readouterr().out)
+
+    exit_code = main(["--json", "inspect", build_output["output"]])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["target"] == "pptx"
+    assert output["slide_count"] == 2
+    shape_names = {
+        shape["name"] for slide in output["slides"] for shape in slide["shapes"]
+    }
+    assert shape_names == {"deck-title", "title", "content"}
+    assert output["manifest"]["slide_count"] == 2
+
+
+def test_inspect_rejects_an_unrecognized_extension(tmp_path, capsys):
+    stray = tmp_path / "notes.txt"
+    stray.write_text("hi")
+    exit_code = main(["--json", "inspect", str(stray)])
+    assert exit_code != EXIT_OK
+    output = json.loads(capsys.readouterr().err)
+    assert output["code"] == "E_IO"
+
+
+@requires_soffice
+def test_preview_renders_one_png_per_slide(minimal_deck_dir, tmp_path, capsys):
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+
+    exit_code = main(["--json", "preview", str(tmp_path / "presentation.yaml")])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["slide_count"] == 2
+    assert len(output["previews"]) == 2
+    for preview_path in output["previews"]:
+        assert Path(preview_path).is_file()

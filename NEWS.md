@@ -13,11 +13,28 @@
   (`vignette("config-schema")`), documents the `design.yaml`/
   `layouts.yaml`/`presentation.yaml` schema field by field, closing
   issue #16.
+* `deckifyr preview`/`deck_preview()` render each slide to a standalone
+  PNG via LibreOffice + PyMuPDF (requires the external `soffice` binary
+  on `PATH`); `build.previews: true` also renders them as part of an
+  ordinary `deckifyr build`. New `build.preview` config block
+  (`binary`/`dpi`/`timeout_seconds`) tunes the render.
+* `deckifyr inspect`/`deck_inspect()` reports a `presentation.yaml`'s
+  resolved slide plan, or a built `.pptx`'s real shape structure (plus
+  its sibling manifest, if one exists) -- target type is detected from
+  the file extension.
+* A missing external binary (LibreOffice for `preview`, Quarto for a
+  `quarto` element) now fails with a structured `E_MISSING_DEPENDENCY`
+  error naming where to get it; from R, `.run_deckifyr_cli()` also
+  prints install guidance, and on macOS with Homebrew already on `PATH`
+  offers to install it for you.
 
 ## Documentation
 
 * Every exported R function now has a runnable (`\dontrun{}`-wrapped)
   `@examples` block, closing issue #15.
+* README's status summary, architecture diagram, component table, and
+  quick-start examples updated to match what's actually implemented
+  (config/slide editing, `preview`, `inspect`).
 
 # deckifyr 0.1.1
 

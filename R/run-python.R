@@ -90,6 +90,10 @@ system.file <- NULL
       error = function(e) NULL
     )
     if (!is.null(parsed_error) && identical(parsed_error$status, "error")) {
+      if (identical(parsed_error$code, "E_MISSING_DEPENDENCY") &&
+        !is.null(parsed_error$dependency)) {
+        .handle_missing_dependency(parsed_error$dependency)
+      }
       stop(
         sprintf(
           "deckifyr %s failed [%s]: %s",
@@ -119,4 +123,92 @@ system.file <- NULL
   )
 
   parsed
+}
+
+# The exact Homebrew cask name for each dependency `name` the Python
+# engine's `MissingDependencyError` can carry (`inst/python/deckifyr/
+# schema/errors.py`) -- confirmed against Homebrew's own cask listings
+# (formulae.brew.sh/cask/libreoffice, formulae.brew.sh/cask/quarto), not
+# guessed. `NULL` for anything else (there is currently nothing else),
+# so `.handle_missing_dependency()` below always falls back to printing
+# the install URL rather than assuming a cask name that doesn't exist.
+.homebrew_cask_for_dependency <- function(name) {
+  switch(name,
+    soffice = "libreoffice",
+    quarto = "quarto",
+    NULL
+  )
+}
+
+#' Print install guidance for a missing external binary dependency
+#'
+#' Called from `.run_deckifyr_cli()` when the Python CLI's JSON error
+#' payload carries a `dependency` object (`code == "E_MISSING_DEPENDENCY"`,
+#' `deckifyr.schema.errors.MissingDependencyError` -- see its own
+#' docstring) -- today, a missing `soffice` (LibreOffice, `deck_preview()`)
+#' or `quarto` (Quarto, any build touching a `type: quarto` element)
+#' binary. Always prints a `cli`-formatted panel naming the dependency
+#' and its official download page; on macOS, with Homebrew already on
+#' `PATH`, in an interactive session, additionally offers to run the
+#' known-correct `brew install --cask <name>` command itself (no `sudo`
+#' needed, so safe to run without extra privilege escalation) -- every
+#' other platform, or a non-interactive session (this repo's own test
+#' suite included, so tests never actually shell out to Homebrew), or a
+#' machine without Homebrew, just gets the printed URL: there's no
+#' single install command deckifyr can verify in advance for apt/winget/
+#' etc, and this deliberately never guesses one or runs anything that
+#' needs `sudo`. A failed/declined/skipped install attempt does not
+#' retry the original `deckifyr` command -- the caller's own `stop()`
+#' (right after this runs) still fires either way, so the user re-runs
+#' their command themselves once the dependency is actually installed;
+#' this machine may also have no network access to Homebrew's own
+#' servers at all (firewalled/offline), so the install attempt is
+#' wrapped in `tryCatch()` and reported as a failure rather than
+#' crashing this function.
+#'
+#' @param dependency A list with `name`/`display_name`/`install_url`,
+#'   parsed straight from the CLI's JSON `dependency` object.
+#' @keywords internal
+.handle_missing_dependency <- function(dependency) {
+  cli::cli_h3("Missing dependency: {dependency$display_name}")
+  cli::cli_bullets(c("i" = "Download/install: {.url {dependency$install_url}}"))
+
+  cask <- .homebrew_cask_for_dependency(dependency$name)
+  can_offer_brew_install <- !is.null(cask) &&
+    identical(Sys.info()[["sysname"]], "Darwin") &&
+    nzchar(Sys.which("brew")) &&
+    interactive()
+
+  if (!can_offer_brew_install) {
+    cli::cli_alert_info(
+      "No automatic install available for this platform -- use the link above."
+    )
+    return(invisible(NULL))
+  }
+
+  install_cmd <- paste("brew install --cask", cask)
+  proceed <- isTRUE(tryCatch(
+    utils::askYesNo(sprintf(
+      "Homebrew found on this machine -- attempt `%s` now?", install_cmd
+    )),
+    error = function(e) FALSE
+  ))
+  if (!proceed) {
+    return(invisible(NULL))
+  }
+
+  cli::cli_alert_info("Running: {install_cmd}")
+  status <- tryCatch(system(install_cmd), error = function(e) NA_integer_)
+  if (identical(status, 0L)) {
+    cli::cli_alert_success(
+      "{dependency$display_name} installed -- re-run your deckifyr command."
+    )
+  } else {
+    cli::cli_alert_danger(paste0(
+      "Install failed, or this machine has no network access to ",
+      "Homebrew's servers -- install {dependency$display_name} ",
+      "manually: {.url ", dependency$install_url, "}"
+    ))
+  }
+  invisible(NULL)
 }

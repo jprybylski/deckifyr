@@ -8,6 +8,8 @@ plain strings serialize to JSON without a custom encoder.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class ErrorCode:
     SCHEMA_VERSION = "E_SCHEMA_VERSION"
@@ -20,6 +22,7 @@ class ErrorCode:
     CONTENT_VALIDATION = "E_CONTENT_VALIDATION"
     PATH_NOT_FOUND = "E_PATH_NOT_FOUND"
     COLOR_RESOLUTION = "E_COLOR_RESOLUTION"
+    MISSING_DEPENDENCY = "E_MISSING_DEPENDENCY"
 
 
 class DeckifyrError(Exception):
@@ -32,7 +35,7 @@ class DeckifyrError(Exception):
         if code is not None:
             self.code = code
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {"code": self.code, "message": str(self)}
 
 
@@ -71,6 +74,43 @@ class ColorResolutionError(DeckifyrError):
     """
 
     code = ErrorCode.COLOR_RESOLUTION
+
+
+class MissingDependencyError(ContentValidationError):
+    """Raised when a build step needs an external binary that isn't on
+    PATH -- LibreOffice for `deckifyr.renderers.preview`, Quarto for
+    `deckifyr.renderers.quarto`. Distinct from a plain
+    `ContentValidationError` (still its parent, so existing `except
+    ContentValidationError` call sites keep working unchanged) so a
+    caller can reliably detect "you need to install something external"
+    and offer install guidance, rather than string-matching a message.
+    `to_dict()` adds a `dependency` object (`name`/`display_name`/
+    `install_url`) to the CLI's JSON error payload (spec section 11.1)
+    alongside the usual `code`/`message` -- `R/run-python.R`'s
+    `.run_deckifyr_cli()` is the one place that reads it, to print rich
+    `cli`-formatted install guidance (and, on macOS with Homebrew
+    present, offer to run the install itself) instead of just
+    surfacing the raw message.
+    """
+
+    code = ErrorCode.MISSING_DEPENDENCY
+
+    def __init__(
+        self, message: str, *, name: str, display_name: str, install_url: str
+    ) -> None:
+        super().__init__(message)
+        self.name = name
+        self.display_name = display_name
+        self.install_url = install_url
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        data["dependency"] = {
+            "name": self.name,
+            "display_name": self.display_name,
+            "install_url": self.install_url,
+        }
+        return data
 
 
 class NotImplementedFeatureError(DeckifyrError):

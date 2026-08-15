@@ -72,6 +72,9 @@ dev = [
     { name = "pymupdf" },
     { name = "pytest" },
 ]
+preview = [
+    { name = "pymupdf" },
+]
 quarto = [
     { name = "pymupdf" },
 ]
@@ -91,13 +94,14 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'tables'", specifier = ">=14.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pymupdf", marker = "extra == 'dev'", specifier = ">=1.24" },
+    { name = "pymupdf", marker = "extra == 'preview'", specifier = ">=1.24" },
     { name = "pymupdf", marker = "extra == 'quarto'", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-pptx", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.29" },
 ]
-provides-extras = ["dev", "tables", "quarto", "web"]
+provides-extras = ["dev", "tables", "quarto", "preview", "web"]
 
 [[package]]
 name = "exceptiongroup"

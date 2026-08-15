@@ -31,9 +31,10 @@ learned while building the scaffold.
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
 | `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
-| CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
-| CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
+| CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema` (spec §11.1) | Real, tested |
+| CLI `serve` | Argument parsing is real; raises `NotImplementedFeatureError` (exit code 4) -- Phase 3 |
 | `deckifyr.editor` + CLI `get`/`set`/`slide` (config/slide editing, spec §11.1/§11.2, issue #10) | Real, tested |
+| `deckifyr.renderers.preview` (slide preview rendering, spec §12/§18 Phase 3) | Real, tested against a live `soffice`/PyMuPDF install -- see this file's own "Preview rendering" section below |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
 | `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, `Slide.notes`, and reportifyr footers (§9.1) -- Phase 1 and Phase 2's Quarto slice (§18, issue #3) are done |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1), and `QuartoResolver` (fragment execution, spec §9.2/§8.1) are real |
@@ -584,6 +585,79 @@ defaults otherwise -- a build with no `quarto` element never touches
 this at all, same precedent `ReportifyrBuildContext`/
 `_build_reportifyr_context` already set.
 
+**Preview rendering (spec §12/§18 Phase 3, closing the CLI's `preview`
+stub) shells out to LibreOffice rather than inventing a from-scratch
+layout engine -- resolving spec §21's open "select the initial preview
+renderer" item.** `python-pptx` has no rendering engine of its own; this
+repo's own `.githooks/pre-commit`/`examples/demo-deck/README.md` already
+documented `soffice --headless --convert-to pdf` + PyMuPDF rasterization
+as the manual recipe for regenerating `man/figures/demo-deck-*.png`, so
+`deckifyr.renderers.preview.render_slide_previews` just wires that
+same, already-trusted recipe into the CLI instead of building a second
+renderer -- real PowerPoint-engine fidelity (fonts, gradients, tables,
+rotation all render the way LibreOffice's own layout engine actually
+lays them out), at the cost of a real external-binary dependency,
+mirroring the `quarto` binary's own story exactly (`_require_soffice`/
+`_require_quarto`, same shape). `presentation.yaml`'s `build.previews:
+true` (spec §7.6's own example -- a schema field that sat completely
+unused until this) is the on/off switch for rendering previews as part
+of an ordinary `deckifyr build`; the new `build.preview` block
+(`binary`/`dpi`/`timeout_seconds`, `deckifyr.schema.presentation.
+PreviewConfig`) mirrors `build.quarto`'s own "`None` means every
+default applies" shape. `deckifyr preview`/`deck_preview()` always
+render regardless of that flag (`compose_and_write`'s own
+`force_previews=True`) -- the point of a standalone preview command is
+not needing to permanently flip a project's config just to check one
+preview. Previews land in `<build.output's parent>/previews/`, named
+`<pptx stem>-<01-indexed slide number>.png`, and their paths are
+recorded in both the CLI's JSON result and the manifest's own
+`"previews"` key, the same additive-key pattern `"warnings"` already
+established -- no existing manifest consumer asserts an exhaustive key
+set, confirmed by checking every `manifest[...]` test-file reference
+before adding this.
+
+**`deckifyr inspect` (spec §11.1) detects a presentation.yaml versus a
+built `.pptx` by file extension (`.yaml`/`.yml` vs `.pptx`), not by
+sniffing content -- there is no third possibility spec §11.1 names.**
+Given a presentation, it plans (`deckifyr.plan.expand_presentation`,
+the same Pass 1 `build`/`validate` already use) and reports the
+resolved slide list -- element counts/types, notes presence -- without
+composing or writing anything, so `inspect` on a large project stays
+cheap and side-effect-free. Given a `.pptx`, it opens the file for real
+with `python-pptx` and reports what's actually inside (per spec §13's
+"Output validation" bullets: slide/shape counts, shape names, rotation,
+notes presence) -- not a re-derivation from YAML, since the point of
+inspecting a *built* artifact is seeing what actually landed in it.
+`_inspect_pptx` also opportunistically looks for a sibling `<pptx
+stem>.manifest.json` (the `<stem>.pptx`/`<stem>.manifest.json` naming
+convention both bundled example projects already use) and includes a
+short summary of it when found -- best-effort, not required; nothing
+about `inspect`'s own contract depends on a manifest existing.
+
+**A missing external binary (LibreOffice, Quarto) now raises a
+distinct, structured error -- `deckifyr.schema.errors.
+MissingDependencyError` (`ContentValidationError` subclass, code
+`E_MISSING_DEPENDENCY`) -- specifically so `R/run-python.R` can react to
+it, not just display it.** Its `to_dict()` adds a `dependency` object
+(`name`/`display_name`/`install_url`) to the CLI's JSON error payload
+(the same stderr handshake this file documents elsewhere -- see the
+`pyro::run_python_script()` note below) alongside the usual `code`/
+`message`. `.run_deckifyr_cli()`'s `.handle_missing_dependency()` is the
+one place that reads it: always prints a `cli`-formatted panel naming
+the dependency and its official download page; on macOS, with Homebrew
+already on `PATH`, in an interactive session, additionally offers to
+run the verified-correct `brew install --cask <name>` command itself
+(confirmed against Homebrew's own cask listings for both `libreoffice`
+and `quarto` before writing this, not guessed) -- no `sudo` needed, so
+safe to run without extra privilege escalation. Every other platform/
+dependency combination just gets the printed URL: there's no single
+install command deckifyr can verify in advance for apt/winget/etc, and
+this deliberately never guesses one or runs anything needing `sudo`.
+`interactive()` gates the install-offer branch, which also means this
+never fires during automated test runs (testthat sessions are
+non-interactive) -- don't remove that gate to make a test "more
+realistic"; it's what keeps CI from ever actually invoking Homebrew.
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three
@@ -786,9 +860,14 @@ site.** `_pkgdown.yml`'s `reference:` block is a hand-maintained,
 complete list of exported topics grouped into sections; `pkgdown::
 build_site()` hard-*errors* (`"N topics missing from index"`), not just
 warns, when an exported `Rd` topic isn't listed anywhere in it, and
-`.github/workflows/pages.yml` runs `pkgdown::build_site()` on every push
-to `main` with no dry-run gate -- so a missed entry doesn't fail the PR
-itself (R CMD check/pytest/covr don't touch `_pkgdown.yml` at all), it
+`.github/workflows/pages.yml` runs `pkgdown::build_site()` after every
+push to `main` (triggered by `release.yaml`'s own completion via
+`workflow_run` -- see that workflow's own header comment for why a plain
+`push` trigger doesn't work here: it would deploy the site from
+DESCRIPTION/NEWS.md as they stood *before* release.yaml's own
+"chore: sync release metadata" commit, and never redeploy after that
+commit lands) with no dry-run gate -- so a missed entry doesn't fail the
+PR itself (R CMD check/pytest/covr don't touch `_pkgdown.yml` at all), it
 silently breaks the live docs deploy right after merge, discovered only
 by noticing the Pages workflow's red X. Before opening a PR that adds an
 `@export`, actually run
@@ -838,8 +917,17 @@ are the second kind: real integration tests against a live `quarto`
 binary (Typst rendering, R-chunk execution, timeout/output-size
 enforcement all included), skipping cleanly when `quarto` isn't on
 `PATH` the same way `test-wiring.R` skips without uv/pyro -- see this
-file's "Quarto integration" architecture note above. What's still
-missing from spec §17's later
+file's "Quarto integration" architecture note above. `test_renderers_preview.py`
+(a real `render_slide_previews()` call against a real `soffice` binary,
+skipping cleanly when it's absent) and `test_cli.py`'s `inspect`/
+`preview` tests (the `preview` one also gated on `soffice`; `inspect`'s
+own tests need nothing external and always run) are the same pattern
+applied to "Preview rendering" above; `tests/testthat/test-run-python.R`
+covers `.handle_missing_dependency()`/`.homebrew_cask_for_dependency()`
+directly (asserting the non-interactive fallback path specifically,
+since `interactive()` is always `FALSE` under `testthat` -- see that
+architecture note's own last sentence). What's still missing from spec
+§17's later
 categories: real visual-regression testing (rendering a slide to an
 image and diffing it) and broader OOXML structural validation beyond
 shape names/counts -- today's PPTX tests check what `python-pptx` can
