@@ -62,6 +62,18 @@ reference:
     contents:
       - deck_validate
       - deck_build
+  - title: Edit config and slides
+    desc: >-
+      Read/write one config value, or add/remove/update/move/list slides,
+      in a design/layouts/presentation YAML file (issue #10).
+    contents:
+      - deck_get_config
+      - deck_set_config
+      - deck_list_slides
+      - deck_add_slide
+      - deck_remove_slide
+      - deck_update_slide
+      - deck_move_slide
   - title: Project setup
     desc: One-time-per-project scaffolding and schema introspection.
     contents:

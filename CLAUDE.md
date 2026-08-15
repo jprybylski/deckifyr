@@ -713,6 +713,39 @@ argparse's own mutually-exclusive-group check on the Python/CLI side
 still exist too, as defense in depth for any caller that reaches
 `deckifyr.editor`/the CLI directly rather than through these R wrappers.
 
+**Every new `@export`ed R function must be added to `_pkgdown.yml`'s own
+`reference:` index, in the same PR that adds the function -- confirmed
+the hard way: issue #10's first merge to `main` broke the live docs
+site.** `_pkgdown.yml`'s `reference:` block is a hand-maintained,
+complete list of exported topics grouped into sections; `pkgdown::
+build_site()` hard-*errors* (`"N topics missing from index"`), not just
+warns, when an exported `Rd` topic isn't listed anywhere in it, and
+`.github/workflows/pages.yml` runs `pkgdown::build_site()` on every push
+to `main` with no dry-run gate -- so a missed entry doesn't fail the PR
+itself (R CMD check/pytest/covr don't touch `_pkgdown.yml` at all), it
+silently breaks the live docs deploy right after merge, discovered only
+by noticing the Pages workflow's red X. Before opening a PR that adds an
+`@export`, actually run
+`Rscript -e 'pkgdown::build_site(new_process = FALSE, install = FALSE, preview = FALSE)'`
+against a real `R CMD INSTALL`ed copy of the package (not just
+`devtools::load_all()`, which `pkgdown` doesn't use) -- see
+CONTRIBUTING.md's own copy of this same check.
+
+**`DESCRIPTION`'s `Version:` field is not hand-edited -- it's
+bot-managed, derived from the repo-root `VERSION` file by
+`.github/workflows/release.yaml`'s `sync-release-metadata.R` step on
+every push to `main`, and any manual edit gets silently overwritten on
+the next push.** Confirmed directly: a manual `Version: 0.1.1` bump in
+DESCRIPTION during issue #10's work was reverted back to `0.1.0` by an
+automated `chore: sync release metadata for 0.1.0` commit, since
+`VERSION` itself hadn't changed (`sync-release-metadata.R` compares
+`VERSION` against the latest released git tag, not against whatever
+DESCRIPTION currently says). To actually bump the release version, edit
+`VERSION` (and let the workflow fold the `NEWS.md` "(development
+version)" section into a new dated heading) -- never edit
+`DESCRIPTION`'s `Version:` directly, even when asked to "bump the
+patch version"; that request means `VERSION`, not `DESCRIPTION`.
+
 ## Testing strategy
 
 Today's tests are unit-level plus two kinds of true integration test:

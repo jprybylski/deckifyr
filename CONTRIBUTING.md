@@ -55,6 +55,24 @@ Rscript -e 'roxygen2::roxygenise()'
 and commit the result -- CI's `R-CMD-check.yaml` workflow (`R CMD
 check`) fails if they're out of date with `R/*.R`.
 
+**Every new `@export`ed R function must also be added to `_pkgdown.yml`'s
+`reference:` index** (or given `@keywords internal` to deliberately drop
+it from the reference page) -- `pkgdown::build_site()` hard-errors,
+not just warns, on an exported topic missing from that index ("N topics
+missing from index"), and `.github/workflows/pages.yml` runs it on
+every push to `main` with no dry-run step, so a missed entry breaks the
+live docs deploy immediately after merge. Verify locally before
+opening a PR:
+
+```bash
+R CMD INSTALL --no-multiarch --with-keep.source .
+Rscript -e 'pkgdown::build_site(new_process = FALSE, install = FALSE, preview = FALSE)'
+```
+
+(the package must actually be installed first, not just
+`devtools::load_all()`-ed -- `pkgdown` loads it fresh via `library()` to
+build the reference index and run `@examples`.)
+
 ### Running a real `R CMD check`/coverage locally
 
 ```bash
@@ -78,6 +96,9 @@ directly against the checkout instead.
 - R tests pass or skip cleanly (see above).
 - `Rscript -e 'roxygen2::roxygenise()'` produces no unexpected diff if
   you touched any `R/*.R` doc comment.
+- Any new `@export`ed R function is added to `_pkgdown.yml`'s
+  `reference:` index (see above) -- confirm with a local
+  `pkgdown::build_site()` run, not just by eyeballing the YAML.
 - If you touched `R/run-python.R` or `inst/python/deckifyr/cli.py`'s
   stdout/stderr handling, re-read both files' comments about the
   stdout/stderr handshake between them before changing either side --
