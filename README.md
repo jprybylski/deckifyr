@@ -18,7 +18,12 @@ targeting slides instead of documents.
 > `shape`/`group`/`table`/`reportifyr`/`quarto` elements -- see
 > `examples/demo-deck/` for a working example (a `quarto` element needs
 > the external `quarto` binary on `PATH` to build; every other type
-> needs nothing beyond this repo's own Python dependencies). See
+> needs nothing beyond this repo's own Python dependencies). `deckifyr
+> preview` (per-slide PNGs, via LibreOffice + PyMuPDF -- needs `soffice`
+> on `PATH`), `deckifyr inspect` (a presentation's resolved plan or a
+> built `.pptx`'s real shape structure), and config/slide editing
+> (`deckifyr get`/`set`/`slide`) are real too. Only the optional local
+> web application (`deckifyr serve`) remains a stub. See
 > `deckifyr-specification.md` at the repo root for the full design and
 > phased delivery plan, and `CLAUDE.md` for exactly what's real today
 > versus stubbed.
@@ -41,12 +46,19 @@ flowchart TD
     R["R package (this repo's R/)"] --> P["Pyro-managed Python environment"]
     P --> C["deckifyr Python core (inst/python/deckifyr/)"]
     CLI["Python CLI (deckifyr command)"] --> C
-    WEB["Optional web application (Phase 3)"] --> C
-    C --> Q["Quarto adapter (Phase 2)"]
-    C --> RF["Reportifyr resolver (Phase 2)"]
-    C --> PPTX["PowerPoint compositor (text/markdown/image)"]
+    WEB["Optional web application (Phase 3, not built yet)"] --> C
+    C --> Q["Quarto adapter"]
+    C --> RF["Reportifyr resolver"]
+    C --> PPTX["PowerPoint compositor (text/markdown/image/shape/group/table/reportifyr/quarto)"]
     PPTX --> OUT["PPTX + manifest"]
+    PPTX --> PREVIEW["Preview renderer (LibreOffice + PyMuPDF)"]
+    PREVIEW --> PNG["Per-slide PNGs"]
 ```
+
+A missing external binary (LibreOffice for `deckifyr preview`, Quarto
+for a `quarto` element) fails with a clear, structured error either
+way; from R, it also prints install guidance -- and, on macOS with
+Homebrew already on `PATH`, offers to install it for you.
 
 The Python source under `inst/python/deckifyr/` is canonical: it's
 bundled unmodified inside the R package and is also the source
@@ -59,8 +71,8 @@ never a second implementation of the same logic.
 
 | Path | What it is | Language |
 | --- | --- | --- |
-| `R/` | Thin facade (`deck_validate()`, `deck_build()`, ...) delegating to the bundled Python CLI via pyro | R |
-| `inst/python/deckifyr/` | The canonical engine: schemas, unit/merge logic, CLI. Bundled into the R package and built as the standalone wheel from the same source | Python |
+| `R/` | Thin facade (`deck_validate()`, `deck_build()`, `deck_preview()`, `deck_inspect()`, `deck_get_config()`/`deck_set_config()`, `deck_*_slide()`, ...) delegating to the bundled Python CLI via pyro | R |
+| `inst/python/deckifyr/` | The canonical engine: schemas, unit/merge logic, plan/compose passes, resolvers, renderers, and CLI. Bundled into the R package and built as the standalone wheel from the same source | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio, used as `deckifyr init`'s template and as the test fixture for both languages | YAML |
 | `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a five-slide deck using a real `reportifyr`-produced figure and two real `quarto` fragments | YAML |
 | `tests/` | `tests/python/` (pytest, unit-level plus an end-to-end build of `examples/demo-deck/`) and `tests/testthat/` (R, including end-to-end tests of the real R→pyro→Python bridge) | Python, R |
@@ -71,14 +83,20 @@ never a second implementation of the same logic.
 # Python CLI, directly
 uv run deckifyr init my-deck
 uv run deckifyr validate my-deck/presentation.yaml
-uv run deckifyr build my-deck/presentation.yaml   # writes my-deck/build/my-deck.pptx
+uv run deckifyr build my-deck/presentation.yaml     # writes my-deck/build/my-deck.pptx
+uv run deckifyr preview my-deck/presentation.yaml   # + a PNG per slide (needs LibreOffice)
+uv run deckifyr inspect my-deck/presentation.yaml   # resolved slide plan, as JSON
+uv run deckifyr set my-deck/design.yaml colors.primary "#123456"
+uv run deckifyr slide list my-deck/presentation.yaml
 ```
 
 ```r
 # R, via pyro
 initialize_deck_project("my-deck")
 deck_validate("my-deck/presentation.yaml")
-deck_build("my-deck/presentation.yaml")  # writes my-deck/build/my-deck.pptx
+deck_build("my-deck/presentation.yaml")    # writes my-deck/build/my-deck.pptx
+deck_preview("my-deck/presentation.yaml")  # + a PNG per slide (needs LibreOffice)
+deck_set_config("my-deck/design.yaml", "colors.primary", "#123456")
 ```
 
 For a richer working example than `init`'s minimal scaffold, see

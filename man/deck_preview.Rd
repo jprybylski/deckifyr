@@ -10,18 +10,18 @@ deck_preview(presentation)
 \item{presentation}{Path to \code{presentation.yaml}.}
 }
 \value{
-A parsed list from the CLI's JSON output.
+A parsed list from the CLI's JSON output, including \code{output}
+(the built \code{.pptx} path) and \code{previews} (one PNG path per slide).
 }
 \description{
-Delegates to \verb{deckifyr preview} in the bundled Python engine.
-\strong{Not implemented yet} -- the preview renderer is spec section 18's
-Phase 3 work; this currently always errors with a clear "not
-implemented" message.
+Delegates to \verb{deckifyr preview} in the bundled Python engine: builds
+the project (regardless of its own \code{build.previews} setting) and
+rasterizes each slide to a standalone PNG via LibreOffice + PyMuPDF,
+alongside the ordinary \code{.pptx}/manifest output. Requires the external
+\code{soffice} binary (LibreOffice) on \code{PATH}.
 }
 \examples{
 \dontrun{
-# Not implemented yet -- always errors today; shown for the intended
-# future usage.
 deck_preview("presentation.yaml")
 }
 }

@@ -36,6 +36,17 @@ tables = [
 quarto = [
     "pymupdf>=1.24",
 ]
+# `deckifyr.renderers.preview` imports pymupdf lazily too, to rasterize
+# the PDF LibreOffice produces (`deckifyr preview`/`build.previews:
+# true`, spec section 12/18 Phase 3) -- a project that never previews
+# never pays for it. Rendering still requires the external `soffice`
+# binary itself (not a pip dependency) -- `dev` also pulls this in so
+# `tests/python` can exercise the render path wherever `soffice` is
+# actually installed (see test_renderers_preview.py's skip pattern,
+# mirroring test_renderers_quarto.py's own quarto-binary skip).
+preview = [
+    "pymupdf>=1.24",
+]
 # Unused until Phase 3 (spec section 12) -- declared now so the extras
 # name is stable and doesn't need to be invented later.
 web = [

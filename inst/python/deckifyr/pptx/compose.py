@@ -48,6 +48,7 @@ from deckifyr.plan import (
     resolve_gradient,
     resolve_text_style,
 )
+from deckifyr.renderers.preview import PreviewRenderConfig, render_slide_previews
 from deckifyr.renderers.quarto import QuartoExecutionConfig
 from deckifyr.resolvers import (
     BuildContext,
@@ -159,6 +160,7 @@ class BuildResult:
     manifest_path: Path | None
     slide_count: int
     warnings: list[str] = field(default_factory=list)
+    preview_paths: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -234,6 +236,21 @@ def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionC
         binary=config.binary,
         timeout_seconds=config.timeout_seconds,
         max_output_bytes=config.max_output_bytes,
+    )
+
+
+def _build_preview_config(presentation: PresentationDocument) -> PreviewRenderConfig:
+    """Assembled once per build from `presentation.build.preview`,
+    mirroring `_build_quarto_config` -- a build that never renders
+    previews (neither `build.previews: true` nor `force_previews`) never
+    reads it, and an absent `build.preview` block just means every
+    `PreviewRenderConfig` default applies.
+    """
+    config = presentation.build.preview
+    if config is None:
+        return PreviewRenderConfig()
+    return PreviewRenderConfig(
+        binary=config.binary, dpi=config.dpi, timeout_seconds=config.timeout_seconds
     )
 
 
@@ -1110,6 +1127,7 @@ def compose_and_write(
     presentation_path: Path,
     design_path: Path,
     layouts_path: Path,
+    force_previews: bool = False,
 ) -> BuildResult:
     started_at = datetime.now(timezone.utc)
     prs, element_manifest, warnings = compose(
@@ -1120,6 +1138,20 @@ def compose_and_write(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
     ended_at = datetime.now(timezone.utc)
+
+    # `force_previews` is `deckifyr preview`'s own escape hatch (spec
+    # section 11.1): an explicit preview request renders regardless of
+    # the project's own `build.previews` flag, without requiring an
+    # author to permanently flip that flag on just to check one preview.
+    # An ordinary `deckifyr build` only renders when `build.previews` is
+    # set, per that field's own docstring.
+    preview_paths: list[Path] = []
+    if presentation.build.previews or force_previews:
+        preview_paths = render_slide_previews(
+            output_path,
+            output_path.parent / "previews",
+            config=_build_preview_config(presentation),
+        )
 
     manifest = {
         "deckifyr_version": DECKIFYR_VERSION,
@@ -1139,6 +1171,7 @@ def compose_and_write(
         "slide_count": len(resolved_slides),
         "elements": element_manifest,
         "output": {"path": str(output_path), "sha256": _sha256_file(output_path)},
+        "previews": [str(p) for p in preview_paths],
         "warnings": warnings,
     }
 
@@ -1153,4 +1186,5 @@ def compose_and_write(
         manifest_path=manifest_path,
         slide_count=len(resolved_slides),
         warnings=warnings,
+        preview_paths=preview_paths,
     )

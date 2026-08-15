@@ -73,15 +73,39 @@ class QuartoConfig(BaseModel):
     max_output_bytes: int = 5_000_000
 
 
+class PreviewConfig(BaseModel):
+    """Tuning knobs for slide preview rendering (spec section 12/18 Phase
+    3), mirroring `QuartoConfig`'s own "`None` means every default
+    applies" shape -- `previews: true` below is the on/off switch; this
+    block only matters once that (or an explicit `deckifyr preview`
+    invocation) actually triggers a render.
+    `deckifyr.renderers.preview.render_slide_previews` shells out to
+    LibreOffice for real PowerPoint-engine fidelity, so `binary` is a
+    bare name resolved via PATH by default, or a full path for a
+    non-PATH install -- same convention as `QuartoConfig.binary`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    binary: str = "soffice"
+    dpi: int = 110
+    timeout_seconds: float = 120
+
+
 class BuildConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     strict: bool = True
     output: str
     manifest: str | None = None
+    # Whether `deckifyr build` also renders a PNG per slide alongside the
+    # `.pptx` (spec section 7.6's own example) -- `deckifyr preview`
+    # (spec section 11.1) always renders previews regardless of this
+    # flag; this only controls whether an ordinary `build` does too.
     previews: bool = False
     reportifyr: ReportifyrConfig | None = None
     quarto: QuartoConfig | None = None
+    preview: PreviewConfig | None = None
 
 
 class Slide(BaseModel):

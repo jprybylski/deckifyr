@@ -1,17 +1,33 @@
 name: Deploy Docs
 
+# Triggered by release.yaml's own completion (`workflow_run`), not a
+# plain `push` -- confirmed the ordering problem this fixes: release.yaml
+# also runs on every push to main and, when VERSION has moved, commits
+# its own "chore: sync release metadata for X.Y.Z" (bumping DESCRIPTION's
+# Version and folding NEWS.md's "(development version)" section into a
+# dated one) and pushes that back to main *during its own run*. A plain
+# `on: push` trigger here would fire on the original push (deploying the
+# site from DESCRIPTION/NEWS.md as they stood *before* that bump) and
+# never fire again for the follow-up chore commit, since GitHub doesn't
+# re-trigger `push`-based workflows for a push made with the default
+# `GITHUB_TOKEN` (the same mechanism that stops release.yaml from
+# triggering itself in a loop) -- so the deployed site would silently
+# carry stale release metadata indefinitely. `workflow_run` sidesteps
+# both problems at once: it fires exactly once per original push,
+# strictly after release.yaml's job (chore commit included) has
+# finished, regardless of which token made which commit.
+#
+# `workflow_run` has no `paths:` filter (unlike the `push` trigger this
+# replaced), so this now runs on every push to `main` rather than only
+# ones touching docs-relevant paths -- release.yaml itself already runs
+# unconditionally on every push to `main` with no path filter either, so
+# this doesn't add a meaningfully new CI cost, and "never redeploy a
+# stale site" is worth more here than skipping an occasional rebuild
+# whose content didn't change.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'R/**'
-      - 'man/**'
-      - 'vignettes/**'
-      - 'DESCRIPTION'
-      - 'NAMESPACE'
-      - '_pkgdown.yml'
-      - 'README.md'
-      - '.github/workflows/pages.yml'
+  workflow_run:
+    workflows: ["release.yaml"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -27,10 +43,24 @@ concurrency:
 
 jobs:
   build:
+    # Manual dispatch always runs; a workflow_run-triggered build only
+    # runs if release.yaml actually succeeded and ran on main (it also
+    # supports workflow_dispatch itself, e.g. a dry run from a feature
+    # branch -- that shouldn't redeploy the live site).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Explicit, not the workflow_run default: we want main's
+          # current tip (release.yaml's own chore commit included, if it
+          # made one during its run), not the commit that merely
+          # triggered release.yaml.
+          ref: main
 
       - uses: r-lib/actions/setup-r@v2
         with:

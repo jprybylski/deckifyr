@@ -109,11 +109,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from deckifyr.schema.errors import ContentValidationError
+from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 
 # Rasterization DPI for `render_mode: png` -- high enough to stay crisp
 # at typical slide-figure sizes without ballooning file size.
 _PNG_DPI = 200
+
+_QUARTO_INSTALL_URL = "https://quarto.org/docs/get-started/"
 
 _FRONTMATTER_DELIM = "---"
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
@@ -253,11 +255,14 @@ def select_auto_render_mode(source_text: str) -> str:
 
 def _require_quarto(config: QuartoExecutionConfig) -> None:
     if shutil.which(config.binary) is None:
-        raise ContentValidationError(
+        raise MissingDependencyError(
             f"quarto binary {config.binary!r} was not found on PATH -- "
-            "install Quarto (https://quarto.org) to build a presentation "
-            "containing 'quarto' elements, or set build.quarto.binary to "
-            "its full path"
+            f"install Quarto ({_QUARTO_INSTALL_URL}) to build a "
+            "presentation containing 'quarto' elements, or set "
+            "build.quarto.binary to its full path",
+            name="quarto",
+            display_name="Quarto",
+            install_url=_QUARTO_INSTALL_URL,
         )
 
 

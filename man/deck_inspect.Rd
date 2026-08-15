@@ -13,13 +13,16 @@ deck_inspect(target)
 A parsed list from the CLI's JSON output.
 }
 \description{
-Delegates to \verb{deckifyr inspect} in the bundled Python engine.
-\strong{Not implemented yet} -- see spec section 18, Phase 1/4.
+Delegates to \verb{deckifyr inspect} in the bundled Python engine. The
+target type is detected from its file extension: a \code{.yaml}/\code{.yml}
+presentation reports its resolved slide plan (element counts/types,
+notes), while a \code{.pptx} reports its real, opened-back-up shape
+structure (per slide: shape names/types, rotation, notes) plus a
+summary of its sibling \verb{<stem>.manifest.json}, if one exists.
 }
 \examples{
 \dontrun{
-# Not implemented yet -- always errors today; shown for the intended
-# future usage.
 deck_inspect("presentation.yaml")
+deck_inspect("build/my-deck.pptx")
 }
 }
