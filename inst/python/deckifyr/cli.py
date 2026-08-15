@@ -11,11 +11,16 @@ for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/
 each slide to a PNG via `deckifyr.renderers.preview` (LibreOffice +
 PyMuPDF -- requires `soffice` on PATH), `inspect` reports a
 presentation.yaml's resolved plan or a built .pptx's real slide/shape
-structure (detected by file extension), and `schema` dumps a document
-type's JSON Schema. `serve` parses its arguments fully but raises
-`NotImplementedFeatureError` -- the local web application is Phase 3
-work (see deckifyr-specification.md section 12) and deliberately does
-not pretend to succeed.
+structure (detected by file extension), `schema` dumps a document
+type's JSON Schema, and `serve` runs the local web application
+(`deckifyr.web.app.create_app`, spec section 12) against `--project`
+(default: cwd)/`--presentation` (default: `presentation.yaml`),
+blocking until interrupted -- it requires the `web` extra
+(`deckifyr[web]`) and raises a plain `DeckifyrError` (exit code 3) with
+install guidance if `fastapi`/`uvicorn` aren't importable, the same
+"tell the caller what to install, don't crash on ImportError" posture
+`deckifyr.renderers.preview`/`deckifyr.renderers.quarto` already take
+for their own external dependencies.
 
 `get`/`set` and the `slide` subcommand group (issue #10) round-trip a
 design/layouts/presentation YAML file through `deckifyr.editor`'s pure
@@ -47,18 +52,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import ValidationError as PydanticValidationError
 
-from deckifyr import editor
+from deckifyr import editor, projectio
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx import compose_and_write
-from deckifyr.schema.colors import resolve_color_tokens
 from deckifyr.schema.design import DesignDocument
-from deckifyr.schema.errors import DeckifyrError, ErrorCode, NotImplementedFeatureError
+from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.schema.units import UnitParseError, parse_length
 
 EXIT_OK = 0
 EXIT_VALIDATION_ERROR = 1
@@ -74,210 +76,6 @@ _EXIT_CODE_BY_ERROR_CODE = {
 def _examples_dir() -> Path:
     # inst/python/deckifyr/cli.py -> inst/examples
     return Path(__file__).resolve().parents[2] / "examples" / "minimal-deck"
-
-
-def _format_pydantic_error(exc: PydanticValidationError, source: str) -> str:
-    lines = [f"{source}:"]
-    for error in exc.errors():
-        location = ".".join(str(part) for part in error["loc"]) or "<root>"
-        lines.append(f"  {location}: {error['msg']}")
-    return "\n".join(lines)
-
-
-def _iter_boxes(layouts: LayoutsDocument, presentation: PresentationDocument):
-    for layout in layouts.layouts.values():
-        for element in layout.elements.values():
-            if element.box is not None:
-                yield element.box
-    for slide in presentation.slides:
-        elements = (
-            slide.elements.values()
-            if isinstance(slide.elements, dict)
-            else slide.elements
-        )
-        for element in elements:
-            if element.box is not None:
-                yield element.box
-
-
-def _check_boxes(
-    layouts: LayoutsDocument, presentation: PresentationDocument, *, strict: bool
-) -> list[str]:
-    problems: list[str] = []
-    for box in _iter_boxes(layouts, presentation):
-        for field_name in ("x", "y", "width", "height"):
-            raw = getattr(box, field_name)
-            try:
-                parse_length(raw, strict=strict)
-            except UnitParseError as exc:
-                problems.append(f"{field_name}={raw!r}: {exc}")
-    return problems
-
-
-def _load_project(
-    presentation_path: Path, *, strict: bool
-) -> tuple[PresentationDocument, DesignDocument, LayoutsDocument]:
-    """Load and validate design.yaml + layouts.yaml + presentation.yaml.
-
-    This is schema validation and cross-reference checking only (spec
-    section 13's "Schema validation" and part of "Static geometry
-    validation") -- it does not merge layouts onto slides, resolve
-    content, or expand a build plan (spec section 6's pass 1/2), since
-    none of that machinery exists yet.
-    """
-    if not presentation_path.is_file():
-        raise DeckifyrError(
-            f"presentation file not found: {presentation_path}", code=ErrorCode.IO
-        )
-
-    try:
-        presentation_data = yaml.safe_load(presentation_path.read_text())
-        presentation = PresentationDocument.model_validate(presentation_data)
-    except PydanticValidationError as exc:
-        raise DeckifyrError(
-            _format_pydantic_error(exc, str(presentation_path)),
-            code=ErrorCode.SCHEMA_VALIDATION,
-        ) from exc
-
-    base_dir = presentation_path.parent
-    design_path = base_dir / presentation.design.base
-    layouts_path = base_dir / presentation.layouts
-
-    if not design_path.is_file():
-        raise DeckifyrError(f"design file not found: {design_path}", code=ErrorCode.IO)
-    if not layouts_path.is_file():
-        raise DeckifyrError(
-            f"layouts file not found: {layouts_path}", code=ErrorCode.IO
-        )
-
-    try:
-        design = DesignDocument.model_validate(yaml.safe_load(design_path.read_text()))
-    except PydanticValidationError as exc:
-        raise DeckifyrError(
-            _format_pydantic_error(exc, str(design_path)),
-            code=ErrorCode.SCHEMA_VALIDATION,
-        ) from exc
-
-    # Resolve any `colors:` derivations (issue #11) to literal hex strings
-    # here, once, right after `design.yaml` is parsed -- `deckifyr.plan`
-    # and `deckifyr.pptx.compose` both read `design.colors` directly off
-    # this same object independently of one another, so every existing
-    # `design.colors.get(token, token)` call site in both keeps working
-    # unchanged only if the derivations are already gone by the time
-    # either sees `design`. `ColorResolutionError` (raised only for a
-    # circular derivation chain) is already a `DeckifyrError` subclass,
-    # so it propagates through this function's normal error path with no
-    # extra wrapping -- and `deckifyr validate` gets this check for free
-    # since it also calls `_load_project`.
-    design = design.model_copy(
-        update={"colors": resolve_color_tokens(design.colors)}
-    )
-
-    try:
-        layouts = LayoutsDocument.model_validate(
-            yaml.safe_load(layouts_path.read_text())
-        )
-    except PydanticValidationError as exc:
-        raise DeckifyrError(
-            _format_pydantic_error(exc, str(layouts_path)),
-            code=ErrorCode.SCHEMA_VALIDATION,
-        ) from exc
-
-    for slide in presentation.slides:
-        if slide.layout is not None and slide.layout not in layouts.layouts:
-            raise DeckifyrError(
-                f"slide {slide.id!r} references unknown layout {slide.layout!r}",
-                code=ErrorCode.REFERENCE_NOT_FOUND,
-            )
-
-    box_problems = _check_boxes(layouts, presentation, strict=strict)
-    if box_problems:
-        raise DeckifyrError(
-            "invalid element geometry:\n  " + "\n  ".join(box_problems),
-            code=ErrorCode.UNIT_PARSE,
-        )
-
-    return presentation, design, layouts
-
-
-# --- Shared helpers for `get`/`set`/`slide` (issue #10) -----------------
-
-
-def _read_yaml(path: Path) -> Any:
-    if not path.is_file():
-        raise DeckifyrError(f"file not found: {path}", code=ErrorCode.IO)
-    try:
-        return yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
-        raise DeckifyrError(f"{path}: invalid YAML: {exc}", code=ErrorCode.IO) from exc
-
-
-def _write_yaml(path: Path, data: Any) -> None:
-    # Written to a sibling temp file and atomically renamed into place
-    # (`Path.replace` is `os.replace` under the hood) so a crash
-    # mid-write can never leave a half-written config file behind.
-    # `sort_keys=False` preserves the mapping key order editor.py's
-    # mutations leave dicts in (Python dicts are order-preserving, and
-    # PyYAML respects that when told not to re-sort) -- important since
-    # these functions edit a document a human wrote and will read again,
-    # not just round-trip machine state.
-    text = yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
-    tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(text)
-    tmp_path.replace(path)
-
-
-def _parse_json_arg(text: str, flag: str) -> Any:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise DeckifyrError(f"{flag}: invalid JSON: {exc}", code=ErrorCode.IO) from exc
-
-
-def _load_presentation_raw(path: Path) -> dict[str, Any]:
-    data = _read_yaml(path)
-    if not isinstance(data, dict) or "slides" not in data:
-        raise DeckifyrError(
-            f"{path} does not look like a presentation.yaml (no top-level 'slides' key)",
-            code=ErrorCode.SCHEMA_VALIDATION,
-        )
-    return data
-
-
-def _validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
-    """Shared tail of every `slide` mutation and a `set` targeting a
-    presentation.yaml: validate the edited dict against
-    `PresentationDocument`, best-effort cross-check any `slide.layout`
-    against a readable sibling `layouts.yaml` (mirroring `_load_project`'s
-    own check, so an edit can't silently introduce a dangling layout
-    reference), and only then write -- never on a document that would
-    fail its own schema.
-    """
-    try:
-        presentation = PresentationDocument.model_validate(data)
-    except PydanticValidationError as exc:
-        raise DeckifyrError(
-            _format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
-        ) from exc
-
-    layouts_path = path.parent / presentation.layouts
-    if layouts_path.is_file():
-        try:
-            layouts = LayoutsDocument.model_validate(
-                yaml.safe_load(layouts_path.read_text())
-            )
-        except (PydanticValidationError, yaml.YAMLError):
-            layouts = None
-        if layouts is not None:
-            for slide in presentation.slides:
-                if slide.layout is not None and slide.layout not in layouts.layouts:
-                    raise DeckifyrError(
-                        f"slide {slide.id!r} references unknown layout {slide.layout!r}",
-                        code=ErrorCode.REFERENCE_NOT_FOUND,
-                    )
-
-    _write_yaml(path, data)
-    return {"presentation": str(path), "slide_count": len(presentation.slides)}
 
 
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
@@ -300,7 +98,7 @@ def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
-    presentation, design, layouts = _load_project(
+    presentation, design, layouts = projectio.load_project(
         Path(args.presentation), strict=args.strict
     )
     return {
@@ -317,7 +115,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     # Fail on schema/geometry problems before planning/composing, so
     # `build` on a broken project reports the real validation error
     # rather than a confusing failure downstream.
-    presentation, design, layouts = _load_project(
+    presentation, design, layouts = projectio.load_project(
         Path(args.presentation), strict=args.strict
     )
 
@@ -344,25 +142,9 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-_DOCUMENT_MODELS = {
-    "design": DesignDocument,
-    "layouts": LayoutsDocument,
-    "presentation": PresentationDocument,
-}
-
-
-def _resolve_document_type(args_type: str, data: Any) -> str:
-    if args_type != "auto":
-        return args_type
-    try:
-        return editor.detect_document_type(data)
-    except ValueError as exc:
-        raise DeckifyrError(str(exc), code=ErrorCode.SCHEMA_VALIDATION) from exc
-
-
 def _cmd_get(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.file)
-    data = _read_yaml(path)
+    data = projectio.read_yaml(path)
     try:
         value = editor.get_value(data, args.path)
     except editor.PathError as exc:
@@ -390,7 +172,7 @@ def _parse_set_value(raw: str) -> Any:
 
 def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.file)
-    data = _read_yaml(path)
+    data = projectio.read_yaml(path)
 
     value: Any = args.value if args.string else _parse_set_value(args.value)
 
@@ -399,33 +181,34 @@ def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
     except editor.PathError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.PATH_NOT_FOUND) from exc
 
-    doc_type = _resolve_document_type(args.type, data)
+    doc_type = projectio.resolve_document_type(args.type, data)
     if doc_type == "presentation":
-        extra = _validate_and_write_presentation(path, data)
+        extra = projectio.validate_and_write_presentation(path, data)
     else:
-        model = _DOCUMENT_MODELS[doc_type]
+        model = projectio.DOCUMENT_MODELS[doc_type]
         try:
             model.model_validate(data)
         except PydanticValidationError as exc:
             raise DeckifyrError(
-                _format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
+                projectio.format_pydantic_error(exc, str(path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
             ) from exc
-        _write_yaml(path, data)
+        projectio.write_yaml(path, data)
         extra = {}
 
     return {"file": str(path), "path": args.path, "type": doc_type, **extra}
 
 
 def _cmd_slide_list(args: argparse.Namespace) -> dict[str, Any]:
-    data = _load_presentation_raw(Path(args.presentation))
+    data = projectio.load_presentation_raw(Path(args.presentation))
     return {"presentation": args.presentation, "slides": editor.list_slides(data)}
 
 
 def _cmd_slide_add(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.presentation)
-    data = _load_presentation_raw(path)
+    data = projectio.load_presentation_raw(path)
     elements = (
-        _parse_json_arg(args.elements_json, "--elements-json")
+        projectio.parse_json_arg(args.elements_json, "--elements-json")
         if args.elements_json is not None
         else None
     )
@@ -446,22 +229,22 @@ def _cmd_slide_add(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return _validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data)
 
 
 def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.presentation)
-    data = _load_presentation_raw(path)
+    data = projectio.load_presentation_raw(path)
     try:
         editor.remove_slide(data, args.id)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return _validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data)
 
 
 def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.presentation)
-    data = _load_presentation_raw(path)
+    data = projectio.load_presentation_raw(path)
 
     kwargs: dict[str, Any] = {}
     if args.no_layout:
@@ -473,18 +256,18 @@ def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
     elif args.notes is not None:
         kwargs["notes"] = args.notes
     if args.elements_json is not None:
-        kwargs["elements"] = _parse_json_arg(args.elements_json, "--elements-json")
+        kwargs["elements"] = projectio.parse_json_arg(args.elements_json, "--elements-json")
 
     try:
         editor.update_slide(data, args.id, **kwargs)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return _validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data)
 
 
 def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
     path = Path(args.presentation)
-    data = _load_presentation_raw(path)
+    data = projectio.load_presentation_raw(path)
     try:
         editor.move_slide(
             data, args.id, index=args.index, after=args.after, before=args.before
@@ -493,12 +276,12 @@ def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return _validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data)
 
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     presentation_path = Path(args.presentation).resolve()
-    presentation, design, layouts = _load_project(
+    presentation, design, layouts = projectio.load_project(
         Path(args.presentation), strict=args.strict
     )
 
@@ -528,7 +311,7 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _inspect_presentation(path: Path, *, strict: bool) -> dict[str, Any]:
-    presentation, design, layouts = _load_project(path, strict=strict)
+    presentation, design, layouts = projectio.load_project(path, strict=strict)
     resolved_slides = expand_presentation(presentation, design, layouts, strict=strict)
     return {
         "target": "presentation",
@@ -631,10 +414,27 @@ def _cmd_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
-    raise NotImplementedFeatureError(
-        "the local web application is not implemented yet -- see "
-        "deckifyr-specification.md section 12, Phase 3"
-    )
+    # Imported lazily: the `web` extra (fastapi/uvicorn) is optional, and
+    # every other subcommand must keep working without it installed --
+    # the same posture `deckifyr.renderers.preview`/`deckifyr.renderers
+    # .quarto` already take for their own external dependencies.
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise DeckifyrError(
+            "the 'web' extra is not installed -- run `pip install "
+            "deckifyr[web]` (or `uv sync --extra web`)",
+            code=ErrorCode.IO,
+        ) from exc
+
+    from deckifyr.web.app import create_app
+
+    project_root = Path(args.project or ".").resolve()
+    app = create_app(project_root, args.presentation)
+    # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
+    # default graceful shutdown handling, nothing custom here.
+    uvicorn.run(app, host=args.host, port=args.port)
+    return {"status": "stopped"}
 
 
 _SCHEMA_MODELS = {
@@ -794,10 +594,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     slide_move_parser.set_defaults(handler=_cmd_slide_move)
 
     serve_parser = subparsers.add_parser(
-        "serve", help="run the local web application (not implemented yet)"
+        "serve", help="run the local web application (requires the 'web' extra)"
     )
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument(
+        "--project", default=None, help="project directory (default: current directory)"
+    )
+    serve_parser.add_argument(
+        "--presentation",
+        default="presentation.yaml",
+        help="presentation.yaml path, relative to --project (default: presentation.yaml)",
+    )
     serve_parser.set_defaults(handler=_cmd_serve)
 
     return parser

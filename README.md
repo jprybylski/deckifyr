@@ -12,21 +12,22 @@ PowerPoint template. A sibling project to
 ecosystem, inheriting its reproducible, YAML-driven philosophy while
 targeting slides instead of documents.
 
-> **Status: early, but `deckifyr build` is real.** Schema validation,
-> unit parsing, deep-merge precedence, layout expansion, and PPTX
-> composition all work end-to-end for `text`/`markdown`/`image`/
-> `shape`/`group`/`table`/`reportifyr`/`quarto` elements -- see
-> `examples/demo-deck/` for a working example (a `quarto` element needs
-> the external `quarto` binary on `PATH` to build; every other type
-> needs nothing beyond this repo's own Python dependencies). `deckifyr
-> preview` (per-slide PNGs, via LibreOffice + PyMuPDF -- needs `soffice`
-> on `PATH`), `deckifyr inspect` (a presentation's resolved plan or a
-> built `.pptx`'s real shape structure), and config/slide editing
-> (`deckifyr get`/`set`/`slide`) are real too. Only the optional local
-> web application (`deckifyr serve`) remains a stub. See
-> `deckifyr-specification.md` at the repo root for the full design and
-> phased delivery plan, and `CLAUDE.md` for exactly what's real today
-> versus stubbed.
+deckifyr validates and compiles `presentation.yaml` into a real `.pptx`
+end to end -- schema validation, unit parsing, deep-merge precedence,
+layout expansion, and PPTX composition all work for `text`/`markdown`/
+`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements (see
+`examples/demo-deck/` for a working example; a `quarto` element needs
+the external `quarto` binary on `PATH`, every other type needs nothing
+beyond this repo's own Python dependencies). Beyond `build`, `deckifyr
+preview` renders per-slide PNGs (via LibreOffice + PyMuPDF), `deckifyr
+inspect` reports a presentation's resolved plan or a built `.pptx`'s
+real shape structure, `deckifyr get`/`set`/`slide` edit config and
+slide content in place, and `deckifyr serve` launches a local FastAPI +
+React/Konva web editor for dragging, resizing, and rotating slide
+content and triggering builds. See `deckifyr-specification.md` at the
+repo root for the full design and phased delivery plan, and `CLAUDE.md`
+for exactly what's real today and the non-obvious things learned
+building it.
 
 ## Why
 
@@ -46,7 +47,7 @@ flowchart TD
     R["R package (this repo's R/)"] --> P["Pyro-managed Python environment"]
     P --> C["deckifyr Python core (inst/python/deckifyr/)"]
     CLI["Python CLI (deckifyr command)"] --> C
-    WEB["Optional web application (Phase 3, not built yet)"] --> C
+    WEB["Optional web application (deckifyr serve / deck_serve())"] --> C
     C --> Q["Quarto adapter"]
     C --> RF["Reportifyr resolver"]
     C --> PPTX["PowerPoint compositor (text/markdown/image/shape/group/table/reportifyr/quarto)"]

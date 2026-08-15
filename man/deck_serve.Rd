@@ -2,28 +2,54 @@
 % Please edit documentation in R/serve.R
 \name{deck_serve}
 \alias{deck_serve}
-\title{Run the local web application}
+\title{Start the local web application}
 \usage{
-deck_serve(host = "127.0.0.1", port = 8000)
+deck_serve(
+  project = ".",
+  host = "127.0.0.1",
+  port = 8000,
+  presentation = "presentation.yaml",
+  open_browser = TRUE,
+  timeout = 15
+)
 }
 \arguments{
+\item{project}{Path to the project directory to serve. Default \code{"."}.}
+
 \item{host}{Host to bind. Default \code{"127.0.0.1"}.}
 
 \item{port}{Port to bind. Default \code{8000}.}
+
+\item{presentation}{\code{presentation.yaml} path, relative to \code{project}.
+Default \code{"presentation.yaml"}.}
+
+\item{open_browser}{Open the server's URL once it's reachable -- via the
+RStudio Viewer pane when running inside RStudio, otherwise the system
+default browser. Default \code{TRUE}.}
+
+\item{timeout}{Seconds to wait for the server to become reachable before
+giving up and killing the orphaned process. Default \code{15}.}
 }
 \value{
-A parsed list from the CLI's JSON output.
+A \code{deckifyr_server} object (a list with class
+\code{"deckifyr_server"}): \code{process} (the \code{processx::process}), \code{host},
+\code{port}, \code{url}, and \code{project}. Pass it to \code{\link[=deck_stop_server]{deck_stop_server()}} to shut
+the server down.
 }
 \description{
-Delegates to \verb{deckifyr serve} in the bundled Python engine.
-\strong{Not implemented yet} -- the optional web application is spec
-section 12's Phase 3 work, deliberately deferred until the CLI and
-schema stabilize (spec section 20, warning 5).
+Launches \verb{deckifyr serve} in the bundled Python engine as a background
+process via \code{processx} -- deliberately not \code{.run_deckifyr_cli()}, which
+blocks until its subprocess exits and would hang forever against a
+long-running server. Waits for the server to accept connections (up to
+\code{timeout} seconds), then optionally opens its URL in a browser. Requires
+the optional \code{web} extra (\code{fastapi}/\code{uvicorn}) to be installed in
+deckifyr's bundled Python environment; if it isn't, the server process
+exits immediately and that failure is surfaced with its captured stderr
+rather than a generic timeout.
 }
 \examples{
 \dontrun{
-# Not implemented yet -- always errors today; shown for the intended
-# future usage.
-deck_serve()
+server <- deck_serve(project = "my-deck")
+deck_stop_server(server)
 }
 }

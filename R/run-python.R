@@ -24,6 +24,11 @@ system <- NULL
 Sys.info <- NULL
 Sys.which <- NULL
 
+# Same seam, same reason, for `deck_serve()`'s `.wait_for_server()`
+# (`R/serve.R`), which calls unqualified `socketConnection()` as a plain
+# TCP-connect readiness check.
+socketConnection <- NULL
+
 #' Invoke the bundled Python CLI via pyro
 #'
 #' Internal helper every exported `deck_*()`/`initialize_deck_project()`

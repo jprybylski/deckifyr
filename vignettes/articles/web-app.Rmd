@@ -1,0 +1,92 @@
+---
+title: "Using the Web Editor"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+`deck_serve()` starts a local FastAPI server backed by the same Python
+engine `deck_build()`/`deck_validate()` already call, and opens a
+React/Konva web editor against one project at a time -- the same
+mental model as `shiny::runApp()`, not a hosted, multi-user app. Reach
+for it when you want to see a slide's layout while nudging boxes
+around, or when a teammate would rather drag an element than compute a
+new `x`/`y` by hand; reach for `deck_get_config()`/`deck_set_config()`/
+`deck_add_slide()` and friends (or hand-editing the YAML) when you
+already know the exact value you want to write, since those are
+scriptable and diff cleanly in version control the way a GUI session
+never will.
+
+## Starting the editor
+
+```r
+server <- deck_serve(project = "my-deck")
+```
+
+This launches the server in the background, waits for it to accept
+connections, and opens its URL in the RStudio/Positron Viewer pane (or
+your default browser outside an IDE). `deck_serve()` returns a
+`deckifyr_server` object; keep it around so you can stop the server
+later:
+
+```r
+deck_stop_server(server)
+```
+
+`deck_serve()` accepts `host`/`port` (default `127.0.0.1:8000`),
+`presentation` (default `"presentation.yaml"`, relative to `project`),
+`open_browser` (set `FALSE` to skip opening a window), and `timeout`
+(how long to wait for the server to become reachable). See
+`?deck_serve` for the full argument list.
+
+## What the editor does today
+
+Once open, the editor shows the current presentation's resolved slide
+plan and lets you:
+
+* Select a slide and see its elements laid out on a canvas sized to
+  `design.yaml`'s own slide dimensions.
+* Drag, resize, and rotate `text`, `markdown`, and `image` elements.
+* Click a selected `text`/`markdown` element again to edit its text
+  inline.
+* Edit `design.yaml`/`layouts.yaml`/`presentation.yaml` directly, as
+  raw JSON, with server-side schema validation before anything is
+  written back to disk.
+* Trigger a build and watch it run as a background job.
+* Download the resulting `.pptx`, its manifest, and any rendered
+  previews once the build finishes.
+
+## What it deliberately doesn't do yet
+
+This is an early slice of the editor (spec's own Phase 3), not a
+finished PowerPoint replacement -- some gaps are worth knowing about
+before you reach for it instead of editing YAML directly:
+
+* **No multi-select or clipboard.** One element at a time; no
+  copy/paste, no group-move.
+* **No on-canvas editing for `shape`/`group`/`table`/`reportifyr`/
+  `quarto` elements.** They render as static, labeled placeholder
+  boxes so you can see where they sit relative to everything else, but
+  moving, resizing, or editing their content still means editing the
+  YAML (or using `deck_set_config()`).
+* **`image` elements are draggable, but you won't see the actual
+  picture.** The API that backs the canvas returns an image element's
+  source path, not its pixels, so an image is a placeholder box too --
+  one that participates in drag/resize/rotate like a real image would,
+  just without a preview inside it.
+* **No image cropping or snapping guides.** Positioning is freehand;
+  there's no ruler/grid snap or alignment assist yet.
+* **The config editor is raw JSON, not a schema-driven form.** You're
+  editing the same document `deck_set_config()` would write, just as a
+  whole file in a text box rather than one field at a time -- there's
+  no generated form with typed inputs, dropdowns, or inline
+  descriptions per field. Comments and formatting in the on-disk YAML
+  aren't preserved through a save, the same limitation
+  `deck_set_config()`/`deck_*_slide()` already have.
+
+None of this is hidden behind the scenes -- if you hit one of these
+edges, dropping back to `deck_get_config()`/`deck_set_config()`/
+`deck_*_slide()` or hand-editing the YAML files works exactly as
+before; the editor and the CLI/R functions operate on the same files
+and validate against the same schema.

@@ -1,5 +1,46 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `deckifyr serve`/`deck_serve()`/`deck_stop_server()`: a local web
+  editor over the same Python engine `deck_build()` already uses.
+  `deck_serve()` launches a FastAPI backend as a background process
+  (`processx`) and opens it in the RStudio/Positron Viewer pane or your
+  default browser, the same `shiny::runApp()`-style single-project
+  model; `deck_stop_server()` shuts it down.
+* The FastAPI backend (`deckifyr.web.app`, requires the new optional
+  `deckifyr[web]` extra) exposes config get/put
+  (`GET`/`PUT /api/config/{doc}`) with schema validation before any
+  write, on-canvas element editing (`PATCH /api/slides/{slide}
+  /elements/{element}`), resolved-plan/validate endpoints
+  (`GET /api/plan`, `POST /api/validate`), background build jobs
+  (`POST /api/build`, `GET /api/jobs/{id}`) that shell out to a real
+  `deckifyr build` subprocess rather than composing in-request, and
+  artifact download by a server-issued key
+  (`GET /api/jobs/{id}/artifacts/{key}`).
+* A new React/TypeScript + react-konva web editor (built assets bundled
+  under `inst/python/deckifyr/web/static/`): drag/resize/rotate
+  `text`/`markdown`/`image` elements on a slide canvas, edit slide text
+  inline, edit `design`/`layouts`/`presentation.yaml` as raw JSON, and
+  trigger/download a build. `shape`/`group`/`table`/`reportifyr`/
+  `quarto` elements and image pixels render as placeholders only --
+  see the new "Using the web editor" article for the full, honest scope
+  of what's built versus not yet.
+* `deckifyr/projectio.py`: the project-loading/config-validation/YAML
+  read-write mechanism shared by the CLI's `get`/`set`/`slide`
+  commands and the new web backend, extracted out of `cli.py` so
+  neither reimplements the other.
+
+## Documentation
+
+* New vignette, "Using the web editor" (`vignette("web-app")`), covering
+  `deck_serve()`/`deck_stop_server()` and today's editor scope.
+* README's status callout and architecture diagram, and CLAUDE.md's
+  status table, no longer describe the web application as unbuilt --
+  both now reflect that `deckifyr serve` is real.
+
 # deckifyr 0.1.3
 
 ## Added

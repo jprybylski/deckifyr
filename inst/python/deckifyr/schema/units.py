@@ -73,3 +73,13 @@ def parse_length(raw: str | int | float, *, strict: bool = True) -> int:
 
 def emu_to_inches(emu: int) -> float:
     return emu / EMU_PER_INCH
+
+
+def format_length(emu: int, unit: str = "in") -> str:
+    """Format whole EMUs as a length string `parse_length` round-trips, e.g. `"1in"`."""
+    if unit not in _UNIT_TO_EMU:
+        raise UnitParseError(
+            f"unsupported unit {unit!r}; expected one of in/pt/cm/mm"
+        )
+    value = f"{emu / _UNIT_TO_EMU[unit]:.4f}".rstrip("0").rstrip(".")
+    return f"{value}{unit}"
