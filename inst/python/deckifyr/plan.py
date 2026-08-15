@@ -152,6 +152,7 @@ class ResolvedElement:
     shape_style: ResolvedShapeStyle | None = None
     table_style: ResolvedTableStyle | None = None
     center: bool = False
+    align: str | None = None
     # `group`-only: already-resolved children, sorted by paint order the
     # same way `ResolvedSlide.elements` is.
     children: list["ResolvedElement"] = field(default_factory=list)
@@ -562,6 +563,7 @@ def _resolve_element(
         shape_style=shape_style,
         table_style=table_style,
         center=bool(merged.get("center", False)),
+        align=merged.get("align"),
         children=children,
     )
 
@@ -577,6 +579,22 @@ _STATUS_INDICATOR_FIELDS = {
     "corner-tl": "corner_tl",
     "corner-bl": "corner_bl",
     "corner-br": "corner_br",
+}
+
+# A corner placement's horizontal `Element.align` (issue #13): the two
+# right-edge corners push their text to the right end of their own box,
+# the two left-edge corners to the left end -- so once a `design.yaml`
+# author angles the box with `rotation` to hug that edge (its own choice,
+# not something this module imposes; see `StatusIndicatorStyle.rotation`'s
+# own docstring), the text lands snug against the actual corner rather
+# than centered along the strip's full length. `watermark` (and anything
+# else not listed here) keeps `align=None`, i.e. `center=True`'s own
+# existing full-centering behavior, unchanged.
+_STATUS_CORNER_ALIGN = {
+    "corner_tr": "right",
+    "corner_br": "right",
+    "corner_tl": "left",
+    "corner_bl": "left",
 }
 
 
@@ -637,6 +655,7 @@ def _furniture_layout(
                 style=indicator_style.style,
                 rotation=indicator_style.rotation,
                 center=True,
+                align=_STATUS_CORNER_ALIGN.get(field_name),
                 z_index=(
                     indicator_style.z_index
                     if indicator_style.z_index is not None

@@ -744,6 +744,48 @@ def test_status_indicator_rotation_flows_to_the_resolved_element():
     assert element.rotation == -30
 
 
+@pytest.mark.parametrize(
+    "field_name, status_indicator, expected_align",
+    [
+        ("corner_tr", "corner-tr", "right"),
+        ("corner_br", "corner-br", "right"),
+        ("corner_tl", "corner-tl", "left"),
+        ("corner_bl", "corner-bl", "left"),
+    ],
+)
+def test_status_indicator_corner_align_depends_on_which_edge(
+    field_name, status_indicator, expected_align
+):
+    design = _design(
+        furniture=Furniture(
+            status=StatusFurniture(**{field_name: StatusIndicatorStyle(box=_box())})
+        )
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide,
+        None,
+        design,
+        strict=True,
+        status_indicator=status_indicator,
+        watermark_text="DRAFT",
+    )
+    (element,) = resolved.elements
+    assert element.align == expected_align
+
+
+def test_status_indicator_watermark_has_no_forced_align():
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
+    )
+    (element,) = resolved.elements
+    assert element.align is None
+
+
 def test_status_indicator_z_index_defaults_to_the_overlay_constant():
     design = _design(
         furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))

@@ -68,9 +68,9 @@ text_styles:
     color: text
   # `furniture.status`'s own style (spec section 7.8) -- large and bold
   # so it reads as a watermark once `status.rotation` angles it, not a
-  # small corner label like `footnote` above. `color: primary` at full
-  # saturation, softened only by `opacity` -- not a separate hand-mixed
-  # pale color token -- so it reads consistently once
+  # small corner label like `status-corner` below. `color: primary` at
+  # full saturation, softened only by `opacity` -- not a separate
+  # hand-mixed pale color token -- so it reads consistently once
   # `furniture.status.z_index` (below) puts it on top of arbitrary slide
   # content (images, table fills, ...) instead of a fixed light tint that
   # only looks right against a plain white/near-white background.
@@ -85,6 +85,18 @@ text_styles:
     color: primary
     opacity: 0.28
     text_transform: uppercase
+  # `furniture.status.corner_tr`/`corner_br`'s own style (issue #13: the
+  # first version of this demo reused `footnote` here -- the same 8pt
+  # muted style branding/page-number use -- which read as "cartoonishly
+  # small" for something meant to catch a viewer's eye, not blend into
+  # the margin the way a page number should). Sized and colored to
+  # actually stand out (`accent`, not `muted`) without going as large as
+  # `watermark` above, which would overwhelm a small corner box.
+  status-corner:
+    font: heading
+    size: 18pt
+    bold: true
+    color: accent
 
 # Fill/border chrome for the `pk-summary` slide's `pk-table` element --
 # `style: table-body` above still governs its typography; this is the
@@ -141,19 +153,56 @@ furniture:
       # instead of fully obscuring it.
       z_index: 9999
     # Two alternative, simpler placements the same word could use instead
-    # of the full-page `watermark` above -- small, upright, behind
-    # ordinary content like `branding`/`page_number` below, no
-    # `z_index`/`opacity` needed. Configured here to show the option
-    # exists, even though this demo's own presentation.yaml picks
-    # `watermark` instead; see man/figures/demo-deck-corner-tr-example.png
-    # (and this directory's own README.md) for a real render of
-    # `status_indicator: corner-tr` using this exact placement.
+    # of the full-page `watermark` above -- small, behind ordinary
+    # content like `branding`/`page_number` below, no `z_index`/`opacity`
+    # needed. Configured here to show the option exists, even though this
+    # demo's own presentation.yaml picks `watermark` instead; see
+    # man/figures/demo-deck-corner-tr-example.png (and this directory's
+    # own README.md) for a real render of `status_indicator: corner-tr`
+    # using this exact placement.
+    #
+    # `rotation: -90` (below) is this demo's own choice, not something
+    # `StatusIndicatorStyle` defaults to or applies automatically --
+    # every placement's own `rotation` defaults to 0 (an ordinary
+    # upright, horizontal label) unless a `design.yaml` author sets it,
+    # the same as any other element. Both `corner_br`/`corner_tr` set it
+    # here because both sit on the slide's right edge, and a matching
+    # `rotation` turns the box on its side so the text reads
+    # bottom-to-top as a narrow vertical strip flush against the right
+    # margin, rather than a wide horizontal box that either sits far from
+    # the edge or crowds inward to reach it (issue #13's second point --
+    # rotation should depend on which edge the placement is against). A
+    # left-edge placement (`corner_tl`/`corner_bl`, not configured in
+    # this demo) would instead set `rotation: 90`, so its text reads
+    # top-to-bottom hugging the left margin the same way.
+    #
+    # `align: right` (`deckifyr.plan._furniture_layout`'s own
+    # `_STATUS_CORNER_ALIGN` -- not a field set here in `design.yaml`,
+    # it's derived automatically from which corner field this is) is
+    # what pushes the text to one end of the rotated box rather than
+    # sitting centered along its full length, which is also issue #13's
+    # ask: `corner_tr`/`corner_br` push right (`corner_tl`/`corner_bl`
+    # would push left). With a shared `rotation: -90`, "push right" maps
+    # to opposite screen directions for a top box versus a bottom one --
+    # towards decreasing y for `corner_tr` (up, hence its `box.y` alone
+    # already lands the text flush against the top margin), and towards
+    # increasing y for `corner_br` (down) -- which is why `corner_br`'s
+    # own `box.y` below (8.125in) is deliberately well past the slide's
+    # own 7.5in height: the box's declared rectangle is a virtual frame
+    # the rotation pivots around, not what actually has to sit on-slide
+    # (PowerPoint places/rotates a shape from this frame; it doesn't clip
+    # to it), and only that pivot math -- not visual intuition about
+    # where "8.125in down" sounds like it should be -- landed on this
+    # number: it's solved so the rotated, right-aligned text ends up
+    # flush against the bottom margin instead of the top one.
     corner_br:
-      box: {x: 10.6in, y: 6.9in, width: 2.4in, height: 0.4in}
-      style: footnote
+      box: {x: 11.56in, y: 8.125in, width: 2.4in, height: 0.45in}
+      style: status-corner
+      rotation: -90
     corner_tr:
-      box: {x: 10.6in, y: 0.35in, width: 2.4in, height: 0.4in}
-      style: footnote
+      box: {x: 11.56in, y: 1.33in, width: 2.4in, height: 0.45in}
+      style: status-corner
+      rotation: -90
   branding:
     text: Deckifyr Demo
     box: {x: 0.35in, y: 7.05in, width: 4in, height: 0.3in}

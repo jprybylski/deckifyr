@@ -109,14 +109,24 @@ class Element(BaseModel):
     rotation: float | None = None
     z_index: int | None = None
     style: str | None = None
-    # Centers text both horizontally and vertically within `box`, rather
-    # than the compositor's own default (left-aligned, top-anchored).
-    # Not a general multi-value alignment field -- a short label/word
-    # (a furniture status indicator, most notably) reads correctly
-    # centered; ordinary flowing body text does not need one, and
-    # `False` (the default) leaves every existing text/markdown element
-    # untouched.
+    # Anchors text vertically in the middle of `box`, rather than the
+    # compositor's own default (top-anchored). `False` (the default)
+    # leaves every existing text/markdown element untouched.
     center: bool = False
+    # Horizontal alignment within `box`, independent of `center`'s
+    # vertical anchoring -- `None` keeps the compositor's own default
+    # (left-aligned) unless `center` is also `True`, in which case it
+    # falls back to `"center"` (the original, pre-issue-#13 behavior of
+    # `center: true` alone). Added for `furniture.status`'s corner
+    # placements (spec section 7.8): a corner label with `rotation: -90`/
+    # `90` turns into a narrow vertical strip, and `align: "right"`/
+    # `"left"` is what pushes the text to one end of that strip (the
+    # corner end) rather than sitting centered along its full length --
+    # `deckifyr.plan._furniture_layout` sets this automatically based on
+    # which corner (`corner_tr`/`corner_br` -> `"right"`, `corner_tl`/
+    # `corner_bl` -> `"left"`), not something a `design.yaml` author sets
+    # directly on the placement itself.
+    align: Literal["left", "center", "right"] | None = None
     # `table`-only: a `design.yaml` `table_styles` name controlling fill/
     # border chrome, separate from `style` above (which still governs a
     # table's text_styles-driven typography). `deckifyr.plan` rejects it
