@@ -14,17 +14,25 @@ it ships a pre-generated `OUTPUTS/` (the same figure/metadata sidecar
 [quartifyr's `examples/demo-report`](https://github.com/jprybylski/quartifyr/tree/main/examples/demo-report)
 produces from that dataset), so it builds immediately after a clone.
 
-## [`demo-deck`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck): a four-slide PK deck
+## [`demo-deck`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck): a five-slide PK deck
 
 A small PK-style deck built entirely from `design.yaml`/`layouts.yaml`/
 `presentation.yaml` -- no manual slide editing. It exercises a real
 `{rpfy}:conc-time.png` reportifyr reference (resolved by
 `deckifyr.resolvers.ReportifyrResolver` against `OUTPUTS/` and its
-metadata sidecar, with a footer built from `standard_footnotes.yaml`), a
-`table` element resolved from a CSV into a native, fully-editable
-PowerPoint table with its own `table_styles` chrome, a two-zone
-`plot-with-note` layout, speaker notes, and `z_index`/`rotation` on a
-freeform closing slide.
+metadata sidecar, with a footer built from `standard_footnotes.yaml`),
+two real `type: quarto` fragments (spec section 8.1) -- a display-math
+equation rendered to a picture, and a real R code chunk executed to
+produce editable native text -- a `table` element resolved from a CSV
+into a native, fully-editable PowerPoint table with its own
+`table_styles` chrome, a two-zone `plot-with-note` layout reused by both
+the reportifyr and the quarto slide, speaker notes, and
+`z_index`/`rotation` on a freeform closing slide.
+
+Building it requires the external `quarto` binary (and, for the R code
+chunk, `Rscript`) on `PATH` -- see
+[`examples/demo-deck/README.md`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck#readme)'s
+own note. `inst/examples/minimal-deck/` (below) has no such requirement.
 
 ```bash
 uv run deckifyr build examples/demo-deck/presentation.yaml
@@ -40,6 +48,7 @@ Rendered output from a real `build/demo-deck.pptx`:
 <div style="display:flex; flex-wrap:wrap; gap:1rem; margin: 1rem 0;">
 <div><img src="../man/figures/demo-deck-title.png" alt="demo-deck title slide, showing a markdown heading and italic subtitle" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Title</p></div>
 <div><img src="../man/figures/demo-deck-concentration-time.png" alt="demo-deck concentration-time slide, showing a two-zone plot-with-note layout: a reportifyr-resolved figure on the left with a source footer, an interpretive note on the right" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Concentration-time profile (reportifyr figure)</p></div>
+<div><img src="../man/figures/demo-deck-pk-interpretation.png" alt="demo-deck elimination half-life slide, showing a two-zone plot-with-note layout: a quarto-rendered equation image on the left, native editable text from a real executed R code chunk on the right" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Elimination half-life (quarto equation + R code chunk)</p></div>
 <div><img src="../man/figures/demo-deck-pk-summary.png" alt="demo-deck per-subject PK summary slide, showing a native PowerPoint table with a blue header band and alternating row tint from a table_styles entry" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Per-subject PK summary (native table)</p></div>
 <div><img src="../man/figures/demo-deck-closing.png" alt="demo-deck closing slide, showing freeform text and a rotated logo image" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Closing (freeform, rotated logo)</p></div>
 </div>

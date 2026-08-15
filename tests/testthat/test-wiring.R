@@ -52,16 +52,22 @@ test_that("deck_build() writes a real .pptx and manifest", {
 
 test_that("deck_build() builds the richer demo-deck example end to end", {
   skip_if_not(nzchar(Sys.which("uv")), "uv not on PATH")
+  # examples/demo-deck's pk-interpretation slide (spec section 8.1,
+  # issue #3) has two real `type: quarto` elements -- this whole deck
+  # now requires the external `quarto` binary to build, same skip
+  # convention tests/python/test_demo_deck.py uses on the Python side.
+  skip_if_not(nzchar(Sys.which("quarto")), "quarto not on PATH")
 
   # examples/demo-deck (see its README.md) exercises a multi-zone layout,
-  # a real reportifyr-produced image, rotation, and z_index together --
-  # inst/examples/minimal-deck deliberately stays text/markdown-only.
+  # a real reportifyr-produced image, rotation, z_index, and two real
+  # quarto fragments (an equation and an R-executed narrative) together
+  # -- inst/examples/minimal-deck deliberately stays text/markdown-only.
   project_dir <- file.path(tempdir(), "deckifyr-wiring-demo-deck")
   unlink(project_dir, recursive = TRUE)
   dir.create(project_dir)
   for (entry in c(
     "design.yaml", "layouts.yaml", "presentation.yaml", "standard_footnotes.yaml",
-    "OUTPUTS", "assets"
+    "OUTPUTS", "assets", "fragments"
   )) {
     file.copy(file.path(demo_deck, entry), project_dir, recursive = TRUE)
   }
@@ -69,5 +75,5 @@ test_that("deck_build() builds the richer demo-deck example end to end", {
   result <- deck_build(file.path(project_dir, "presentation.yaml"))
   expect_true(file.exists(result$output))
   expect_true(file.exists(result$manifest))
-  expect_equal(result$slide_count, 4)
+  expect_equal(result$slide_count, 5)
 })

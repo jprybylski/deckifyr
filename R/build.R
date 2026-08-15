@@ -3,8 +3,10 @@
 #' Delegates to `deckifyr build` in the bundled Python engine: plans
 #' (`deckifyr.plan`) and composes (`deckifyr.pptx`, spec section 10) a
 #' `.pptx` and manifest for `text`/`markdown`/`image`/`shape`/`group`/
-#' `table` elements. Still errors for element types the compositor
-#' doesn't support yet (quarto/reportifyr -- see spec section 18).
+#' `table`/`reportifyr`/`quarto` elements. A `quarto` element requires
+#' the external `quarto` binary on `PATH` (spec section 8.1, issue #3);
+#' every other element type needs nothing beyond this package's own
+#' Python dependencies.
 #'
 #' @param presentation Path to `presentation.yaml`.
 #' @param strict Reject unitless geometry when `TRUE` (default).

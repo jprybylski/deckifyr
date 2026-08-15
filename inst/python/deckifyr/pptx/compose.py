@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,9 +45,12 @@ from deckifyr.plan import (
     ResolvedTextStyle,
     resolve_text_style,
 )
+from deckifyr.renderers.quarto import QuartoExecutionConfig
 from deckifyr.resolvers import (
     BuildContext,
     LocalFileResolver,
+    QuartoArtifact,
+    QuartoResolver,
     ReportifyrArtifact,
     ReportifyrResolver,
     TableData,
@@ -74,7 +77,11 @@ _DEFAULT_FONT_SIZE_PT = 18.0
 # Editability classification for the manifest (spec section 10.3): every
 # type this compositor supports today is either fully editable native
 # PowerPoint content, or -- for images -- a graphic whose reflow depends
-# on the source file rather than PowerPoint itself.
+# on the source file rather than PowerPoint itself. `quarto` has no
+# single answer here -- it depends on the *resolved* render_mode
+# (native text vs. a rasterized svg/png) -- so `_compose_element`
+# overrides this default per element rather than using it directly; see
+# `_add_quarto_shape`.
 _EDITABILITY = {
     "text": "fully_editable",
     "markdown": "fully_editable",
@@ -83,6 +90,7 @@ _EDITABILITY = {
     "group": "fully_editable",
     "table": "fully_editable",
     "reportifyr": "rendered_graphic",
+    "quarto": "rendered_graphic",
 }
 
 # Footer text fallback (spec section 9.1) used when `design.yaml`'s
@@ -201,6 +209,22 @@ def _build_reportifyr_context(
     )
 
 
+def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionConfig:
+    """Assembled once per build from `presentation.build.quarto` (spec
+    section 8.1), mirroring `_build_reportifyr_context` -- a build with
+    no `quarto` element never reads it, and an absent `build.quarto`
+    block just means every `QuartoExecutionConfig` default applies.
+    """
+    config = presentation.build.quarto
+    if config is None:
+        return QuartoExecutionConfig()
+    return QuartoExecutionConfig(
+        binary=config.binary,
+        timeout_seconds=config.timeout_seconds,
+        max_output_bytes=config.max_output_bytes,
+    )
+
+
 def _hex_to_rgbcolor(value: str) -> RGBColor:
     return RGBColor.from_string(value.lstrip("#"))
 
@@ -236,8 +260,10 @@ def _find_blank_layout(prs: PptxPresentation) -> Any:
 
 # ---------------------------------------------------------------------------
 # Markdown: a small hand-rolled subset (headings, **bold**, *italic*), not
-# full CommonMark. Real Markdown/Quarto content conversion belongs to the
-# Quarto integration (spec section 8), which is Phase 2 work.
+# full CommonMark. `_add_quarto_shape`'s `render_mode: native` path
+# reuses this same subset for a Quarto fragment's GFM output rather than
+# a second Markdown renderer -- real CommonMark/table support remains
+# out of scope for both.
 # ---------------------------------------------------------------------------
 
 _INLINE_SPAN_RE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*)")
@@ -743,6 +769,88 @@ def _add_table_shape(
 
 
 # ---------------------------------------------------------------------------
+# Quarto fragments (spec section 8.1, issue #3)
+# ---------------------------------------------------------------------------
+
+
+def _add_quarto_shape(
+    slide: Any,
+    element: ResolvedElement,
+    quarto_config: QuartoExecutionConfig,
+    design: DesignDocument,
+    *,
+    project_root: Path,
+) -> tuple[Any, dict[str, str], list[str], str]:
+    """Resolve and place a `quarto` element, returning `(shape,
+    source_manifest, warnings, resolved_render_mode)` -- the extra
+    `resolved_render_mode` return (vs. every other `_add_*_shape`
+    helper) is what `_compose_element` records in the manifest instead
+    of `element.render_mode`, since that may be the unresolved `"auto"`
+    (spec section 8's render-mode table).
+
+    `render_mode: native` reuses `_add_text_shape` verbatim by building a
+    `markdown`-typed copy of `element` carrying the executed fragment's
+    Markdown text (`dataclasses.replace`) -- Quarto's own GFM output is
+    exactly the Markdown `_add_text_shape` already knows how to parse,
+    so there is no second Markdown renderer here. `png` instead reuses
+    `_place_picture`, the same picture-placement `image` and
+    `reportifyr` elements share. `svg` is rejected here, not upstream in
+    `deckifyr.plan`/the schema -- `deckifyr.renderers.quarto` can render
+    one just fine, and a future non-PPTX consumer of a resolved plan
+    might want it, but `python-pptx` cannot embed one at all (confirmed:
+    `pptx.package.py` treats SVG as an unrecognized image type outright,
+    and `_place_picture`'s own Pillow-based sizing can't open one
+    either) -- see `deckifyr.renderers.quarto`'s module docstring.
+    """
+    resolver = QuartoResolver(config=quarto_config)
+    context = BuildContext(project_root=str(project_root))
+    # Same "style if set, else design.yaml's own body font/text color"
+    # fallback `_add_text_shape` uses -- so a rasterized fragment's prose
+    # matches the surrounding deck's typography by default, not just
+    # when an author remembers to set `style:` on the element (see
+    # `deckifyr.renderers.quarto._inject_typst_autosize`'s docstring for
+    # why this only touches prose, not the fragment's own math).
+    style = element.style
+    font_name = style.font if style else design.fonts.body
+    text_color = style.color if style else design.colors.get("text", "#000000")
+    artifact: QuartoArtifact = resolver.resolve(
+        str(element.source),
+        context,
+        requested_render_mode=element.render_mode,
+        font=font_name,
+        text_color=text_color,
+    ).value
+
+    if artifact.render_mode == "native":
+        text_element = replace(element, type="markdown", value=artifact.markdown)
+        shape = _add_text_shape(slide, text_element, design)
+    elif artifact.render_mode == "svg":
+        if artifact.image_path is not None:
+            artifact.image_path.unlink(missing_ok=True)
+        raise ContentValidationError(
+            f"element {element.id!r}: render_mode: svg cannot be composed "
+            "into a .pptx -- python-pptx has no SVG embedding support "
+            "(spec section 8's render-mode table: \"svg: ... limited "
+            "editability and support variability\") -- use render_mode: "
+            "png (or native/auto) instead"
+        )
+    else:
+        if not element.alt_text:
+            raise ContentValidationError(
+                f"element {element.id!r}: a 'quarto' element rendered as "
+                f"{artifact.render_mode!r} requires alt_text (spec section "
+                "13's content validation: \"missing required alt text\")"
+            )
+        try:
+            shape = _place_picture(slide, element, artifact.image_path)
+        finally:
+            artifact.image_path.unlink(missing_ok=True)
+
+    source_manifest = {"resolved_path": str(artifact.path), "sha256": _sha256_file(artifact.path)}
+    return shape, source_manifest, artifact.warnings, artifact.render_mode
+
+
+# ---------------------------------------------------------------------------
 # Compose + write
 # ---------------------------------------------------------------------------
 
@@ -753,6 +861,7 @@ def _compose_element(
     element: ResolvedElement,
     design: DesignDocument,
     reportifyr_ctx: ReportifyrBuildContext,
+    quarto_config: QuartoExecutionConfig,
     *,
     project_root: Path,
 ) -> tuple[Any, list[dict[str, Any]], list[str], list[str]]:
@@ -769,6 +878,12 @@ def _compose_element(
     manifest_entries: list[dict[str, Any]] = []
     warnings: list[str] = []
     footer_notes: list[str] = []
+    # Overridden below only for `quarto`, whose manifest `render_mode`/
+    # `editability` depend on the *resolved* mode, not the static
+    # per-type mapping every other element type uses (see `_EDITABILITY`
+    # and `_add_quarto_shape`'s own docstring).
+    manifest_render_mode = element.render_mode
+    editability = _EDITABILITY[element.type]
 
     if element.type in ("text", "markdown"):
         shape = _add_text_shape(slide, element, design)
@@ -790,11 +905,18 @@ def _compose_element(
         warnings.extend(elem_warnings)
         if footer_note:
             footer_notes.append(footer_note)
+    elif element.type == "quarto":
+        shape, source_manifest, elem_warnings, resolved_render_mode = _add_quarto_shape(
+            slide, element, quarto_config, design, project_root=project_root
+        )
+        warnings.extend(elem_warnings)
+        manifest_render_mode = resolved_render_mode
+        editability = "fully_editable" if resolved_render_mode == "native" else "rendered_graphic"
     elif element.type == "group":
         child_shapes = []
         for child in element.children:
             child_shape, child_entries, child_warnings, child_footer_notes = _compose_element(
-                slide, slide_id, child, design, reportifyr_ctx, project_root=project_root
+                slide, slide_id, child, design, reportifyr_ctx, quarto_config, project_root=project_root
             )
             child_shapes.append(child_shape)
             manifest_entries.extend(child_entries)
@@ -816,8 +938,8 @@ def _compose_element(
             "slide_id": slide_id,
             "element_id": element.id,
             "type": element.type,
-            "render_mode": element.render_mode,
-            "editability": _EDITABILITY[element.type],
+            "render_mode": manifest_render_mode,
+            "editability": editability,
             "overflow_policy": element.overflow,
             **source_manifest,
         }
@@ -838,6 +960,7 @@ def compose(
     blank_layout = _find_blank_layout(prs)
 
     reportifyr_ctx = _build_reportifyr_context(presentation, design, project_root=project_root)
+    quarto_config = _build_quarto_config(presentation)
 
     element_manifest: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -851,7 +974,13 @@ def compose(
 
         for element in resolved_slide.elements:
             _shape, entries, elem_warnings, elem_footer_notes = _compose_element(
-                slide, resolved_slide.id, element, design, reportifyr_ctx, project_root=project_root
+                slide,
+                resolved_slide.id,
+                element,
+                design,
+                reportifyr_ctx,
+                quarto_config,
+                project_root=project_root,
             )
             element_manifest.extend(entries)
             warnings.extend(elem_warnings)

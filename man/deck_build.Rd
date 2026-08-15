@@ -21,6 +21,8 @@ if \code{presentation.yaml}'s \code{build.manifest} is unset), and
 Delegates to \verb{deckifyr build} in the bundled Python engine: plans
 (\code{deckifyr.plan}) and composes (\code{deckifyr.pptx}, spec section 10) a
 \code{.pptx} and manifest for \code{text}/\code{markdown}/\code{image}/\code{shape}/\code{group}/
-\code{table} elements. Still errors for element types the compositor
-doesn't support yet (quarto/reportifyr -- see spec section 18).
+\code{table}/\code{reportifyr}/\code{quarto} elements. A \code{quarto} element requires
+the external \code{quarto} binary on \code{PATH} (spec section 8.1, issue #3);
+every other element type needs nothing beyond this package's own
+Python dependencies.
 }

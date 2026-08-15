@@ -1,7 +1,13 @@
 # Minimal example deck used as a fixture by tests/python and
 # tests/testthat, and as the template `deckifyr init` copies into a new
 # project. Deliberately avoids {rpfy}: and Quarto fragment references --
-# those resolvers aren't implemented yet (see CLAUDE.md's status notes).
+# both resolvers are real (see CLAUDE.md's status notes), but this
+# fixture is meant to build with nothing beyond this repo's own Python
+# dependencies: a {rpfy}: reference needs a reportifyr OUTPUTS/ tree,
+# and a quarto element needs the external `quarto` binary on PATH,
+# neither of which every consumer of `deckifyr init`/this test fixture
+# (including R CMD check's own package build) can assume. See
+# examples/demo-deck/ for a richer deck that does exercise both.
 deckifyr: "0.1"
 design:
   base: design.yaml

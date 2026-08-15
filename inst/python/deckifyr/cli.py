@@ -6,14 +6,12 @@ copies the bundled minimal example, `validate` loads and
 pydantic-validates a project (design + layouts + presentation,
 cross-checking layout references and box unit strings), `build` plans
 (`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest
-for `text`/`markdown`/`image` elements, and `schema` dumps a document
-type's JSON Schema. `preview`, `inspect`, and `serve` parse their
-arguments fully but raise `NotImplementedFeatureError` -- the preview
-renderer, inspector, and web server are Phase 3/4 work (see
-deckifyr-specification.md) and deliberately do not pretend to succeed.
-`build` itself still raises the same error for element types
-`deckifyr.plan` doesn't support yet (table/shape/group/quarto/
-reportifyr, spec section 18).
+for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/
+`quarto` elements, and `schema` dumps a document type's JSON Schema.
+`preview`, `inspect`, and `serve` parse their arguments fully but raise
+`NotImplementedFeatureError` -- the preview renderer, inspector, and web
+server are Phase 3/4 work (see deckifyr-specification.md) and
+deliberately do not pretend to succeed.
 
 Exit codes are stable and independent of message wording, per spec
 section 11.1:

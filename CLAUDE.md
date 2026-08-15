@@ -30,22 +30,20 @@ learned while building the scaffold.
 | `deckifyr.schema.units` (length parsing, spec §7.3) | Real, tested |
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
-| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
+| `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`schema` (spec §11.1) | Real, tested |
 | CLI `preview`/`inspect`/`serve` | Argument parsing is real; each raises `NotImplementedFeatureError` (exit code 4) |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
-| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr` elements, `Slide.notes`, and reportifyr footers (§9.1); `quarto` raises a clear `ContentValidationError` (`deckifyr.plan` rejects it before composition) -- Phase 1 done, Phase 2 (§18) underway |
-| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), and `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1) are real; the Quarto resolver is not implemented -- Phase 2 |
-| `deckifyr.renderers` (Quarto integration, spec §8) | Not started -- Phase 2 |
+| `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, `Slide.notes`, and reportifyr footers (§9.1) -- Phase 1 and Phase 2's Quarto slice (§18, issue #3) are done |
+| `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1), and `QuartoResolver` (fragment execution, spec §9.2/§8.1) are real |
+| `deckifyr.renderers.quarto` (Quarto integration, spec §8/§8.1, issue #3) | Real, tested against a live `quarto` install -- see this file's own "Quarto integration" section below |
 | `deckifyr.web` (spec §12) | Not started -- Phase 3 |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
 the same way, then plans and composes a real `.pptx` + manifest for
 projects that use `text`/`markdown`/`image`/`shape`/`group`/`table`/
-`reportifyr` elements -- a project using `quarto` elements still fails
-with a clear "not implemented" error (`E_CONTENT_VALIDATION`) rather
-than silently dropping that content. `table` elements resolve their
+`reportifyr`/`quarto` elements. `table` elements resolve their
 `source` (a `.csv` or `.parquet` file, project-relative like an image's
 `source`) to a native, fully-editable PowerPoint table -- first row is
 always the header, mirroring `pandas`' own `header=0` default; `style`
@@ -282,6 +280,147 @@ docx-free "resolve this artifact's footer text" function, that's the
 real fix to revisit this against -- not a reason to guess at its
 internals in the meantime.
 
+**Quarto integration (spec §8/§8.1, issue #3) is real, built against a
+live `quarto`/Typst/PyMuPDF toolchain, not just designed against the
+spec.** `deckifyr.renderers.quarto` executes a `type: quarto` element's
+`.qmd` fragment and turns it into either normalized text (`render_mode:
+native`, reusing `deckifyr.pptx.compose._add_text_shape`'s existing
+Markdown parsing for Quarto's own `--to gfm` output -- no second
+Markdown renderer) or a rasterized `png` (`render_mode: png`, via
+`--to typst` -- chosen over `--to pdf` specifically because Typst is
+bundled with Quarto and needs no separately-installed LaTeX engine,
+confirmed against a real `quarto check` with no TinyTeX present).
+`deckifyr.resolvers.quarto.QuartoResolver` wraps it as an ordinary
+`ContentResolver` (spec §9.2); `deckifyr.pptx.compose._add_quarto_shape`
+places the result exactly like a `markdown`/`image` element, never
+Quarto's own PPTX writer (spec §20 warning 2).
+
+**`render_mode: svg` cannot actually reach the compositor -- confirmed
+against a real render, not assumed from docs.** `python-pptx` has no
+SVG embedding support at all (`pptx/package.py` explicitly skips SVG as
+an "unknown/unsupported image type" on insertion), and separately
+`_place_picture`'s own Pillow-based sizing can't open an SVG either --
+first discovered as a real `PIL.UnidentifiedImageError` crash while
+writing `tests/python/test_pptx_quarto.py`'s end-to-end math test, not
+reasoned out in advance. `deckifyr.renderers.quarto.render_image` still
+supports `image_format="svg"` (it's a real, independently useful
+capability, and a future non-PPTX consumer of a resolved plan might
+want it), but `select_auto_render_mode` never picks it, and
+`_add_quarto_shape` raises a clear `ContentValidationError` if an
+element explicitly sets `render_mode: svg` -- pointing at `png` instead
+-- rather than letting the Pillow crash surface. Don't reintroduce `svg`
+as an `auto`-selectable or silently-accepted compositor render mode;
+the spec's own render-mode table already flags this under svg's
+"limited editability and support variability" tradeoff.
+
+**A Typst page defaults to a fixed size (e.g. US Letter) with a page
+number footer on; getting a clean, fragment-sized crop instead needed
+two empirical fixes, not just reading Quarto's docs.** The
+natural-looking approach for the sizing half -- passing a `#set
+page(width: auto, height: auto)` rule via Pandoc's own
+`--include-in-header` -- was tried first and verifiably does not take
+effect (confirmed with a real render: the PDF still comes back at
+612x792pt); Quarto's own Typst template evidently re-establishes page
+defaults after that injection point. What actually works, confirmed
+against a real render producing a tight content-sized PDF (verified via
+PyMuPDF's own `page.rect`): splicing that same `#set page(...)` rule as
+a raw Typst block (`` ```{=typst} ``) directly into the fragment's own
+body, after any YAML frontmatter. `render_image` does this by writing a
+throwaway sibling `.qmd` file next to the original (so relative
+resource references in the fragment still resolve against the real
+project directory) rather than mutating the user's own file, and always
+deletes it in a `finally`. The second fix was caught only by actually
+looking at a real rendered PNG while building `examples/demo-deck`'s
+equation slide: a literal "1" baked into the image, from Quarto's Typst
+template's own default `numbering: "1"` page-number footer, which the
+sizing-only `#set page(...)` override didn't touch (Typst's `set` only
+overrides the fields you name). `numbering: none` was added to the same
+injected `#set page(...)` call to kill it -- a good example of why this
+module's tests were run against real output, not just "it built without
+erroring."
+
+**A rasterized `png`/`svg` fragment's prose now matches the deck's own
+font/color by default -- also caught by looking at a real render, not
+anticipated up front.** Without an explicit font, Typst renders in its
+own default serif typeface, which reads as visibly inconsistent sitting
+next to ordinary Arial-set native text on the same slide (first seen on
+`examples/demo-deck`'s equation slide). `_inject_typst_autosize` now
+also splices a `#set text(font: ..., fill: rgb(...))` rule using
+`element.style`'s resolved font/color (or `design.yaml`'s own
+`fonts.body`/`colors.text` when the element sets no `style:`, mirroring
+`_add_text_shape`'s own fallback) -- `deckifyr.pptx.compose
+._add_quarto_shape` computes and passes these into `QuartoResolver
+.resolve`/`render_image` as `font`/`text_color`. Deliberately does
+*not* touch `math.equation`'s own font: Typst's math mode needs a font
+with a real math table (glyph variants, spacing metrics) that an
+ordinary UI typeface like Arial doesn't have, and confirmed against a
+real render, `#set text(font: ...)` alone already leaves equations in
+Typst's own math font while only retypesetting the surrounding prose --
+exactly the outcome wanted, not a gap to close.
+
+**Rasterizing an equation to `png` instead of a native, editable
+PowerPoint equation is a real, documented gap in this module's own
+scope -- not a technical dead end, and not something to hand-wave
+past.** `python-pptx` has no API for inserting OMML (`<m:oMath>`,
+PowerPoint's native equation markup) -- confirmed, that part really is
+a hard limitation of the library layer everything here is built on. But
+Quarto/Pandoc's own `--to pptx` writer *does* emit real native
+`<m:oMath>` equations -- confirmed by actually rendering
+`$$x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}$$` through `quarto render x.qmd
+--to pptx` and inspecting the slide XML: a genuine `<a14:m>
+<m:oMathPara><m:oMath>...` element, not a picture. So a `native`
+equation-render path is possible in principle -- pull the same OMML
+Pandoc already generates (via a full `--to pptx`/`--to docx` render) out
+of its output XML and splice that fragment into one of
+`deckifyr.pptx.compose`'s own text runs, the same kind of narrow OOXML
+adapter `_set_cell_borders`/`_set_alt_text` already are for other
+python-pptx gaps below. It isn't built here because that splice needs
+real namespace/content-type wiring (`a14:`/`m:` declarations,
+`mc:AlternateContent` fallback content) verified against a real
+PowerPoint install, the same correctness bar `_set_cell_borders`'s own
+note above was held to -- not something to attempt without that
+verification. See `deckifyr.renderers.quarto`'s own module docstring
+for the fuller writeup; treat this as a well-scoped, tracked future
+improvement (spec §21-style open decision), not a closed question.
+
+**The `.qmd` "single fragment" complexity limit (spec §8.1) is a text
+heuristic, not a real document-structure parse, and that's a known,
+accepted gap, not an oversight.** `check_fragment_complexity` rejects a
+Markdown horizontal-rule-shaped line (`---`/`***`/`___`, outside the
+YAML frontmatter and fenced code) and more than one top-level `#`
+heading. A setext-style heading (`Title\n-----`) can false-positive on
+the first check; spec §8.1 itself frames the exact limit as still open,
+so this repo's own convention is ATX (`#`) headings in a fragment, not
+setext. Don't try to "fix" this into a full CommonMark parse without
+revisiting whether that's still proportionate to the limit spec §8.1
+actually asks for.
+
+**Every `quarto`-related test that needs the real `quarto` binary skips
+cleanly when it's absent, mirroring `tests/testthat/test-wiring.R`'s own
+uv/pyro skip pattern -- confirmed against a real run with `quarto`
+hidden from `PATH`, not just reasoned about.** CI's `python-tests` job
+(`ci.yml`) does not install Quarto, so
+`tests/python/test_renderers_quarto.py`,
+`tests/python/test_resolvers_quarto.py`, and the end-to-end tests at the
+bottom of `tests/python/test_pptx_quarto.py` gate on
+`shutil.which("quarto")` (an R-chunk-executing test additionally gates
+on `shutil.which("Rscript")`); everything else in those files -- the
+complexity-limit and `render_mode: auto` heuristics, path-safety checks,
+and the fast `test_pptx_quarto.py` tests that monkeypatch
+`deckifyr.pptx.compose.QuartoResolver` with a canned artifact -- runs
+unconditionally. This is expected, honest local/CI behavior per this
+file's own testing-strategy precedent (see the R-CMD-check.yaml note
+above), not a gap to paper over with mocking the real binary everywhere.
+
+**`presentation.yaml`'s `build.quarto` block (`binary`/
+`timeout_seconds`/`max_output_bytes`) mirrors `build.reportifyr`'s own
+"required only lazily" shape.** `deckifyr.schema.presentation.QuartoConfig`
+is `None` by default; `deckifyr.pptx.compose._build_quarto_config` reads
+it only when present, falling back to `QuartoExecutionConfig`'s own
+defaults otherwise -- a build with no `quarto` element never touches
+this at all, same precedent `ReportifyrBuildContext`/
+`_build_reportifyr_context` already set.
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three
@@ -328,14 +467,16 @@ job/OS combination `check-r-package`'s composite action steps run
 under; keep both mechanisms in sync with `Additional_repositories`
 rather than trying to consolidate them into one.
 
-**`deckifyr.renderers` and `deckifyr.web` are intentionally empty
-packages with only a docstring; `deckifyr.pptx` no longer is.** Each
-corresponds to a specific later phase in spec §18, and spec §20's
-warnings 2/5/6 specifically caution against building the PPTX compositor
-around Quarto's own layout writer, building the web editor before the
-CLI/schema stabilize, or executing Quarto in an unisolated web process.
-Read the relevant spec section before writing real code into either of
-these two.
+**`deckifyr.web` is still an intentionally empty package with only a
+docstring; `deckifyr.pptx` and, as of issue #3, `deckifyr.renderers` no
+longer are.** `deckifyr.web` corresponds to Phase 3 (spec §18), and spec
+§20 warning 5 specifically cautions against building the web editor
+before the CLI/schema stabilize. Read spec §12 before writing real code
+into it. `deckifyr.renderers.quarto` is real (see this file's own
+"Quarto integration" section below) but still honors spec §20 warning
+2's separate caution -- it never uses Quarto's own PPTX/presentation
+writer as the compositor; `deckifyr.pptx.compose` places Quarto's output
+exactly like any other resolved element.
 
 **Reference-PPTX support is descoped, not deferred (spec §10.1/§21,
 decided): `deckifyr.pptx.compose` always uses `python-pptx`'s own
@@ -392,7 +533,7 @@ of this is honest, not a problem to hide.
 
 ## Testing strategy
 
-Today's tests are unit-level plus one true integration test:
+Today's tests are unit-level plus two kinds of true integration test:
 `tests/python/` covers units/merge/schema/CLI exit codes in isolation,
 plus `test_plan.py` (layout/slide expansion) and `test_pptx.py` (fit-mode
 geometry, manifest shape, opening the written `.pptx` back up with
@@ -400,7 +541,14 @@ geometry, manifest shape, opening the written `.pptx` back up with
 `tests/testthat/test-wiring.R` is the only test that actually invokes
 the real R -> pyro -> Python bridge (the other two R-side gotchas above
 were both caught by *running* this test against a live toolchain, not
-by reasoning about the code). What's still missing from spec §17's later
+by reasoning about the code). `test_renderers_quarto.py`/
+`test_resolvers_quarto.py`/the end-to-end tests in `test_pptx_quarto.py`
+are the second kind: real integration tests against a live `quarto`
+binary (Typst rendering, R-chunk execution, timeout/output-size
+enforcement all included), skipping cleanly when `quarto` isn't on
+`PATH` the same way `test-wiring.R` skips without uv/pyro -- see this
+file's "Quarto integration" architecture note above. What's still
+missing from spec §17's later
 categories: real visual-regression testing (rendering a slide to an
 image and diffing it) and broader OOXML structural validation beyond
 shape names/counts -- today's PPTX tests check what `python-pptx` can

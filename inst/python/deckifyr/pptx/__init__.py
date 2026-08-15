@@ -2,12 +2,12 @@
 
 `deckifyr.pptx.compose` expands a resolved plan (`deckifyr.plan`) into an
 in-memory `python-pptx` `Presentation` and a build manifest (spec section
-14), for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`
-elements -- `deckifyr build` (see `deckifyr.cli`'s `build` subcommand)
-calls `compose_and_write` after validating and planning a project.
-`quarto` elements aren't composed yet; `deckifyr.plan` rejects them
-before this package ever sees them (see deckifyr-specification.md
-section 18).
+14), for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/
+`quarto` elements -- `deckifyr build` (see `deckifyr.cli`'s `build`
+subcommand) calls `compose_and_write` after validating and planning a
+project. A `quarto` element requires the external `quarto` binary on
+`PATH` (spec section 8.1, issue #3); every other element type needs
+nothing beyond this package's own Python dependencies.
 
 Per spec section 10.2/section 20 warning 9: low-level OOXML workarounds
 must stay isolated behind narrowly tested adapters in here (there is

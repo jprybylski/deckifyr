@@ -128,10 +128,87 @@ def test_unsupported_element_type_raises():
     slide = Slide(
         id="s1",
         layout=None,
-        elements=[Element(id="frag", type="quarto", value="x", box=_box())],
+        elements=[Element(id="frag", type="footnotes", value="x", box=_box())],
     )
     with pytest.raises(ContentValidationError):
         expand_slide(slide, None, design, strict=True)
+
+
+def test_quarto_element_is_supported():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="frag", type="quarto", source="fragments/interp.qmd", box=_box())],
+    )
+    resolved = expand_slide(slide, None, design, strict=True)
+    (element,) = resolved.elements
+    assert element.type == "quarto"
+    assert element.source == "fragments/interp.qmd"
+
+
+def test_quarto_element_requires_source_not_value():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="frag", type="quarto", value="inline text", box=_box())],
+    )
+    with pytest.raises(ContentValidationError, match="requires a 'source'"):
+        expand_slide(slide, None, design, strict=True)
+
+
+def test_quarto_element_source_must_be_qmd():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="frag", type="quarto", source="not-a-fragment.txt", box=_box())],
+    )
+    with pytest.raises(ContentValidationError, match="must be a .qmd file"):
+        expand_slide(slide, None, design, strict=True)
+
+
+def test_quarto_element_render_mode_defaults_to_auto():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="frag", type="quarto", source="fragments/interp.qmd", box=_box())],
+    )
+    (element,) = expand_slide(slide, None, design, strict=True).elements
+    assert element.render_mode == "auto"
+
+
+def test_quarto_element_style_resolves_like_text():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="frag",
+                type="quarto",
+                source="fragments/interp.qmd",
+                style="title",
+                box=_box(),
+            )
+        ],
+    )
+    (element,) = expand_slide(slide, None, design, strict=True).elements
+    assert element.style is not None
+    assert element.style.bold is True
+
+
+def test_other_element_types_still_default_render_mode_to_native():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[Element(id="txt", type="text", value="hi", box=_box())],
+    )
+    (element,) = expand_slide(slide, None, design, strict=True).elements
+    assert element.render_mode == "native"
 
 
 def test_table_element_is_supported():

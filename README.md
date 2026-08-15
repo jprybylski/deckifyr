@@ -14,13 +14,14 @@ targeting slides instead of documents.
 
 > **Status: early, but `deckifyr build` is real.** Schema validation,
 > unit parsing, deep-merge precedence, layout expansion, and PPTX
-> composition all work end-to-end for `text`/`markdown`/`image`
-> elements -- see `examples/demo-deck/` for a working example. Element
-> types beyond those three (`table`/`shape`/`group`/`quarto`/
-> `reportifyr`) still report a clear "not implemented yet" error rather
-> than being silently dropped. See `deckifyr-specification.md` at the
-> repo root for the full design and phased delivery plan, and
-> `CLAUDE.md` for exactly what's real today versus stubbed.
+> composition all work end-to-end for `text`/`markdown`/`image`/
+> `shape`/`group`/`table`/`reportifyr`/`quarto` elements -- see
+> `examples/demo-deck/` for a working example (a `quarto` element needs
+> the external `quarto` binary on `PATH` to build; every other type
+> needs nothing beyond this repo's own Python dependencies). See
+> `deckifyr-specification.md` at the repo root for the full design and
+> phased delivery plan, and `CLAUDE.md` for exactly what's real today
+> versus stubbed.
 
 ## Why
 
@@ -61,7 +62,7 @@ never a second implementation of the same logic.
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, ...) delegating to the bundled Python CLI via pyro | R |
 | `inst/python/deckifyr/` | The canonical engine: schemas, unit/merge logic, CLI. Bundled into the R package and built as the standalone wheel from the same source | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio, used as `deckifyr init`'s template and as the test fixture for both languages | YAML |
-| `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a three-slide deck using a real `reportifyr`-produced figure | YAML |
+| `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a five-slide deck using a real `reportifyr`-produced figure and two real `quarto` fragments | YAML |
 | `tests/` | `tests/python/` (pytest, unit-level plus an end-to-end build of `examples/demo-deck/`) and `tests/testthat/` (R, including end-to-end tests of the real R→pyro→Python bridge) | Python, R |
 
 ## Quick start
