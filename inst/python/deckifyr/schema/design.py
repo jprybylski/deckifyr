@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from deckifyr.schema.colors import ColorDerivation
 from deckifyr.schema.layouts import Box
 from deckifyr.schema.version import check_schema_version
 
@@ -301,8 +302,14 @@ class DesignDocument(BaseModel):
     fonts: Fonts
     # Named color tokens (spec section 7.4's `colors:` block) -- an open
     # dict rather than fixed fields, since orgs define their own token
-    # names beyond the example's text/muted/primary/accent.
-    colors: dict[str, str] = {}
+    # names beyond the example's text/muted/primary/accent. A value may
+    # be a literal hex string or a `ColorDerivation` computing it from
+    # another token (issue #11); `deckifyr.cli._load_project` resolves
+    # every entry to a literal hex string via `deckifyr.schema.colors.
+    # resolve_color_tokens` before either `deckifyr.plan` or
+    # `deckifyr.pptx.compose` ever reads this field, so nothing
+    # downstream of that point needs to know derivations exist.
+    colors: dict[str, str | ColorDerivation] = {}
     text_styles: dict[str, TextStyle] = {}
     shape_styles: dict[str, ShapeStyle] = {}
     table_styles: dict[str, TableStyle] = {}

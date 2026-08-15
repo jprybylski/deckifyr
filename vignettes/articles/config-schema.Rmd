@@ -1,0 +1,245 @@
+---
+title: "YAML Configuration Reference"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+Every deckifyr project is three YAML files. This article is a field-by-field reference for
+what they contain; for an install/quickstart walkthrough see `vignette("getting-started")`,
+and for a worked, richer example see `vignette("examples")`. The authoritative, always
+up-to-date version of this schema is generated straight from the pydantic models that
+actually validate it:
+
+```bash
+uv run deckifyr schema design         # or layouts / presentation
+```
+
+```r
+deck_schema("design")                  # or "layouts" / "presentation"
+```
+
+Treat this article as the readable tour and `deck_schema()`/`deckifyr schema` as the source
+of truth when they disagree -- the JSON Schema is generated directly from the code that
+validates your file, this article is hand-written.
+
+## The three files
+
+| File | Responsibility |
+|---|---|
+| `design.yaml` | Slide size, fonts, colors, named text/shape/table styles, defaults, and document furniture (background, status marker, branding, page numbers) |
+| `layouts.yaml` | Reusable named zone geometry, shared across slides |
+| `presentation.yaml` | Slide order and content, metadata, build settings -- the file you actually pass to `deckifyr build`/`deck_build()` |
+
+`presentation.yaml` points at the other two by path (`design: {base: design.yaml}`,
+`layouts: layouts.yaml`, both project-relative). Every one of the three files starts with an
+explicit `deckifyr: "0.1"` version field -- required, and checked against the same supported-
+version set regardless of which file it's in.
+
+## Units and coordinates
+
+Every length is an explicit string with a unit suffix: `"0.75in"`, `"18pt"`, `"2.5cm"`,
+`"10mm"` (`in`/`pt`/`cm`/`mm`). A bare unitless number (`0.75` with no suffix) is rejected by
+default -- pass `strict = FALSE` to `deck_validate()`/`deck_build()` (`--warn-only` on the
+CLI) to relax this. The coordinate origin is the slide's top-left corner: positive `x` is
+right, positive `y` is down, positive `rotation` is clockwise.
+
+## How a slide's elements get merged
+
+A slide names a `layout` from `layouts.yaml` (or `layout: null` for a freeform slide with no
+named layout at all). Each of that layout's named zones is deep-merged with the slide's own
+entry for that same element id, if it has one:
+
+- Dictionary fields merge recursively (set a `box.width` override without having to repeat
+  `box.x`/`box.y`/`box.height`).
+- Scalars and lists replace the layout's value outright when the slide sets them.
+- A field the slide's YAML never mentions is left alone -- it does not get clobbered by an
+  empty/default value the way a naive merge would.
+
+A slide may also add elements a layout doesn't define, or (with `layout: null`) supply its
+`elements` as a plain list instead of an id-keyed mapping; every list-form element needs its
+own `id`.
+
+## `design.yaml`
+
+```yaml
+deckifyr: "0.1"
+
+slide:
+  width: 13.333in
+  height: 7.5in
+  background: "#FFFFFF"
+  safe_area: 0.35in
+
+fonts:
+  body: Arial
+  heading: Arial
+  monospace: Consolas
+
+colors:
+  text: "#202124"
+  muted: "#5F6368"
+  primary: "#2457A6"
+  accent: "#D14D32"
+
+text_styles:
+  title: {font: heading, size: 28pt, bold: true, color: primary}
+  body: {font: body, size: 16pt, color: text}
+
+defaults:
+  overflow: error
+  image_fit: contain
+  rotation: 0
+```
+
+- **`slide`**: `width`/`height`/`safe_area` (a margin the compiler enforces), `background`
+  (a fallback solid fill) and, optionally, `background_gradient` (a linear gradient painted
+  as the slide's own native fill -- see below) and `background_image` (painted between the
+  two, via `furniture`).
+- **`fonts`**: named font tokens (`body`/`heading`/`monospace`, plus any others you add) that
+  a `text_styles` entry's `font` field can reference by name.
+- **`colors`**: named color tokens. Any color-bearing field elsewhere in `design.yaml`
+  (a `text_styles` entry's `color`, a `shape_styles`/`table_styles` fill/border, a gradient
+  stop's `color`) accepts either one of these token names or a literal hex value directly --
+  there's no requirement to route every color through a token.
+
+  A `colors` entry may also be **derived** from another one instead of a literal, via a
+  simple HSL-space transform:
+
+  ```yaml
+  colors:
+    primary: "#2457A6"
+    secondary:
+      base: primary       # a colors: token name, or a literal hex value
+      darken: 0.2           # exactly one of lighten/darken/saturate/desaturate/mix
+    tertiary:
+      base: primary
+      mix: accent            # blend toward another token/literal
+      weight: 0.5              # fraction of `mix` blended in (default 0.5); only with `mix`
+  ```
+
+  Derivations may chain (a derivation's `base` can itself be another derivation); a circular
+  chain is a build-time error. This is useful for tints/shades that should stay visibly tied
+  to a brand color rather than drifting out of sync as a separately hand-picked literal
+  would -- see `examples/demo-deck/design.yaml`'s `primary-tint` (used for a table's row
+  banding) for a real worked example.
+- **`text_styles`**: named styles (`font`, `size`, `bold`, `italic`, `color`, plus optional
+  `opacity` and `text_transform: uppercase|lowercase|capitalize`) that a `text`/`markdown`/
+  `table`/footer element's own `style` field selects by name.
+- **`shape_styles`**: named `fill` (a color/token, or a `Gradient`: 2+ `{color, position}`
+  stops plus an `angle`, `python-pptx`'s own convention where 0 = left-to-right and 90 =
+  top-to-bottom), `line_color`, `line_width` -- selected by a `shape` element's `style`.
+- **`table_styles`**: named `header_fill`/`header_text_color`/`body_fill`/`band_fill`
+  (alternate-row tint)/`border_color`/`border_width` -- the fill/border chrome
+  `text_styles` has no vocabulary for. A `table` element's own `style` still governs its
+  typography; `table_style` is the separate, optional field for this chrome.
+- **`defaults`**: project-wide fallbacks -- `overflow` (`error`/`shrink`/`clip`/`continue`),
+  `image_fit` (`contain`/`cover`/`stretch`/`none`), `rotation`, plus `footer_height`/
+  `footer_style`/`table_style` fallbacks used when an element doesn't set its own.
+- **`furniture`**: optional, off by default. `status` configures one or more named status/
+  watermark placements (`watermark`, or one of the four `corner_tr`/`corner_tl`/`corner_bl`/
+  `corner_br` corners), each with its own `box`/`style`/`rotation`/`z_index`; `branding` is a
+  fixed organization/department label; `page_number` is a running `{page} / {total}`-style
+  label. None of these render unless `presentation.yaml` actually selects them (see below) --
+  configuring a placement in `design.yaml` doesn't turn it on by itself.
+
+## `layouts.yaml`
+
+```yaml
+deckifyr: "0.1"
+
+layouts:
+  title-content:
+    elements:
+      title:
+        type: text
+        box: {x: 0.5in, y: 0.4in, width: 12.3in, height: 1in}
+        style: title
+        required: true
+      content:
+        type: text
+        box: {x: 0.5in, y: 1.6in, width: 12.3in, height: 5.3in}
+        style: body
+  blank:
+    elements: {}
+```
+
+A named mapping of layouts, each an id-keyed mapping of element zones (see "Element model"
+below for what a zone/element can contain). `blank` -- an empty layout with no zones -- is a
+common, deliberate entry: a slide using it supplies its own elements directly rather than
+filling in a named layout's placeholders.
+
+## `presentation.yaml`
+
+```yaml
+deckifyr: "0.1"
+
+design: {base: design.yaml}
+layouts: layouts.yaml
+
+metadata:
+  title: "Quarterly Review"
+  status: draft
+
+build:
+  output: build/deck.pptx
+  manifest: build/deck.manifest.json
+
+status_indicator: corner-tr    # optional: watermark / corner-tr / corner-tl / corner-bl / corner-br / none
+
+slides:
+  - id: title
+    layout: title-content
+    notes: "Open with the headline number before the agenda."
+    elements:
+      title: {value: "Quarterly Review"}
+```
+
+- **`design`/`layouts`**: paths to the other two files.
+- **`metadata`**: free-form deck metadata; `status` (e.g. `"draft"`/`"demo"`/`"final"`) also
+  doubles as the status-indicator's default text (see below).
+- **`build`**: `output` (the `.pptx` path to write) and optional `manifest` (a JSON build
+  record: input files, resolved elements, warnings).
+- **`status_indicator`**: which of `design.yaml`'s `furniture.status` placements (if any) to
+  render for this build -- `"watermark"`, one of the four hyphenated `"corner-*"` values, or
+  unset/`"none"` (the default, nothing shown). Selecting a placement `design.yaml` never
+  configured is a build error, not a silent no-op.
+- **`watermark`**: the status/watermark text to render, if set; falls back to
+  `metadata.status` when unset, so a deck doesn't need the same word typed into both fields.
+- **`slides`**: each slide has an `id`, a `layout` name (or `null` for freeform), optional
+  `notes` (plain speaker-notes text, not a slide element), and `elements` (id-keyed to
+  override/add to the layout's own zones, or a plain list for a freeform slide -- see "How a
+  slide's elements get merged" above).
+
+## Element model
+
+Every element (whether defined in a `layouts.yaml` zone or a slide's own `elements`) shares
+a common set of fields on top of its type-specific ones:
+
+| Field | Meaning |
+|---|---|
+| `type` | One of `text`, `markdown`, `image`, `shape`, `group`, `table`, `reportifyr`, `quarto` |
+| `box` | `{x, y, width, height}`, explicit units |
+| `rotation` | Degrees, clockwise |
+| `z_index` | Paint order; higher paints on top. Ordinary elements default to `0` |
+| `style` | A `text_styles`/`shape_styles` name |
+| `table_style` | A `table_styles` name (`table` elements only) |
+| `fit` | `contain`/`cover`/`stretch`/`none` (`image` elements) |
+| `overflow` | `error`/`shrink`/`clip`/`continue` (text overflow policy) |
+| `render_mode` | How a `quarto` fragment is rendered (`native`/`png`/`svg`/`auto`) |
+| `alt_text` | Accessibility text; required on `image` elements |
+| `center` / `align` | Vertical centering, and independent horizontal alignment (`left`/`center`/`right`) |
+| `remove` | Drop a layout zone entirely for this slide |
+| `required` | Fail the build if this element ends up with no content |
+| `footer_placement` | `below`/`notes`/`none`, for a `reportifyr`/`{rpfy}:`-sourced `table` element's footer |
+
+`value` (for `text`/`markdown`) or `source` (for `image`/`table`/`reportifyr`, a project-
+relative path or a `{rpfy}:name.ext` reportifyr magic-string reference) supplies an element's
+actual content. A `group` element nests other elements (including another group) under its
+own `elements` mapping/list; a `shape` element's `shape_kind` picks from a small named subset
+of autoshapes.
+
+See `vignette("examples")` for `reportifyr`/`quarto`/`table` elements exercised end to end,
+and `deckifyr schema presentation` for the exhaustive, generated field list (including which
+fields are only valid on which element types).

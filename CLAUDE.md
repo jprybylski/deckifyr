@@ -215,7 +215,39 @@ installs the `<a:lin>` element `gradient_angle`'s own public setter
 requires) and sets the angle via that public setter -- only the stop
 list itself is hand-built. `Gradient.angle` follows `python-pptx`'s own
 convention (0 = left-to-right, increasing = clockwise, so 90 =
-top-to-bottom), not CSS's `linear-gradient()` convention. Speaker notes
+top-to-bottom), not CSS's `linear-gradient()` convention. Color-token
+derivation (spec §7.4, issue #11) is real: a `colors:` entry may be a
+`deckifyr.schema.colors.ColorDerivation` (`base` plus exactly one of
+`lighten`/`darken`/`saturate`/`desaturate`/`mix`+`weight`) instead of a
+literal hex string, computed via stdlib `colorsys` (RGB<->HLS
+conversion) rather than a new third-party dependency -- `colorsys`
+already supplies the one genuinely non-trivial part, and
+lighten/darken/saturate/desaturate/mix are each a few lines on top of
+it, which doesn't clear the bar this repo otherwise holds new
+dependencies to (Pillow/pyarrow/pymupdf are each pulled in for real
+domain-specific parsing/rendering work, not a handful of HLS
+arithmetic). `deckifyr.schema.colors.resolve_color_tokens` is the one
+place derivations get expanded to literal hex strings, following
+`base`/`mix` chains to arbitrary depth and raising `ColorResolutionError`
+on a circular chain (its only failure mode -- a `base`/`mix` name that
+isn't itself a `colors:` key is treated as a literal, the same
+"token or bare literal" fallback `design.colors.get(token, token)`
+already uses everywhere). It's called exactly once, from
+`deckifyr.cli._load_project` right after `design.yaml` is parsed --
+deliberately not from `deckifyr.plan` (where `resolve_gradient` and
+friends live), because `deckifyr.plan.expand_presentation` and
+`deckifyr.pptx.compose` both read `design.colors` directly off the
+same `DesignDocument` instance `cli.py` hands each of them
+independently (`plan.py` has 5 `design.colors.get(...)` call sites,
+`compose.py` has 5 more); resolving anywhere other than that one
+shared choke point would leave one side still seeing unresolved
+derivations. Resolving in `_load_project` also means `deckifyr
+validate` catches a circular derivation for free, with no extra
+plumbing. No `deckifyr:` schema version bump was needed -- confirmed
+via git history that `SUPPORTED_SCHEMA_VERSIONS` has never been
+bumped for any prior purely-additive optional field (Gradients,
+`StatusFurniture`, `TextStyle.opacity`, ...), and this follows the
+same shape. Speaker notes
 (spec §7.1/§18 Phase 1,
 `Slide.notes` in `presentation.yaml`) are real: a plain string, not a
 slide element -- no box/style/z_index, no design-token resolution --

@@ -12,6 +12,16 @@
 #'   is the `--warn-only` policy from spec section 11.1.
 #' @return A parsed list from the CLI's JSON output, e.g. `$valid`,
 #'   `$slide_count`, `$layout_count`.
+#' @examples
+#' \dontrun{
+#' # Validate the bundled minimal example project (requires a provisioned
+#' # Python/uv/pyro toolchain -- see vignette("getting-started")).
+#' presentation <- system.file(
+#'   "examples", "minimal-deck", "presentation.yaml",
+#'   package = "deckifyr"
+#' )
+#' deck_validate(presentation)
+#' }
 #' @export
 deck_validate <- function(presentation, strict = TRUE) {
   args <- c("validate", presentation)

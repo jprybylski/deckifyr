@@ -19,6 +19,7 @@ class ErrorCode:
     IO = "E_IO"
     CONTENT_VALIDATION = "E_CONTENT_VALIDATION"
     PATH_NOT_FOUND = "E_PATH_NOT_FOUND"
+    COLOR_RESOLUTION = "E_COLOR_RESOLUTION"
 
 
 class DeckifyrError(Exception):
@@ -58,6 +59,18 @@ class ContentValidationError(DeckifyrError):
     """
 
     code = ErrorCode.CONTENT_VALIDATION
+
+
+class ColorResolutionError(DeckifyrError):
+    """Raised by `deckifyr.schema.colors.resolve_color_tokens` when a
+    `colors:` entry's derivation (`base`/`mix`, spec section 7.4) forms a
+    circular reference -- the only failure mode this resolution step has,
+    since a `base`/`mix` name that isn't a known `colors:` key is treated
+    as a literal, the same "token or bare literal" fallback every other
+    color-bearing field in `design.yaml` already uses.
+    """
+
+    code = ErrorCode.COLOR_RESOLUTION
 
 
 class NotImplementedFeatureError(DeckifyrError):

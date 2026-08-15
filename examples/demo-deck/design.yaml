@@ -37,6 +37,14 @@ colors:
   muted: "#5F6368"
   primary: "#2457A6"
   accent: "#D14D32"
+  # A derived token (spec section 7.4, issue #11) rather than a
+  # hand-picked literal -- a lightened `primary`, used below for
+  # `pk-summary`'s table row banding so that tint stays visibly tied to
+  # `primary` if it's ever rebranded, instead of drifting out of sync
+  # the way a separately hand-mixed literal would.
+  primary-tint:
+    base: primary
+    lighten: 0.55
 
 text_styles:
   title:
@@ -101,15 +109,14 @@ text_styles:
 # Fill/border chrome for the `pk-summary` slide's `pk-table` element --
 # `style: table-body` above still governs its typography; this is the
 # separate, optional knob for the part `text_styles` has no vocabulary
-# for. `band_fill` is a one-off tint for this table's own banding, not a
-# reusable brand token, hence the bare literal rather than a `colors:`
-# entry.
+# for. `band_fill: primary-tint` is the `colors:` derivation defined
+# above, not a hand-picked literal.
 table_styles:
   pk-summary:
     header_fill: primary
     header_text_color: "#FFFFFF"
     body_fill: "#FFFFFF"
-    band_fill: "#EEF3FB"
+    band_fill: primary-tint
     border_color: muted
     border_width: 0.75pt
 

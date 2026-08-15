@@ -22,3 +22,10 @@ The CLI result (invisibly).
 \description{
 Reorder a slide in a presentation.yaml
 }
+\examples{
+\dontrun{
+# See deck_add_slide()'s example for setting up a scratch project_dir.
+presentation <- file.path(project_dir, "presentation.yaml")
+deck_move_slide(presentation, id = "new-slide", index = 0)
+}
+}

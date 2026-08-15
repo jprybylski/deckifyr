@@ -46,3 +46,20 @@ set, that it names a real entry in the project's \code{layouts.yaml})
 before writing -- see \code{\link[=deck_set_config]{deck_set_config()}}'s own docstring for the same
 validate-before-write guarantee.
 }
+\examples{
+\dontrun{
+# Copy the bundled example into a scratch directory first -- slide
+# commands write to `presentation` in place.
+project_dir <- file.path(tempdir(), "my-deck")
+dir.create(project_dir)
+file.copy(
+  list.files(
+    system.file("examples", "minimal-deck", package = "deckifyr"),
+    full.names = TRUE
+  ),
+  project_dir
+)
+presentation <- file.path(project_dir, "presentation.yaml")
+deck_add_slide(presentation, id = "new-slide", layout = "blank")
+}
+}

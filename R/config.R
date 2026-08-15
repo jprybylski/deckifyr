@@ -11,6 +11,11 @@
 #' @param path Dotted path into the document.
 #' @return The value at `path`, as its native R type (list, character,
 #'   numeric, logical, or `NULL`).
+#' @examples
+#' \dontrun{
+#' design <- system.file("examples", "minimal-deck", "design.yaml", package = "deckifyr")
+#' deck_get_config(design, "colors.primary")
+#' }
 #' @export
 deck_get_config <- function(file, path) {
   result <- .run_deckifyr_cli(c("get", file, path))
@@ -40,6 +45,18 @@ deck_get_config <- function(file, path) {
 #'   `"auto"` (the default) detects it from the document's own top-level
 #'   keys.
 #' @return The parsed CLI result (invisibly).
+#' @examples
+#' \dontrun{
+#' # Copy the bundled example into a scratch directory first -- deck_set_config()
+#' # writes to `file` in place.
+#' project_dir <- file.path(tempdir(), "my-deck")
+#' dir.create(project_dir)
+#' file.copy(
+#'   system.file("examples", "minimal-deck", "design.yaml", package = "deckifyr"),
+#'   file.path(project_dir, "design.yaml")
+#' )
+#' deck_set_config(file.path(project_dir, "design.yaml"), "colors.primary", "#2457A6")
+#' }
 #' @export
 deck_set_config <- function(file, path, value,
                              as_string = FALSE,

@@ -17,3 +17,9 @@ Delegates to \verb{deckifyr schema} in the bundled Python engine. This one
 is fully functional today: it dumps the pydantic-generated JSON
 Schema for \code{design}, \code{layouts}, or \code{presentation}.
 }
+\examples{
+\dontrun{
+schema <- deck_schema("design")
+schema$title
+}
+}

@@ -335,6 +335,26 @@ main use case is a status-indicator style (§7.8) turning `presentation.yaml`'s 
 `metadata.status`/`watermark` value ("demo") into the all-caps convention a status/watermark mark
 conventionally uses ("DEMO") without requiring the author to type it that way.
 
+A `colors:` entry may also be a **derivation** instead of a literal hex value, computing that
+token from another one via a simple HSL-space transform:
+
+```yaml
+colors:
+  primary: "#2457A6"
+  secondary:
+    base: primary        # a colors: token name, or a literal hex value
+    darken: 0.2           # exactly one of lighten/darken/saturate/desaturate/mix
+  tertiary:
+    base: primary
+    mix: accent            # blend toward another token/literal
+    weight: 0.5             # fraction of `mix` blended in (default 0.5); only valid with `mix`
+```
+
+`base`/`mix` follow the same "token or bare literal" convention as every other color field;
+derivations may chain to arbitrary depth (a derivation's `base` may itself be another
+derivation), and a circular chain is a build-time error. `lighten`/`darken`/`saturate`/
+`desaturate`/`weight` are all 0.0-1.0 fractions.
+
 ### 7.5 Example `layouts.yaml`
 
 ```yaml

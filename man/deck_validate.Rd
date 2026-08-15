@@ -24,3 +24,14 @@ resolve content -- see \code{deckifyr.cli}'s module docstring in the
 bundled Python source for what validation currently does and does not
 cover.
 }
+\examples{
+\dontrun{
+# Validate the bundled minimal example project (requires a provisioned
+# Python/uv/pyro toolchain -- see vignette("getting-started")).
+presentation <- system.file(
+  "examples", "minimal-deck", "presentation.yaml",
+  package = "deckifyr"
+)
+deck_validate(presentation)
+}
+}

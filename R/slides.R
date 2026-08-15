@@ -34,6 +34,14 @@
 #'   unaffected. Default `FALSE`.
 #' @return A list of slide summaries (invisibly): each has `id`,
 #'   `layout`, `element_count`, `has_notes`.
+#' @examples
+#' \dontrun{
+#' presentation <- system.file(
+#'   "examples", "minimal-deck", "presentation.yaml",
+#'   package = "deckifyr"
+#' )
+#' deck_list_slides(presentation)
+#' }
 #' @export
 deck_list_slides <- function(presentation, quiet = FALSE) {
   result <- .run_deckifyr_cli(c("slide", "list", presentation))
@@ -80,6 +88,22 @@ deck_list_slides <- function(presentation, quiet = FALSE) {
 #'   immediately `after`/`before` an existing slide id, or at a 0-based
 #'   `index`. Default (all `NULL`) appends the slide at the end.
 #' @return The CLI result (invisibly).
+#' @examples
+#' \dontrun{
+#' # Copy the bundled example into a scratch directory first -- slide
+#' # commands write to `presentation` in place.
+#' project_dir <- file.path(tempdir(), "my-deck")
+#' dir.create(project_dir)
+#' file.copy(
+#'   list.files(
+#'     system.file("examples", "minimal-deck", package = "deckifyr"),
+#'     full.names = TRUE
+#'   ),
+#'   project_dir
+#' )
+#' presentation <- file.path(project_dir, "presentation.yaml")
+#' deck_add_slide(presentation, id = "new-slide", layout = "blank")
+#' }
 #' @export
 deck_add_slide <- function(presentation, id, layout = NULL, notes = NULL,
                             elements = NULL, after = NULL, before = NULL,
@@ -106,6 +130,12 @@ deck_add_slide <- function(presentation, id, layout = NULL, notes = NULL,
 #' @param presentation Path to `presentation.yaml`.
 #' @param id The slide's id.
 #' @return The CLI result (invisibly).
+#' @examples
+#' \dontrun{
+#' # See deck_add_slide()'s example for setting up a scratch project_dir.
+#' presentation <- file.path(project_dir, "presentation.yaml")
+#' deck_remove_slide(presentation, id = "new-slide")
+#' }
 #' @export
 deck_remove_slide <- function(presentation, id) {
   result <- .run_deckifyr_cli(c("slide", "remove", presentation, id))
@@ -132,6 +162,12 @@ deck_remove_slide <- function(presentation, id) {
 #'   (same JSON encoding as [deck_add_slide()]'s `elements`), or `NULL`
 #'   (default) to leave it unchanged.
 #' @return The CLI result (invisibly).
+#' @examples
+#' \dontrun{
+#' # See deck_add_slide()'s example for setting up a scratch project_dir.
+#' presentation <- file.path(project_dir, "presentation.yaml")
+#' deck_update_slide(presentation, id = "new-slide", notes = "Remember to mention Q3.")
+#' }
 #' @export
 deck_update_slide <- function(presentation, id, layout = NULL, notes = NULL,
                                elements = NULL) {
@@ -167,6 +203,12 @@ deck_update_slide <- function(presentation, id, layout = NULL, notes = NULL,
 #'   0-based `index`. `after`/`before` naming `id` itself is an error
 #'   (there's no other copy of the slide to be relative to).
 #' @return The CLI result (invisibly).
+#' @examples
+#' \dontrun{
+#' # See deck_add_slide()'s example for setting up a scratch project_dir.
+#' presentation <- file.path(project_dir, "presentation.yaml")
+#' deck_move_slide(presentation, id = "new-slide", index = 0)
+#' }
 #' @export
 deck_move_slide <- function(presentation, id, after = NULL, before = NULL, index = NULL) {
   args <- c("slide", "move", presentation, id, .placement_args(after, before, index))

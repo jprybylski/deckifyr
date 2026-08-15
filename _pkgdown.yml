@@ -45,6 +45,8 @@ navbar:
       menu:
         - text: Examples
           href: articles/examples.html
+        - text: YAML configuration reference
+          href: articles/config-schema.html
         - text: Python engine
           href: articles/python-engine.html
 
@@ -54,6 +56,7 @@ articles:
     contents:
       - articles/getting-started
       - articles/examples
+      - articles/config-schema
       - articles/python-engine
 
 reference:

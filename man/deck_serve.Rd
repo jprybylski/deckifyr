@@ -20,3 +20,10 @@ Delegates to \verb{deckifyr serve} in the bundled Python engine.
 section 12's Phase 3 work, deliberately deferred until the CLI and
 schema stabilize (spec section 20, warning 5).
 }
+\examples{
+\dontrun{
+# Not implemented yet -- always errors today; shown for the intended
+# future usage.
+deck_serve()
+}
+}

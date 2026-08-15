@@ -9,6 +9,14 @@
 #' @param directory Target directory. Defaults to the current directory.
 #' @param force Overwrite existing files in `directory`. Default `FALSE`.
 #' @return A list describing the created files (invisibly).
+#' @examples
+#' \dontrun{
+#' # Scaffold a new project into a scratch directory (this mutates the
+#' # calling project's pyproject.toml and provisions a Python/uv
+#' # environment -- run it somewhere disposable, not the current project).
+#' project_dir <- file.path(tempdir(), "my-deck")
+#' initialize_deck_project(project_dir)
+#' }
 #' @export
 initialize_deck_project <- function(directory = ".", force = FALSE) {
   # Dependency versions are not pinned yet -- spec section 5.2 shows

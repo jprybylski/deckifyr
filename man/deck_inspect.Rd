@@ -16,3 +16,10 @@ A parsed list from the CLI's JSON output.
 Delegates to \verb{deckifyr inspect} in the bundled Python engine.
 \strong{Not implemented yet} -- see spec section 18, Phase 1/4.
 }
+\examples{
+\dontrun{
+# Not implemented yet -- always errors today; shown for the intended
+# future usage.
+deck_inspect("presentation.yaml")
+}
+}

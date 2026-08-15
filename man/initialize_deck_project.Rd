@@ -21,3 +21,12 @@ per deckifyr-specification.md section 5.2) and scaffolds
 \code{design.yaml}/\code{layouts.yaml}/\code{presentation.yaml} from the bundled
 minimal example into \code{directory}.
 }
+\examples{
+\dontrun{
+# Scaffold a new project into a scratch directory (this mutates the
+# calling project's pyproject.toml and provisions a Python/uv
+# environment -- run it somewhere disposable, not the current project).
+project_dir <- file.path(tempdir(), "my-deck")
+initialize_deck_project(project_dir)
+}
+}

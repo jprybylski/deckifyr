@@ -23,3 +23,9 @@ indices, e.g. \code{"colors.primary"} or \code{"slides[0].notes"}) works
 regardless of which of the three schemas (design/layouts/presentation)
 \code{file} is.
 }
+\examples{
+\dontrun{
+design <- system.file("examples", "minimal-deck", "design.yaml", package = "deckifyr")
+deck_get_config(design, "colors.primary")
+}
+}
