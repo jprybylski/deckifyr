@@ -1,0 +1,26 @@
+```{r}
+#| echo: false
+data(Theoph)
+# `Theoph$Subject` is the real column name in base R's built-in Theoph
+# dataset -- the variable names below are this fragment's own choice of
+# words for that data, not part of the dataset's schema.
+participants <- split(Theoph, Theoph$Subject)
+halflives <- sapply(participants, function(d) {
+  d <- d[order(d$Time), ]
+  peak_idx <- which.max(d$conc)
+  terminal <- d[d$Time > d$Time[peak_idx] & d$conc > 0, ]
+  fit <- lm(log(conc) ~ Time, data = terminal)
+  k <- -coef(fit)[["Time"]]
+  log(2) / k
+})
+mean_half_life <- round(mean(halflives), 1)
+```
+
+Fitting a simple log-linear elimination model to each of the 12
+participants' terminal-phase concentrations in the built-in `Theoph`
+dataset gives a population mean elimination half-life of
+**`r mean_half_life` hours** -- consistent with theophylline's
+established ~8-hour half-life.
+
+This is a simple per-participant regression for illustration, not a
+population PK model.

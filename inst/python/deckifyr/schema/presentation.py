@@ -51,6 +51,24 @@ class ReportifyrConfig(BaseModel):
     fail_on_missing_metadata: bool = True
 
 
+class QuartoConfig(BaseModel):
+    """Execution settings for `type: quarto` elements (spec section 8.1,
+    issue #3), project-relative to `presentation.yaml` where a path is
+    involved. `None` on `BuildConfig.quarto` (the default) means every
+    setting below's own default -- read lazily by
+    `deckifyr.pptx.compose`'s `_build_quarto_context`, only when a build
+    actually contains a `quarto` element, same as `ReportifyrConfig`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The `quarto` binary to invoke -- a bare name resolved via PATH by
+    # default, or a full path for a non-PATH install.
+    binary: str = "quarto"
+    timeout_seconds: float = 60
+    max_output_bytes: int = 5_000_000
+
+
 class BuildConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,6 +77,7 @@ class BuildConfig(BaseModel):
     manifest: str | None = None
     previews: bool = False
     reportifyr: ReportifyrConfig | None = None
+    quarto: QuartoConfig | None = None
 
 
 class Slide(BaseModel):

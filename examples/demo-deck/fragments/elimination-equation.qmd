@@ -1,0 +1,5 @@
+The single-dose, first-order elimination model underlying this estimate:
+
+$$C(t) = C_0\, e^{-k_e t}$$
+
+$$t_{1/2} = \frac{\ln 2}{k_e}$$

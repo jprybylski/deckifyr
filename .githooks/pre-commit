@@ -23,7 +23,9 @@
 #   # rasterize each PDF page at 110dpi (matches the existing PNGs'
 #   # 1467x825 -- see e.g. `python3 -c "import fitz; ..."` using
 #   # page.get_pixmap(dpi=110)) into man/figures/demo-deck-{title,
-#   # concentration-time,pk-summary,closing}.png, in slide order
+#   # concentration-time,pk-interpretation,pk-summary,closing}.png, in
+#   # slide order -- building this deck needs the external `quarto`
+#   # binary and Rscript on PATH (see examples/demo-deck/README.md)
 #   cp examples/demo-deck/build/demo-deck.pptx man/figures/demo-deck.pptx
 #
 # Add a case here whenever a new rendered-doc-asset group is added,

@@ -23,11 +23,20 @@ from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_POINT, parse_length
 
 # Element types this slice's compositor can actually place on a slide.
-# Everything else in spec section 7.7's `type` enum (quarto) is
-# later-phase work (deckifyr-specification.md section 18) -- raising a
-# clear error here keeps that boundary explicit instead of silently
-# dropping content (spec section 20 warning 7).
-SUPPORTED_ELEMENT_TYPES = {"text", "markdown", "image", "shape", "group", "table", "reportifyr"}
+# Everything else in spec section 7.7's `type` enum is later-phase work
+# (deckifyr-specification.md section 18) -- raising a clear error here
+# keeps that boundary explicit instead of silently dropping content
+# (spec section 20 warning 7).
+SUPPORTED_ELEMENT_TYPES = {
+    "text",
+    "markdown",
+    "image",
+    "shape",
+    "group",
+    "table",
+    "reportifyr",
+    "quarto",
+}
 
 # Reserved ids for `design.yaml`'s `furniture` block (spec section 7.8),
 # synthesized fresh per slide by `_furniture_layout` below. The
@@ -379,6 +388,25 @@ def _resolve_element(
             "deckifyr-specification.md section 18)"
         )
 
+    if element_type == "quarto":
+        # A `quarto` element's content is its fragment file, not an
+        # inline `value` (spec section 8.1's own example: `source:
+        # fragments/exposure-interpretation.qmd`) -- reject the wrong
+        # field the same way `_has_content` would otherwise silently
+        # accept a stray `value` as if it were real content.
+        quarto_source = merged.get("source")
+        if quarto_source is None:
+            raise ContentValidationError(
+                f"slide {slide_id!r}, element {element_id!r}: a 'quarto' "
+                "element requires a 'source' (a .qmd path, spec section "
+                "8.1), not an inline 'value'"
+            )
+        if not str(quarto_source).endswith(".qmd"):
+            raise ContentValidationError(
+                f"slide {slide_id!r}, element {element_id!r}: a 'quarto' "
+                f"element's source must be a .qmd file, got {quarto_source!r}"
+            )
+
     box = merged.get("box")
     if box is None:
         raise ContentValidationError(
@@ -388,7 +416,7 @@ def _resolve_element(
 
     style = (
         resolve_text_style(design, merged.get("style"))
-        if element_type in ("text", "markdown", "table")
+        if element_type in ("text", "markdown", "table", "quarto")
         else None
     )
     shape_style = (
@@ -460,7 +488,18 @@ def _resolve_element(
         style=style,
         fit=fit if fit is not None else design.defaults.image_fit,
         overflow=overflow if overflow is not None else design.defaults.overflow,
-        render_mode=render_mode if render_mode is not None else "native",
+        # Every other element type always composes natively, so its
+        # `render_mode` field is manifest bookkeeping only -- `"native"`
+        # is a safe, meaningless-elsewhere default. A `quarto` element
+        # actually branches on this value (spec section 8's render-mode
+        # table), so its unset default is `"auto"` -- the "convenient
+        # defaults by content type" mode, not a forced native/text
+        # rendering that would mangle an equation-heavy fragment.
+        render_mode=(
+            render_mode
+            if render_mode is not None
+            else ("auto" if element_type == "quarto" else "native")
+        ),
         alt_text=merged.get("alt_text"),
         required=required,
         footer_placement=footer_placement,

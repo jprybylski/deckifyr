@@ -5,15 +5,16 @@ content -- a local file, a `{rpfy}:` reportifyr magic string, a Quarto
 fragment, an inline Markdown string, or a CSV/Parquet table.
 `LocalFileResolver` (`deckifyr.resolvers.local`), `InlineResolver`
 (`deckifyr.resolvers.inline`), `TableResolver`
-(`deckifyr.resolvers.table`), and `ReportifyrResolver`
-(`deckifyr.resolvers.reportifyr`) are real -- they cover the `image`,
-`text`/`markdown`, `table`, and `reportifyr` element types
-`deckifyr.pptx` composes today. The Quarto resolver from spec section
-9.2's initial list is still Phase 2 work (deckifyr-specification.md
-section 18) and is not implemented yet. Nothing here reuses reportifyr's
+(`deckifyr.resolvers.table`), `ReportifyrResolver`
+(`deckifyr.resolvers.reportifyr`), and `QuartoResolver`
+(`deckifyr.resolvers.quarto`) are real -- they cover the `image`,
+`text`/`markdown`, `table`, `reportifyr`, and `quarto` element types
+`deckifyr.pptx` composes today. Nothing here reuses reportifyr's
 own DOCX fill layer (spec section 9.1) -- only its documented `{rpfy}:`
 string contract and metadata sidecars; see `deckifyr.resolvers.reportifyr`'s
-own module docstring for what was checked before deciding that.
+own module docstring for what was checked before deciding that. Nor does
+`QuartoResolver` reuse Quarto's own PPTX writer (spec section 20 warning
+2) -- see `deckifyr.resolvers.quarto`'s own module docstring.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ class ContentResolver(Protocol):
 # them already defined on this partially-initialized module.
 from deckifyr.resolvers.inline import InlineResolver  # noqa: E402
 from deckifyr.resolvers.local import LocalFileResolver  # noqa: E402
+from deckifyr.resolvers.quarto import QuartoArtifact, QuartoResolver  # noqa: E402
 from deckifyr.resolvers.reportifyr import (  # noqa: E402
     ReportifyrArtifact,
     ReportifyrResolver,
@@ -76,4 +78,6 @@ __all__ = [
     "build_footer_lines",
     "load_standard_footnotes",
     "split_scripts",
+    "QuartoResolver",
+    "QuartoArtifact",
 ]

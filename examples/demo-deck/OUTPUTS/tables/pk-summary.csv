@@ -1,4 +1,4 @@
-Subject,Weight (kg),Dose (mg/kg),Cmax (mg/L),Tmax (hr)
+Participant,Weight (kg),Dose (mg/kg),Cmax (mg/L),Tmax (hr)
 1,79.6,4.02,10.50,1.12
 2,72.4,4.40,8.33,1.92
 3,70.5,4.53,8.20,1.02

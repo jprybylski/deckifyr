@@ -45,13 +45,15 @@ class UnitParseError(DeckifyrError):
 class ContentValidationError(DeckifyrError):
     """Raised when a slide plan references content the compiler can't yet
     resolve or compose: an unsupported element type (spec section 7.7's
-    `type` values not yet implemented -- quarto, see
-    deckifyr-specification.md section 18), a required element left
-    unresolved, missing required alt text (spec section 13's "Content
-    validation" category), or an unresolvable `{rpfy}:` reference
-    (missing/duplicate artifact, missing metadata sidecar, or a
-    `meta_type`/abbreviation not defined in the project's
-    `standard_footnotes.yaml` -- spec section 9.1).
+    `type` values not yet implemented, see deckifyr-specification.md
+    section 18), a required element left unresolved, missing required
+    alt text (spec section 13's "Content validation" category), an
+    unresolvable `{rpfy}:` reference (missing/duplicate artifact,
+    missing metadata sidecar, or a `meta_type`/abbreviation not defined
+    in the project's `standard_footnotes.yaml` -- spec section 9.1), or
+    a `quarto` element that fails its complexity limit, execution
+    timeout, or output-size limit, or whose render otherwise fails
+    (spec section 8.1, issue #3).
     """
 
     code = ErrorCode.CONTENT_VALIDATION

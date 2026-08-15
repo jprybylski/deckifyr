@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pyarrow>=14.0",
+    "pymupdf>=1.24",
 ]
 # `deckifyr.resolvers.table.TableResolver` imports pyarrow lazily, only
 # for `.parquet` sources -- a project using only CSV tables never pays
@@ -22,6 +23,18 @@ dev = [
 # Parquet path.
 tables = [
     "pyarrow>=14.0",
+]
+# `deckifyr.renderers.quarto` imports pymupdf lazily, only to rasterize a
+# `type: quarto` element rendered with `render_mode: svg`/`png` (spec
+# section 8.1) -- a project using only `render_mode: native` quarto
+# elements, or none at all, never pays for it. Rendering still requires
+# the external `quarto` binary itself (not a pip dependency, spec
+# section 14's manifest records its version) -- `dev` also pulls this in
+# so `tests/python` can exercise the svg/png path wherever `quarto` is
+# actually installed (see test_renderers_quarto.py's skip pattern,
+# mirroring tests/testthat/test-wiring.R's own uv/pyro skip).
+quarto = [
+    "pymupdf>=1.24",
 ]
 # Unused until Phase 3 (spec section 12) -- declared now so the extras
 # name is stable and doesn't need to be invented later.

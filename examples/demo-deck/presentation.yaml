@@ -13,10 +13,27 @@
 # deckifyr-specification.md section 9.1 and standard_footnotes.yaml in
 # this directory for where the footer text comes from).
 #
-# OUTPUTS/tables/pk-summary.csv is a per-subject summary (weight, dose,
+# OUTPUTS/tables/pk-summary.csv is a per-participant summary (weight, dose,
 # Cmax, Tmax) derived from that same Theoph dataset, exercising the
 # `table` element type and `deckifyr.resolvers.TableResolver` (spec
 # section 9.2).
+#
+# The `pk-interpretation` slide's `figure`/`note` elements are both
+# `type: quarto` (spec section 8.1, issue #3), reusing the same
+# `plot-with-note` layout zones the `concentration-time` slide's
+# reportifyr figure/markdown note already fill -- a `quarto` element
+# slots into an ordinary layout zone exactly like any other content
+# type. `fragments/elimination-equation.qmd` has no executable code, so
+# it needs only the `quarto`/Typst toolchain to render its display math
+# to `render_mode: png` (spec section 8's own "helpful for eg equations"
+# motivation, issue #3). `fragments/half-life-narrative.qmd` executes a
+# real R code chunk against the same built-in `Theoph` dataset the
+# figure and table above already use, fitting a simple log-linear
+# elimination model per participant -- `render_mode: native` is set
+# explicitly rather than left at `auto`, since `auto` would pick `png`
+# for a fragment with a code chunk (`deckifyr.renderers.quarto
+# .select_auto_render_mode`'s heuristic) but this chunk's own output is
+# just a short computed sentence, better left as real editable text.
 deckifyr: "0.1"
 design:
   base: design.yaml
@@ -81,12 +98,32 @@ slides:
         render_mode: native
         style: body
 
+  - id: pk-interpretation
+    layout: plot-with-note
+    elements:
+      title:
+        value: Elimination Half-Life
+      figure:
+        type: quarto
+        source: fragments/elimination-equation.qmd
+        render_mode: png
+        alt_text: >-
+          First-order elimination equation: concentration at time t equals
+          the initial concentration times e to the power of negative the
+          elimination rate constant times t; half-life equals the natural
+          log of 2 divided by the elimination rate constant.
+      note:
+        type: quarto
+        source: fragments/half-life-narrative.qmd
+        render_mode: native
+        style: body
+
   - id: pk-summary
     layout: blank
     elements:
       - id: table-title
         type: text
-        value: Per-Subject PK Summary
+        value: Per-Participant PK Summary
         box: {x: 0.9in, y: 0.5in, width: 11.5in, height: 0.65in}
         style: title
       - id: pk-table
