@@ -47,6 +47,24 @@ deckifyr's bundled Python environment; if it isn't, the server process
 exits immediately and that failure is surfaced with its captured stderr
 rather than a generic timeout.
 }
+\details{
+Refuses to launch at all if \code{host}:\code{port} is already occupied
+(\code{.port_is_open()}), rather than proceeding and letting
+\code{.wait_for_server()}'s readiness poll connect to whatever is already
+there. This is a real, confirmed failure mode, not a hypothetical: a
+\code{deckifyr_server} handle whose process tree wasn't fully torn down
+(fixed alongside this check -- \code{.launch_server_process()} now sets
+\code{cleanup_tree = TRUE} and \code{deck_stop_server()} calls \code{kill_tree()},
+since \verb{uv run -m deckifyr serve} is a real parent/child pair and
+killing only the tracked \code{uv} PID left the actual Python/uvicorn
+child running, orphaned, still bound to the port) left an old server
+listening on the default port; a second \code{deck_serve()} call at the
+same default port then had its own new process fail to bind (address
+already in use) while \code{.wait_for_server()} still reported success --
+because it was reconnecting to the \emph{old}, stale server the whole
+time, not the new one -- silently pointing the caller at the wrong
+project with no error at all.
+}
 \examples{
 \dontrun{
 server <- deck_serve(project = "my-deck")

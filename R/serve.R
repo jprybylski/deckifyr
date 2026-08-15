@@ -69,19 +69,57 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
     env = env_vars,
     stdout = "|",
     stderr = "|",
-    cleanup = TRUE
+    cleanup = TRUE,
+    # `uv run -m deckifyr serve ...` is a real parent/child pair, not one
+    # process exec-replacing itself into the other -- confirmed directly
+    # (spawn `uv run python -c 'time.sleep(30)'`, `pgrep -P` on the `uv`
+    # PID lists a separate live `python3` PID underneath it). `cleanup`
+    # alone only reaches the tracked `uv` PID; without `cleanup_tree`,
+    # letting this handle get GC'd (R session exit, object dropped
+    # without deck_stop_server()) kills `uv` but leaves the actual
+    # `python -m deckifyr`/uvicorn process running, orphaned, still bound
+    # to the port -- see deck_stop_server()'s own comment for the
+    # explicit-kill half of this same fix.
+    cleanup_tree = TRUE
   )
+}
+
+#' Check whether something is already listening on `host`:`port`
+#'
+#' A plain TCP-connect probe -- never reads or writes anything, just
+#' confirms a socket accepts connections. Shared by `.wait_for_server()`
+#' (polls until this turns `TRUE`) and `deck_serve()`'s own pre-flight
+#' check (refuses to launch when this is already `TRUE`, see that
+#' function's own comment for the real bug this guards against).
+#'
+#' @param host,port The address to probe.
+#' @return `TRUE`/`FALSE`.
+#' @keywords internal
+.port_is_open <- function(host, port) {
+  # A refused connection attempt is expected, not exceptional --
+  # socketConnection() both warns and errors on one, so the warning is
+  # suppressed too, not just the error caught.
+  conn <- tryCatch(
+    suppressWarnings(socketConnection(host = host, port = port, open = "r", timeout = 1)),
+    error = function(e) NULL
+  )
+  if (is.null(conn)) {
+    return(FALSE)
+  }
+  close(conn)
+  TRUE
 }
 
 #' Poll a `deckifyr serve` process until it accepts connections
 #'
-#' A plain TCP-connect liveness check against `host`/`port` -- it never
-#' reads or parses the HTTP response, just confirms something is listening
-#' (the server's real readiness is `GET /api/health`, but a successful
-#' connect is enough to know the socket is bound). Polls every 0.2s;
-#' each iteration also checks `process$is_alive()` first, so a process that
-#' crashed on startup (e.g. the `web` extra isn't installed) is reported
-#' immediately, with its captured stderr, rather than left to time out.
+#' A plain TCP-connect liveness check against `host`/`port` via
+#' `.port_is_open()` -- it never reads or parses the HTTP response, just
+#' confirms something is listening (the server's real readiness is
+#' `GET /api/health`, but a successful connect is enough to know the
+#' socket is bound). Polls every 0.2s; each iteration also checks
+#' `process$is_alive()` first, so a process that crashed on startup (e.g.
+#' the `web` extra isn't installed) is reported immediately, with its
+#' captured stderr, rather than left to time out.
 #'
 #' @param host,port The address `deck_serve()` bound.
 #' @param process The `processx::process` returned by
@@ -101,20 +139,15 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
       )
     }
 
-    # A refused connection attempt during ordinary polling is expected,
-    # not exceptional -- socketConnection() both warns and errors on one,
-    # so the warning is suppressed here too, not just the error caught.
-    conn <- tryCatch(
-      suppressWarnings(socketConnection(host = host, port = port, open = "r", timeout = 1)),
-      error = function(e) NULL
-    )
-    if (!is.null(conn)) {
-      close(conn)
+    if (.port_is_open(host, port)) {
       return(invisible(TRUE))
     }
 
     if (Sys.time() >= deadline) {
-      process$kill()
+      # kill_tree(), not kill() -- see deck_stop_server()'s own comment;
+      # a process abandoned here mid-startup is exactly as capable of
+      # being orphaned as one killed after a successful launch.
+      process$kill_tree()
       stop(
         sprintf(
           "deckifyr server did not become ready within %ss (host=%s, port=%s).",
@@ -138,6 +171,23 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' deckifyr's bundled Python environment; if it isn't, the server process
 #' exits immediately and that failure is surfaced with its captured stderr
 #' rather than a generic timeout.
+#'
+#' Refuses to launch at all if `host`:`port` is already occupied
+#' (`.port_is_open()`), rather than proceeding and letting
+#' `.wait_for_server()`'s readiness poll connect to whatever is already
+#' there. This is a real, confirmed failure mode, not a hypothetical: a
+#' `deckifyr_server` handle whose process tree wasn't fully torn down
+#' (fixed alongside this check -- `.launch_server_process()` now sets
+#' `cleanup_tree = TRUE` and `deck_stop_server()` calls `kill_tree()`,
+#' since `uv run -m deckifyr serve` is a real parent/child pair and
+#' killing only the tracked `uv` PID left the actual Python/uvicorn
+#' child running, orphaned, still bound to the port) left an old server
+#' listening on the default port; a second `deck_serve()` call at the
+#' same default port then had its own new process fail to bind (address
+#' already in use) while `.wait_for_server()` still reported success --
+#' because it was reconnecting to the *old*, stale server the whole
+#' time, not the new one -- silently pointing the caller at the wrong
+#' project with no error at all.
 #'
 #' @param project Path to the project directory to serve. Default `"."`.
 #' @param host Host to bind. Default `"127.0.0.1"`.
@@ -163,6 +213,22 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
                         presentation = "presentation.yaml",
                         open_browser = TRUE, timeout = 15) {
   project <- normalizePath(project, mustWork = TRUE)
+
+  if (.port_is_open(host, port)) {
+    stop(
+      sprintf(
+        paste(
+          "port %s on %s is already in use -- a previous deckifyr server",
+          "may still be running (call deck_stop_server() on its handle,",
+          "or find and stop the orphaned process manually), or something",
+          "else on this machine is using that port. Pass a different",
+          "`port` to deck_serve() to work around it in the meantime."
+        ),
+        port, host
+      ),
+      call. = FALSE
+    )
+  }
 
   python_src <- system.file("python", package = "deckifyr")
   if (!nzchar(python_src)) {
@@ -207,7 +273,14 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
 
 #' Stop a running deckifyr web server
 #'
-#' Kills the background process started by [deck_serve()].
+#' Kills the background process tree started by [deck_serve()] --
+#' `kill_tree()`, not `kill()`: `uv run -m deckifyr serve` is a real
+#' parent/child pair (`uv` spawns `python -m deckifyr`/uvicorn as a
+#' genuine child process, confirmed directly, not something that
+#' exec-replaces itself), so killing only the tracked top-level PID left
+#' the actual server running, orphaned, still bound to the port -- a
+#' real bug this fixes, not a hypothetical (see `deck_serve()`'s own
+#' pre-flight-port-check comment for the confusing symptom it caused).
 #'
 #' @param server A `deckifyr_server` object returned by [deck_serve()].
 #' @return `server`, invisibly.
@@ -224,7 +297,7 @@ deck_stop_server <- function(server) {
       call. = FALSE
     )
   }
-  server$process$kill()
+  server$process$kill_tree()
   cli::cli_alert_success("Stopped deckifyr server at {.url {server$url}}")
   invisible(server)
 }

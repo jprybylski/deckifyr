@@ -765,6 +765,47 @@ once reachable, `deck_serve()` opens the server's URL via
 `Suggests`-only soft dependency, `DESCRIPTION`) or `utils::browseURL()`
 otherwise.
 
+**`processx::process$kill()` only kills the top-level tracked PID, not
+its children -- a real bug this caused in `deck_stop_server()`, found
+via a live user report, not caught by this repo's own mocked test
+suite.** `deck_serve()` launches `uv run -m deckifyr serve ...`, and
+`uv run` is a genuine parent/child pair, not one process exec-replacing
+itself into the other -- confirmed directly (spawned `uv run python -c
+'time.sleep(30)'`, then `pgrep -P` on the `uv` PID listed a separate,
+live `python3` PID underneath it). `deck_stop_server()` originally
+called `server$process$kill()`, which only ever reached that top-level
+`uv` PID; the actual `python -m deckifyr`/uvicorn process survived as
+an orphan, still bound to the port. The next `deck_serve()` call at the
+same (default) port then had its own *new* process fail to bind
+("address already in use") while `.wait_for_server()`'s plain
+TCP-connect readiness check still reported success -- because it was
+reconnecting to the *old*, stale, orphaned server the whole time, not
+the new one. Net effect, exactly as reported: the R console printed a
+correct-looking `deckifyr_server` object naming the newly-requested
+project, while the browser/Viewer pane kept showing whatever project
+the leftover orphan actually served. Fixed two ways, both needed:
+`processx::process` exposes a distinct `kill_tree()` method (confirmed
+via `formals()`/method listing, not assumed) that `deck_stop_server()`
+now calls instead of `kill()`, and `.launch_server_process()`'s
+`processx::process$new()` call now also sets `cleanup_tree = TRUE`
+(mirroring `cleanup = TRUE`'s own GC-triggered safety net, but for the
+whole tree) so an abandoned handle doesn't leak the child either.
+*Second*, independent guard: `deck_serve()` now refuses to launch at
+all when `.port_is_open(host, port)` (a small helper factored out of
+`.wait_for_server()`'s own TCP-connect check) is already `TRUE` --
+raising a clear "port already in use" error before ever spawning a
+doomed process, so *any* leftover occupant of that port (a process this
+fix didn't clean up, e.g. from an R session that crashed before this
+fix existed, or genuinely something unrelated) fails loudly instead of
+silently misdirecting the caller the same way again. `tests/testthat/
+test-serve.R`'s mocked suite could not have caught this on its own --
+the fake `processx::process` stub the tests use never had a real child
+process to leak in the first place, only `tests/testthat/
+test-wiring.R`'s real end-to-end block (a genuine subprocess, genuinely
+killed and re-checked) would have, and even that only if it happened to
+restart a server at the same port after stopping one, which it didn't
+do before this fix.
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three
@@ -811,16 +852,15 @@ job/OS combination `check-r-package`'s composite action steps run
 under; keep both mechanisms in sync with `Additional_repositories`
 rather than trying to consolidate them into one.
 
-**`deckifyr.web` is still an intentionally empty package with only a
-docstring; `deckifyr.pptx` and, as of issue #3, `deckifyr.renderers` no
-longer are.** `deckifyr.web` corresponds to Phase 3 (spec §18), and spec
-§20 warning 5 specifically cautions against building the web editor
-before the CLI/schema stabilize. Read spec §12 before writing real code
-into it. `deckifyr.renderers.quarto` is real (see this file's own
-"Quarto integration" section below) but still honors spec §20 warning
-2's separate caution -- it never uses Quarto's own PPTX/presentation
-writer as the compositor; `deckifyr.pptx.compose` places Quarto's output
-exactly like any other resolved element.
+**`deckifyr.renderers.quarto` is real (see this file's own "Quarto
+integration" section below) but still honors spec §20 warning 2's
+separate caution -- it never uses Quarto's own PPTX/presentation writer
+as the compositor; `deckifyr.pptx.compose` places Quarto's output
+exactly like any other resolved element.** (`deckifyr.web` was the last
+package in this repo actually matching the "intentionally empty
+docstring-only package, spec §20 warning 5's caution against building
+it early" description this note used to make about it -- see this
+file's own "Web application" section above for what it is now.)
 
 **Reference-PPTX support is descoped, not deferred (spec §10.1/§21,
 decided): `deckifyr.pptx.compose` always uses `python-pptx`'s own

@@ -18,12 +18,13 @@
 \code{TRUE}, invisibly, once the server is reachable.
 }
 \description{
-A plain TCP-connect liveness check against \code{host}/\code{port} -- it never
-reads or parses the HTTP response, just confirms something is listening
-(the server's real readiness is \code{GET /api/health}, but a successful
-connect is enough to know the socket is bound). Polls every 0.2s;
-each iteration also checks \code{process$is_alive()} first, so a process that
-crashed on startup (e.g. the \code{web} extra isn't installed) is reported
-immediately, with its captured stderr, rather than left to time out.
+A plain TCP-connect liveness check against \code{host}/\code{port} via
+\code{.port_is_open()} -- it never reads or parses the HTTP response, just
+confirms something is listening (the server's real readiness is
+\code{GET /api/health}, but a successful connect is enough to know the
+socket is bound). Polls every 0.2s; each iteration also checks
+\code{process$is_alive()} first, so a process that crashed on startup (e.g.
+the \code{web} extra isn't installed) is reported immediately, with its
+captured stderr, rather than left to time out.
 }
 \keyword{internal}

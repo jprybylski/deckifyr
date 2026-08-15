@@ -45,10 +45,14 @@ test_that("deck_schema() defaults to 'design' and validates its choices", {
 
 # A minimal fake `processx::process` -- a plain list exposing just the
 # three methods deck_serve()/deck_stop_server()/.wait_for_server() call
-# (`is_alive()`, `kill()`, `read_error_lines()`), plus a `was_killed()`
-# test hook. `is_alive_values` is consumed one value per call to
-# `is_alive()`; once exhausted, the last value repeats (mirrors a process
-# settling into a final alive/dead state rather than oscillating).
+# (`is_alive()`, `kill_tree()`, `read_error_lines()`), plus a
+# `was_killed()` test hook. `is_alive_values` is consumed one value per
+# call to `is_alive()`; once exhausted, the last value repeats (mirrors a
+# process settling into a final alive/dead state rather than
+# oscillating). `kill_tree()`, not `kill()`, matches the real fix this
+# file covers: killing only the tracked `uv` PID left its actual
+# python/uvicorn child running, orphaned (see deck_stop_server()'s own
+# docs for the confirmed real bug).
 make_fake_process <- function(is_alive_values, stderr_lines = character(0)) {
   calls <- 0L
   killed <- FALSE
@@ -58,7 +62,7 @@ make_fake_process <- function(is_alive_values, stderr_lines = character(0)) {
       idx <- min(calls, length(is_alive_values))
       is_alive_values[[idx]]
     },
-    kill = function(...) {
+    kill_tree = function(...) {
       killed <<- TRUE
       invisible(TRUE)
     },
@@ -124,7 +128,16 @@ test_that("deck_serve() launches the expected uv invocation and returns a deckif
     get_venv_uv_paths = function() list(uv = "fake-uv", venv = "fake-venv"),
     .package = "pyro"
   )
-  local_mocked_bindings(socketConnection = function(...) textConnection(""))
+  # Two-phase: deck_serve()'s own pre-flight check must see the port as
+  # free (the first call) before it ever launches anything, then
+  # .wait_for_server()'s readiness poll (every call after) must see it
+  # as open once the fake process is "running".
+  socket_calls <- 0L
+  local_mocked_bindings(socketConnection = function(...) {
+    socket_calls <<- socket_calls + 1L
+    if (socket_calls == 1L) stop("connection refused")
+    textConnection("")
+  })
 
   captured <- NULL
   fake_process <- make_fake_process(TRUE)
@@ -158,6 +171,32 @@ test_that("deck_serve() launches the expected uv invocation and returns a deckif
       "--launcher", "r"
     )
   )
+})
+
+test_that("deck_serve() refuses to launch when the port is already occupied", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-port-busy-test")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+
+  # The port always looks open -- simulating a leftover/orphaned server
+  # (real bug: this used to let .wait_for_server() falsely report
+  # success by reconnecting to that stale server instead of the doomed
+  # new one, silently pointing the caller at the wrong project).
+  local_mocked_bindings(socketConnection = function(...) textConnection(""))
+
+  launched <- FALSE
+  local_mocked_bindings(
+    .launch_server_process = function(...) {
+      launched <<- TRUE
+      stop("must not be called -- the port pre-flight check should have stopped first")
+    }
+  )
+
+  expect_error(
+    deck_serve(project = project_dir, port = 8321, open_browser = FALSE),
+    "already in use"
+  )
+  expect_false(launched)
 })
 
 test_that("deck_stop_server() kills the process and reports success", {

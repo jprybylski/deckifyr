@@ -13,7 +13,14 @@ deck_stop_server(server)
 \code{server}, invisibly.
 }
 \description{
-Kills the background process started by \code{\link[=deck_serve]{deck_serve()}}.
+Kills the background process tree started by \code{\link[=deck_serve]{deck_serve()}} --
+\code{kill_tree()}, not \code{kill()}: \verb{uv run -m deckifyr serve} is a real
+parent/child pair (\code{uv} spawns \verb{python -m deckifyr}/uvicorn as a
+genuine child process, confirmed directly, not something that
+exec-replaces itself), so killing only the tracked top-level PID left
+the actual server running, orphaned, still bound to the port -- a
+real bug this fixes, not a hypothetical (see \code{deck_serve()}'s own
+pre-flight-port-check comment for the confusing symptom it caused).
 }
 \examples{
 \dontrun{
