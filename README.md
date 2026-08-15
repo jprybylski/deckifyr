@@ -1,4 +1,7 @@
-# deckifyr
+# deckifyr <img src="man/figures/logo.png" align="right" height="139" alt="" />
+
+[![CI](https://github.com/jprybylski/deckifyr/actions/workflows/ci.yml/badge.svg)](https://github.com/jprybylski/deckifyr/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jprybylski/deckifyr/graph/badge.svg)](https://codecov.io/gh/jprybylski/deckifyr)
 
 A declarative, code-first presentation compiler for
 [Quarto](https://quarto.org) content and

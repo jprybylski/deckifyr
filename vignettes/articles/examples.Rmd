@@ -1,0 +1,68 @@
+---
+title: "Examples"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+One complete, working example ships in
+[`examples/demo-deck/`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck):
+a real project you can `cd` into and build yourself. It's built from
+base R's built-in `Theoph` dataset, so no external data is needed, and
+it ships a pre-generated `OUTPUTS/` (the same figure/metadata sidecar
+[quartifyr's `examples/demo-report`](https://github.com/jprybylski/quartifyr/tree/main/examples/demo-report)
+produces from that dataset), so it builds immediately after a clone.
+
+## [`demo-deck`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck): a four-slide PK deck
+
+A small PK-style deck built entirely from `design.yaml`/`layouts.yaml`/
+`presentation.yaml` -- no manual slide editing. It exercises a real
+`{rpfy}:conc-time.png` reportifyr reference (resolved by
+`deckifyr.resolvers.ReportifyrResolver` against `OUTPUTS/` and its
+metadata sidecar, with a footer built from `standard_footnotes.yaml`), a
+`table` element resolved from a CSV into a native, fully-editable
+PowerPoint table with its own `table_styles` chrome, a two-zone
+`plot-with-note` layout, speaker notes, and `z_index`/`rotation` on a
+freeform closing slide.
+
+```bash
+uv run deckifyr build examples/demo-deck/presentation.yaml
+# -> examples/demo-deck/build/demo-deck.pptx, demo-deck.manifest.json
+```
+
+```r
+deck_build("examples/demo-deck/presentation.yaml")
+```
+
+Rendered output from a real `build/demo-deck.pptx`:
+
+<div style="display:flex; flex-wrap:wrap; gap:1rem; margin: 1rem 0;">
+<div><img src="../man/figures/demo-deck-title.png" alt="demo-deck title slide, showing a markdown heading and italic subtitle" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Title</p></div>
+<div><img src="../man/figures/demo-deck-concentration-time.png" alt="demo-deck concentration-time slide, showing a two-zone plot-with-note layout: a reportifyr-resolved figure on the left with a source footer, an interpretive note on the right" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Concentration-time profile (reportifyr figure)</p></div>
+<div><img src="../man/figures/demo-deck-pk-summary.png" alt="demo-deck per-subject PK summary slide, showing a native PowerPoint table with a blue header band and alternating row tint from a table_styles entry" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Per-subject PK summary (native table)</p></div>
+<div><img src="../man/figures/demo-deck-closing.png" alt="demo-deck closing slide, showing freeform text and a rotated logo image" width="330" loading="lazy"><p style="text-align:center; font-size:0.85em;">Closing (freeform, rotated logo)</p></div>
+</div>
+
+See [`examples/demo-deck/README.md`](https://github.com/jprybylski/deckifyr/tree/main/examples/demo-deck)
+for exactly where the figure and table data come from, and which
+`design.yaml`/`layouts.yaml` fields each slide exercises.
+
+## Starting your own project
+
+`deckifyr init` scaffolds the smaller, three-file
+[`inst/examples/minimal-deck/`](https://github.com/jprybylski/deckifyr/tree/main/inst/examples/minimal-deck)
+trio instead of `demo-deck` -- a minimal valid project to build on, not
+a demo of every feature:
+
+```bash
+uv run deckifyr init my-deck
+uv run deckifyr validate my-deck/presentation.yaml
+uv run deckifyr build my-deck/presentation.yaml
+```
+
+```r
+initialize_deck_project("my-deck")
+deck_validate("my-deck/presentation.yaml")
+deck_build("my-deck/presentation.yaml")
+```
