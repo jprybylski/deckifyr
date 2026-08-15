@@ -4,13 +4,23 @@
 \alias{deck_stop_server}
 \title{Stop a running deckifyr web server}
 \usage{
-deck_stop_server(server)
+deck_stop_server(server = NULL, port = NULL, host = "127.0.0.1")
 }
 \arguments{
-\item{server}{A \code{deckifyr_server} object returned by \code{\link[=deck_serve]{deck_serve()}}.}
+\item{server}{A \code{deckifyr_server} object returned by \code{\link[=deck_serve]{deck_serve()}}.
+Exactly one of \code{server}/\code{port} must be supplied.}
+
+\item{port}{Stop whatever deckifyr server is listening on this port
+instead, without needing its \code{deckifyr_server} object. Exactly one
+of \code{server}/\code{port} must be supplied.}
+
+\item{host}{Host to check when stopping by \code{port}. Default
+\code{"127.0.0.1"}, ignored when \code{server} is supplied (its own \verb{$host}
+is used instead).}
 }
 \value{
-\code{server}, invisibly.
+\code{server}, invisibly, when stopping by \code{server}; \code{invisible(NULL)}
+when stopping by \code{port} (there's no handle to return).
 }
 \description{
 Kills the background process tree started by \code{\link[=deck_serve]{deck_serve()}} --
@@ -22,9 +32,28 @@ the actual server running, orphaned, still bound to the port -- a
 real bug this fixes, not a hypothetical (see \code{deck_serve()}'s own
 pre-flight-port-check comment for the confusing symptom it caused).
 }
+\details{
+Pass \code{port} instead of \code{server} to stop a deckifyr server whose
+\code{deckifyr_server} handle no longer exists in this R session --
+unlike \code{shiny::runApp()}, which hangs the calling session so
+interrupting \emph{that} is what stops the app, \code{deck_serve()}
+deliberately returns control immediately (spec section 12.0's own
+\code{shiny::runApp()}-\emph{like}, not identical, mental model), so it's easy
+to lose track of the object (a session restart, an overwritten
+variable, ...) while the server itself keeps running. This form
+looks up whatever's listening on \code{host}:\code{port}
+(\code{.pids_listening_on_port()}) and refuses (with a clear error, not a
+silent no-op) to kill it unless its command line actually looks like
+a deckifyr server (\code{.pid_looks_like_deckifyr_server()}) -- it will
+never kill an unrelated process just because it happens to occupy
+that port.
+}
 \examples{
 \dontrun{
 server <- deck_serve(project = "my-deck")
 deck_stop_server(server)
+
+# Or, if you've lost the `server` object but know the port:
+deck_stop_server(port = 8000)
 }
 }

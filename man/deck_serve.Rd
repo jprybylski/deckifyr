@@ -10,7 +10,8 @@ deck_serve(
   port = 8000,
   presentation = "presentation.yaml",
   open_browser = TRUE,
-  timeout = 15
+  timeout = 15,
+  force = FALSE
 )
 }
 \arguments{
@@ -29,6 +30,10 @@ default browser. Default \code{TRUE}.}
 
 \item{timeout}{Seconds to wait for the server to become reachable before
 giving up and killing the orphaned process. Default \code{15}.}
+
+\item{force}{If \code{host}:\code{port} is already occupied by another deckifyr
+server, kill it first instead of erroring. Never kills a process that
+doesn't look like a deckifyr server, \code{force} or not. Default \code{FALSE}.}
 }
 \value{
 A \code{deckifyr_server} object (a list with class
@@ -64,10 +69,25 @@ already in use) while \code{.wait_for_server()} still reported success --
 because it was reconnecting to the \emph{old}, stale server the whole
 time, not the new one -- silently pointing the caller at the wrong
 project with no error at all.
+
+\code{force = TRUE} additionally handles the port already being occupied
+by an \emph{existing} deckifyr server (as opposed to a genuinely
+unrelated process, which it never touches, \code{force} or not): it looks
+up the occupant by port (\code{.pids_listening_on_port()}), confirms its
+command line actually looks like a deckifyr server
+(\code{.pid_looks_like_deckifyr_server()}), and kills it before
+proceeding -- the same "stop by port" mechanism \code{\link[=deck_stop_server]{deck_stop_server()}}
+exposes directly, useful here specifically because the \code{deckifyr_server}
+handle for that old server may no longer exist (a fresh R session, or
+one where the object was simply lost) even though the process itself
+is still running.
 }
 \examples{
 \dontrun{
 server <- deck_serve(project = "my-deck")
 deck_stop_server(server)
+
+# Restart on the same port without first tracking down the old handle:
+server <- deck_serve(project = "my-deck", force = TRUE)
 }
 }

@@ -34,11 +34,38 @@ later:
 deck_stop_server(server)
 ```
 
+Unlike `shiny::runApp()`, `deck_serve()` doesn't hang your R session --
+it's easy to lose track of the `server` object (a restarted session, an
+overwritten variable). If that happens, stop it by port instead, no
+object required:
+
+```r
+deck_stop_server(port = 8000)
+```
+
+This looks up whatever's actually listening on that port and confirms
+it looks like a deckifyr server before touching it -- it will refuse,
+with a clear error, rather than kill an unrelated process that happens
+to occupy the same port.
+
+Restarting on a port that's still held by an old deckifyr server (the
+same situation `deck_stop_server(port = )` fixes) is common enough
+that `deck_serve()` has its own shortcut -- `force = TRUE` kills the
+existing server first, automatically, then launches as normal:
+
+```r
+server <- deck_serve(project = "my-deck", force = TRUE)
+```
+
+Same safety guarantee as `deck_stop_server(port = )`: it only ever
+kills a process that looks like a deckifyr server, never just
+whatever's occupying the port.
+
 `deck_serve()` accepts `host`/`port` (default `127.0.0.1:8000`),
 `presentation` (default `"presentation.yaml"`, relative to `project`),
-`open_browser` (set `FALSE` to skip opening a window), and `timeout`
-(how long to wait for the server to become reachable). See
-`?deck_serve` for the full argument list.
+`open_browser` (set `FALSE` to skip opening a window), `timeout` (how
+long to wait for the server to become reachable), and `force` (above).
+See `?deck_serve` for the full argument list.
 
 The header always shows which project directory the running server is
 bound to -- useful since `deck_serve()`/`deckifyr serve` only ever

@@ -110,6 +110,157 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
   TRUE
 }
 
+#' Find the PID(s) of whatever process is listening on `port`
+#'
+#' Shells out to `lsof` (macOS/Linux) or PowerShell's
+#' `Get-NetTCPConnection` (Windows, unverified on a real Windows machine
+#' -- everything else in this file's port-by-PID helpers was confirmed
+#' against a real spawned process on macOS, see `deck_stop_server()`'s
+#' own docs) since neither base R nor `processx` expose a "who's
+#' listening on this port" lookup -- there's no `processx::process`
+#' handle to ask when the server wasn't launched by *this* R session
+#' (a lost/overwritten `deckifyr_server` object, or a fresh session
+#' entirely).
+#'
+#' @param port The port to look up.
+#' @return An integer vector of PIDs (usually length 0 or 1).
+#' @keywords internal
+.pids_listening_on_port <- function(port) {
+  if (identical(Sys.info()[["sysname"]], "Windows")) {
+    out <- suppressWarnings(system2(
+      "powershell",
+      c(
+        "-NoProfile", "-Command",
+        sprintf(
+          "(Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue).OwningProcess",
+          port
+        )
+      ),
+      stdout = TRUE, stderr = FALSE
+    ))
+  } else {
+    if (!nzchar(Sys.which("lsof"))) {
+      stop(
+        "`lsof` is required to find a process by port on this platform ",
+        "and wasn't found on PATH.",
+        call. = FALSE
+      )
+    }
+    out <- suppressWarnings(system2(
+      "lsof", c("-ti", sprintf("TCP:%d", port), "-sTCP:LISTEN"),
+      stdout = TRUE, stderr = FALSE
+    ))
+  }
+  out <- suppressWarnings(as.integer(trimws(out)))
+  out[!is.na(out)]
+}
+
+#' Does `pid`'s command line look like a `deckifyr serve` process?
+#'
+#' A same-process-tree safety check, not a strong guarantee -- just
+#' enough to refuse to touch a process that plainly isn't ours before
+#' [deck_serve()]'s `force = TRUE` or [deck_stop_server()]'s
+#' `port =`/`host =` form ever kill anything found by port alone rather
+#' than by a `processx` handle this session actually holds.
+#'
+#' @param pid A single PID.
+#' @return `TRUE`/`FALSE` (`FALSE` if the PID doesn't exist any more).
+#' @keywords internal
+.pid_looks_like_deckifyr_server <- function(pid) {
+  if (identical(Sys.info()[["sysname"]], "Windows")) {
+    cmd <- suppressWarnings(system2(
+      "powershell",
+      c(
+        "-NoProfile", "-Command",
+        sprintf(
+          "(Get-CimInstance Win32_Process -Filter \"ProcessId=%d\" -ErrorAction SilentlyContinue).CommandLine",
+          pid
+        )
+      ),
+      stdout = TRUE, stderr = FALSE
+    ))
+  } else {
+    cmd <- suppressWarnings(system2(
+      "ps", c("-o", "command=", "-p", as.character(pid)),
+      stdout = TRUE, stderr = FALSE
+    ))
+  }
+  cmd <- paste(cmd, collapse = " ")
+  nzchar(cmd) && grepl("deckifyr", cmd, fixed = TRUE) && grepl("serve", cmd, fixed = TRUE)
+}
+
+#' Kill a `deckifyr serve` process found by PID, plus its `uv run` parent
+#'
+#' `pid` is the *listening* process (`python -m deckifyr`/uvicorn, what
+#' `.pids_listening_on_port()` finds) -- its parent is ordinarily the
+#' `uv run` wrapper that spawned it (confirmed directly, see
+#' `deck_stop_server()`'s own docs on why `kill_tree()` exists at all).
+#' Since this PID wasn't necessarily launched by this R session, there's
+#' no `processx::process` handle and thus no `kill_tree()` to call --
+#' this walks up to the parent manually instead, only killing it if
+#' *its* command line also looks like a deckifyr server
+#' (`.pid_looks_like_deckifyr_server()`), so a coincidental unrelated
+#' parent process is never touched.
+#'
+#' @param pid The listening process's PID.
+#' @keywords internal
+.kill_deckifyr_server_pid <- function(pid) {
+  if (identical(Sys.info()[["sysname"]], "Windows")) {
+    # `/T` kills the whole process tree in one call -- no separate
+    # parent-lookup step needed on this platform.
+    system2("taskkill", c("/PID", as.character(pid), "/T", "/F"), stdout = FALSE, stderr = FALSE)
+    return(invisible(NULL))
+  }
+  ppid_raw <- suppressWarnings(system2(
+    "ps", c("-o", "ppid=", "-p", as.character(pid)),
+    stdout = TRUE, stderr = FALSE
+  ))
+  ppid <- suppressWarnings(as.integer(trimws(ppid_raw)))
+  tools::pskill(pid, signal = tools::SIGKILL)
+  if (length(ppid) == 1 && !is.na(ppid) && ppid > 1 && .pid_looks_like_deckifyr_server(ppid)) {
+    tools::pskill(ppid, signal = tools::SIGKILL)
+  }
+  invisible(NULL)
+}
+
+#' Stop whatever deckifyr server is listening on `host`:`port`, if any
+#'
+#' Shared by [deck_stop_server()]'s `port =` form and [deck_serve()]'s
+#' `force = TRUE` -- both need the same "find it, verify it's ours,
+#' kill it" sequence. Refuses (via `stop()`) to kill anything whose
+#' command line doesn't look like a deckifyr server, per-PID; never
+#' silently skips a non-deckifyr occupant, since that would leave the
+#' caller thinking the port is clear when it isn't.
+#'
+#' @param host,port The address to check.
+#' @return `TRUE` if something was found and killed, `FALSE` if nothing
+#'   was listening there at all.
+#' @keywords internal
+.stop_deckifyr_server_on_port <- function(host, port) {
+  pids <- .pids_listening_on_port(port)
+  if (length(pids) == 0) {
+    return(invisible(FALSE))
+  }
+  is_ours <- vapply(pids, .pid_looks_like_deckifyr_server, logical(1))
+  if (!all(is_ours)) {
+    stop(
+      sprintf(
+        paste(
+          "port %s on %s is in use by a process that doesn't look like a",
+          "deckifyr server (pid %s) -- refusing to kill it. Stop it",
+          "manually, or use a different port."
+        ),
+        port, host, paste(pids[!is_ours], collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  for (pid in pids) {
+    .kill_deckifyr_server_pid(pid)
+  }
+  invisible(TRUE)
+}
+
 #' Poll a `deckifyr serve` process until it accepts connections
 #'
 #' A plain TCP-connect liveness check against `host`/`port` via
@@ -189,6 +340,18 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' time, not the new one -- silently pointing the caller at the wrong
 #' project with no error at all.
 #'
+#' `force = TRUE` additionally handles the port already being occupied
+#' by an *existing* deckifyr server (as opposed to a genuinely
+#' unrelated process, which it never touches, `force` or not): it looks
+#' up the occupant by port (`.pids_listening_on_port()`), confirms its
+#' command line actually looks like a deckifyr server
+#' (`.pid_looks_like_deckifyr_server()`), and kills it before
+#' proceeding -- the same "stop by port" mechanism [deck_stop_server()]
+#' exposes directly, useful here specifically because the `deckifyr_server`
+#' handle for that old server may no longer exist (a fresh R session, or
+#' one where the object was simply lost) even though the process itself
+#' is still running.
+#'
 #' @param project Path to the project directory to serve. Default `"."`.
 #' @param host Host to bind. Default `"127.0.0.1"`.
 #' @param port Port to bind. Default `8000`.
@@ -199,6 +362,9 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #'   default browser. Default `TRUE`.
 #' @param timeout Seconds to wait for the server to become reachable before
 #'   giving up and killing the orphaned process. Default `15`.
+#' @param force If `host`:`port` is already occupied by another deckifyr
+#'   server, kill it first instead of erroring. Never kills a process that
+#'   doesn't look like a deckifyr server, `force` or not. Default `FALSE`.
 #' @return A `deckifyr_server` object (a list with class
 #'   `"deckifyr_server"`): `process` (the `processx::process`), `host`,
 #'   `port`, `url`, and `project`. Pass it to [deck_stop_server()] to shut
@@ -207,27 +373,51 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' \dontrun{
 #' server <- deck_serve(project = "my-deck")
 #' deck_stop_server(server)
+#'
+#' # Restart on the same port without first tracking down the old handle:
+#' server <- deck_serve(project = "my-deck", force = TRUE)
 #' }
 #' @export
 deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
                         presentation = "presentation.yaml",
-                        open_browser = TRUE, timeout = 15) {
+                        open_browser = TRUE, timeout = 15, force = FALSE) {
   project <- normalizePath(project, mustWork = TRUE)
 
   if (.port_is_open(host, port)) {
-    stop(
-      sprintf(
-        paste(
-          "port %s on %s is already in use -- a previous deckifyr server",
-          "may still be running (call deck_stop_server() on its handle,",
-          "or find and stop the orphaned process manually), or something",
-          "else on this machine is using that port. Pass a different",
-          "`port` to deck_serve() to work around it in the meantime."
+    if (!isTRUE(force)) {
+      stop(
+        sprintf(
+          paste(
+            "port %s on %s is already in use -- a previous deckifyr server",
+            "may still be running (call deck_stop_server() on its handle,",
+            "deck_stop_server(port = %s), or pass force = TRUE to kill it",
+            "automatically), or something else on this machine is using",
+            "that port. Pass a different `port` to deck_serve() to work",
+            "around it in the meantime."
+          ),
+          port, host, port
         ),
-        port, host
-      ),
-      call. = FALSE
-    )
+        call. = FALSE
+      )
+    }
+    # .stop_deckifyr_server_on_port() itself refuses (via stop()) to
+    # kill anything that doesn't look like a deckifyr server -- force
+    # only ever means "don't ask before killing *our own* leftover
+    # server", never "kill whatever's there".
+    .stop_deckifyr_server_on_port(host, port)
+    deadline <- Sys.time() + 5
+    while (.port_is_open(host, port)) {
+      if (Sys.time() >= deadline) {
+        stop(
+          sprintf(
+            "port %s on %s did not free up after killing the existing deckifyr server.",
+            port, host
+          ),
+          call. = FALSE
+        )
+      }
+      Sys.sleep(0.2)
+    }
   }
 
   python_src <- system.file("python", package = "deckifyr")
@@ -282,24 +472,70 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
 #' real bug this fixes, not a hypothetical (see `deck_serve()`'s own
 #' pre-flight-port-check comment for the confusing symptom it caused).
 #'
+#' Pass `port` instead of `server` to stop a deckifyr server whose
+#' `deckifyr_server` handle no longer exists in this R session --
+#' unlike `shiny::runApp()`, which hangs the calling session so
+#' interrupting *that* is what stops the app, `deck_serve()`
+#' deliberately returns control immediately (spec section 12.0's own
+#' `shiny::runApp()`-*like*, not identical, mental model), so it's easy
+#' to lose track of the object (a session restart, an overwritten
+#' variable, ...) while the server itself keeps running. This form
+#' looks up whatever's listening on `host`:`port`
+#' (`.pids_listening_on_port()`) and refuses (with a clear error, not a
+#' silent no-op) to kill it unless its command line actually looks like
+#' a deckifyr server (`.pid_looks_like_deckifyr_server()`) -- it will
+#' never kill an unrelated process just because it happens to occupy
+#' that port.
+#'
 #' @param server A `deckifyr_server` object returned by [deck_serve()].
-#' @return `server`, invisibly.
+#'   Exactly one of `server`/`port` must be supplied.
+#' @param port Stop whatever deckifyr server is listening on this port
+#'   instead, without needing its `deckifyr_server` object. Exactly one
+#'   of `server`/`port` must be supplied.
+#' @param host Host to check when stopping by `port`. Default
+#'   `"127.0.0.1"`, ignored when `server` is supplied (its own `$host`
+#'   is used instead).
+#' @return `server`, invisibly, when stopping by `server`; `invisible(NULL)`
+#'   when stopping by `port` (there's no handle to return).
 #' @examples
 #' \dontrun{
 #' server <- deck_serve(project = "my-deck")
 #' deck_stop_server(server)
+#'
+#' # Or, if you've lost the `server` object but know the port:
+#' deck_stop_server(port = 8000)
 #' }
 #' @export
-deck_stop_server <- function(server) {
-  if (!inherits(server, "deckifyr_server")) {
+deck_stop_server <- function(server = NULL, port = NULL, host = "127.0.0.1") {
+  if (!is.null(server) && !is.null(port)) {
+    stop("supply exactly one of `server` or `port`, not both.", call. = FALSE)
+  }
+
+  if (!is.null(server)) {
+    if (!inherits(server, "deckifyr_server")) {
+      stop(
+        "`server` must be a `deckifyr_server` object returned by deck_serve().",
+        call. = FALSE
+      )
+    }
+    server$process$kill_tree()
+    cli::cli_alert_success("Stopped deckifyr server at {.url {server$url}}")
+    return(invisible(server))
+  }
+
+  if (is.null(port)) {
+    stop("supply either `server` (a deckifyr_server object) or `port`.", call. = FALSE)
+  }
+
+  found <- .stop_deckifyr_server_on_port(host, port)
+  if (!isTRUE(found)) {
     stop(
-      "`server` must be a `deckifyr_server` object returned by deck_serve().",
+      sprintf("nothing is listening on port %s on %s.", port, host),
       call. = FALSE
     )
   }
-  server$process$kill_tree()
-  cli::cli_alert_success("Stopped deckifyr server at {.url {server$url}}")
-  invisible(server)
+  cli::cli_alert_success("Stopped deckifyr server on port {port}")
+  invisible(NULL)
 }
 
 #' @export

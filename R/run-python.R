@@ -29,6 +29,14 @@ Sys.which <- NULL
 # TCP-connect readiness check.
 socketConnection <- NULL
 
+# Same seam, same reason, for `R/serve.R`'s port-by-PID helpers
+# (`.pids_listening_on_port()`/`.pid_looks_like_deckifyr_server()`/
+# `.kill_deckifyr_server_pid()`), which shell out via unqualified
+# `system2()` (`lsof`/`ps`/`taskkill`/`powershell`) to find and kill a
+# deckifyr server process this R session doesn't hold a `processx`
+# handle for.
+system2 <- NULL
+
 #' Invoke the bundled Python CLI via pyro
 #'
 #' Internal helper every exported `deck_*()`/`initialize_deck_project()`
