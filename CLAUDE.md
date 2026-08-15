@@ -39,7 +39,7 @@ learned while building the scaffold.
 | `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, `Slide.notes`, and reportifyr footers (§9.1) -- Phase 1 and Phase 2's Quarto slice (§18, issue #3) are done |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1), and `QuartoResolver` (fragment execution, spec §9.2/§8.1) are real |
 | `deckifyr.renderers.quarto` (Quarto integration, spec §8/§8.1, issue #3) | Real, tested against a live `quarto` install -- see this file's own "Quarto integration" section below |
-| `deckifyr.web` (spec §12) | Not started -- Phase 3 |
+| `deckifyr.web` (spec §12) | Real: FastAPI backend (`deckifyr.web.app`/`deckifyr.web.jobs`) + a built React/Konva frontend, CLI `serve`, R `deck_serve()`/`deck_stop_server()` -- see this file's own "Web application" section below |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
 geometry validation today. `deckifyr build presentation.yaml` validates
@@ -658,6 +658,154 @@ never fires during automated test runs (testthat sessions are
 non-interactive) -- don't remove that gate to make a test "more
 realistic"; it's what keeps CI from ever actually invoking Homebrew.
 
+**The web application (spec §12, issue #2) is real: a FastAPI backend
+(`deckifyr.web.app`/`deckifyr.web.jobs`) serving a built React/
+TypeScript + react-konva frontend, `deckifyr serve`/`deck_serve()` as
+its entry points.** `deckifyr/projectio.py` is a new module extracted
+out of `cli.py` specifically to make this possible without a second
+implementation -- the same "mechanism in its own module, orchestration
+in `cli.py`" split `deckifyr.plan`/`deckifyr.editor` already
+established, moving `load_project`'s schema/geometry validation and the
+`get`/`set`/`slide` commands' shared `read_yaml`/`write_yaml`/
+`parse_json_arg`/`validate_and_write_presentation` helpers into a
+module with zero argparse/JSON-envelope code of its own -- its own
+docstring says so explicitly ("this module exists as its own thing
+specifically so a forthcoming `deckifyr.web`... can load/validate/write
+the same project files without importing `deckifyr.cli` for it"), and
+`deckifyr.web.app` is exactly that forthcoming caller now realized:
+`create_app`/`patch_element`/`put_config` all call straight into
+`projectio`/`editor`, never re-deriving path resolution or validation.
+`create_app(project_root, presentation_name)` binds to one project root
+and one `presentation.yaml` for the lifetime of the process -- matching
+spec §12.0's own "not a website for a general audience" framing
+(`deck_serve()`'s single-project, launched-from-an-IDE-session model,
+the same mental model as `shiny::runApp()`) -- and every route resolves
+`design.yaml`/`layouts.yaml` off that one bound presentation via
+`presentation.design.base`/`presentation.layouts`, the same resolution
+`projectio.load_project` already does elsewhere. Handlers return plain
+`dict[str, Any]` (`app.py`'s own docstring), not a second, parallel
+pydantic response-model layer restating what `deckifyr.schema` already
+defines. `POST /api/build` never composes in-process -- it hands off to
+`deckifyr.web.jobs.JobManager.submit_build`, which runs a real `python
+-m deckifyr --json build ...` subprocess on a background thread and
+polls it, honoring spec §12.0's own warning that "FastAPI background
+tasks are not a substitute for a durable or isolated rendering worker"
+by never composing inside the request process at all; `JobManager
+._run_build` reuses the CLI's own stdout-JSON-on-success/stderr-JSON-
+on-failure handshake (the same one `R/run-python.R` relies on,
+documented elsewhere in this file) rather than inventing a second error
+format. The artifact-download route (`GET /api/jobs/{id}/artifacts
+/{key}`) only ever looks `key` up in `Job.artifacts`, a dict
+`JobManager` itself populated from that job's own build result
+(`pptx`/`manifest`/`preview-N` keys) -- never a raw filesystem path
+taken from the request, so a request can't reach any file outside what
+that job actually produced (`jobs.py`'s own docstring is explicit about
+this). `cli.py`'s `_cmd_serve` imports `uvicorn` lazily, inside a
+`try`/`except ImportError` that raises a clear `DeckifyrError` pointing
+at the optional `web` extra -- the same posture `deckifyr.resolvers
+.table`'s lazy `import pyarrow.parquet` (Parquet table sources) and
+`deckifyr.renderers.quarto`'s lazy `import pymupdf` (PNG/SVG
+rasterization) already established for their own optional dependencies,
+so every other subcommand keeps working without `fastapi`/`uvicorn`
+installed. On the frontend, `web/src/components/SlideCanvas.tsx`'s own
+`DRAGGABLE_TYPES` is `text`/`markdown`/`image` -- those three render as
+real Konva `Group`s that can be dragged, resized, and rotated
+(committing back through `PATCH /api/slides/{slide}/elements
+/{element}`); `shape`/`group`/`table`/`reportifyr`/`quarto` elements
+render as a static, labeled, dashed placeholder box, per that
+component's own module comment naming this as this project's deliberate
+scope. `image` is draggable/resizable/rotatable like text, but still
+renders as a labeled placeholder rather than the real picture --
+confirmed against both the component and the API it calls: `GET
+/api/plan` (`app.py`'s `_serialize_element`) only ever returns an image
+element's `source` path (`deckifyr.plan.ResolvedElement.source`), never
+its pixels, and there is no route anywhere in `app.py` that serves a
+project image's bytes, so the canvas has nothing to paint even though
+the interaction chrome around it is real. `ConfigEditor.tsx` edits
+`design`/`layouts`/`presentation` as pretty-printed JSON in a plain
+`<textarea>`, not YAML and not a schema-driven form -- its own module
+comment gives the reasoning: `GET`/`PUT /api/config/{doc}` (`app.py`'s
+`get_config`/`put_config`) are already JSON-native end to end, so a
+YAML stringify/parse dependency would only buy cosmetic parity with the
+on-disk file's own syntax, not a functional need this editor has, and a
+real YAML round trip (comments, anchors, block scalars) is a much
+bigger dependency surface than this repo's own low-dependency precedent
+(`colorsys` over a color-math library) was willing to clear for a much
+smaller win -- server-side validation (`PUT`'s `model_validate`/
+`validate_and_write_presentation`) still rejects a bad edit before it's
+written, same as `deckifyr set`. A schema-driven form generated from
+`GET /api/schemas/{doc}` is documented in that same file as explicit
+future scope, not built here. The built frontend under `inst/python
+/deckifyr/web/static/` (`index.html` + hashed `assets/*.js`/`*.css`) is
+committed generated output, the same posture `man/figures/*.png`
+already has -- neither `pip install` nor `R CMD build`/`R CMD INSTALL`
+can run an `npm run build` at install time, so the built artifacts have
+to already be on disk for `deckifyr.web.app.create_app`'s
+`StaticFiles` mount to find; `pyproject.toml`'s `[tool.setuptools
+.package-data]` (`"deckifyr.web" = ["static/**/*"]`) is what actually
+ships them inside the wheel. On the R side, `deck_serve()` cannot reuse
+`.run_deckifyr_cli()` -- that helper is fully synchronous
+(`pyro::run_python_script()` blocks until the subprocess exits) and
+would hang forever against a long-running server, so `R/serve.R`
+launches Python in the background via `processx::process$new()`
+instead, wrapped in its own one-line `.launch_server_process()`
+function rather than called directly -- confirmed the reason in that
+function's own doc comment: `testthat::local_mocked_bindings()` can
+only replace a binding that already exists as a named object, and
+`process$new` is an R6 generator method rather than a plain function
+binding, so it can't be mocked directly (mocking `new` via `.package =
+"processx"` was tried and errors with "Can't find binding for `new`").
+Readiness is polled via `.wait_for_server()`'s plain TCP connect
+against `host`/`port`, itself built on a new `socketConnection <- NULL`
+seam appended to `R/run-python.R`'s existing NULL-seam block (the same
+`testthat`-mockability trick that block's own comment already documents
+for `system.file`/`interactive`/`system`/`Sys.info`/`Sys.which`) -- and
+once reachable, `deck_serve()` opens the server's URL via
+`rstudioapi::viewer()` when running inside RStudio (a new
+`Suggests`-only soft dependency, `DESCRIPTION`) or `utils::browseURL()`
+otherwise.
+
+**`processx::process$kill()` only kills the top-level tracked PID, not
+its children -- a real bug this caused in `deck_stop_server()`, found
+via a live user report, not caught by this repo's own mocked test
+suite.** `deck_serve()` launches `uv run -m deckifyr serve ...`, and
+`uv run` is a genuine parent/child pair, not one process exec-replacing
+itself into the other -- confirmed directly (spawned `uv run python -c
+'time.sleep(30)'`, then `pgrep -P` on the `uv` PID listed a separate,
+live `python3` PID underneath it). `deck_stop_server()` originally
+called `server$process$kill()`, which only ever reached that top-level
+`uv` PID; the actual `python -m deckifyr`/uvicorn process survived as
+an orphan, still bound to the port. The next `deck_serve()` call at the
+same (default) port then had its own *new* process fail to bind
+("address already in use") while `.wait_for_server()`'s plain
+TCP-connect readiness check still reported success -- because it was
+reconnecting to the *old*, stale, orphaned server the whole time, not
+the new one. Net effect, exactly as reported: the R console printed a
+correct-looking `deckifyr_server` object naming the newly-requested
+project, while the browser/Viewer pane kept showing whatever project
+the leftover orphan actually served. Fixed two ways, both needed:
+`processx::process` exposes a distinct `kill_tree()` method (confirmed
+via `formals()`/method listing, not assumed) that `deck_stop_server()`
+now calls instead of `kill()`, and `.launch_server_process()`'s
+`processx::process$new()` call now also sets `cleanup_tree = TRUE`
+(mirroring `cleanup = TRUE`'s own GC-triggered safety net, but for the
+whole tree) so an abandoned handle doesn't leak the child either.
+*Second*, independent guard: `deck_serve()` now refuses to launch at
+all when `.port_is_open(host, port)` (a small helper factored out of
+`.wait_for_server()`'s own TCP-connect check) is already `TRUE` --
+raising a clear "port already in use" error before ever spawning a
+doomed process, so *any* leftover occupant of that port (a process this
+fix didn't clean up, e.g. from an R session that crashed before this
+fix existed, or genuinely something unrelated) fails loudly instead of
+silently misdirecting the caller the same way again. `tests/testthat/
+test-serve.R`'s mocked suite could not have caught this on its own --
+the fake `processx::process` stub the tests use never had a real child
+process to leak in the first place, only `tests/testthat/
+test-wiring.R`'s real end-to-end block (a genuine subprocess, genuinely
+killed and re-checked) would have, and even that only if it happened to
+restart a server at the same port after stopping one, which it didn't
+do before this fix.
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three
@@ -704,16 +852,15 @@ job/OS combination `check-r-package`'s composite action steps run
 under; keep both mechanisms in sync with `Additional_repositories`
 rather than trying to consolidate them into one.
 
-**`deckifyr.web` is still an intentionally empty package with only a
-docstring; `deckifyr.pptx` and, as of issue #3, `deckifyr.renderers` no
-longer are.** `deckifyr.web` corresponds to Phase 3 (spec §18), and spec
-§20 warning 5 specifically cautions against building the web editor
-before the CLI/schema stabilize. Read spec §12 before writing real code
-into it. `deckifyr.renderers.quarto` is real (see this file's own
-"Quarto integration" section below) but still honors spec §20 warning
-2's separate caution -- it never uses Quarto's own PPTX/presentation
-writer as the compositor; `deckifyr.pptx.compose` places Quarto's output
-exactly like any other resolved element.
+**`deckifyr.renderers.quarto` is real (see this file's own "Quarto
+integration" section below) but still honors spec §20 warning 2's
+separate caution -- it never uses Quarto's own PPTX/presentation writer
+as the compositor; `deckifyr.pptx.compose` places Quarto's output
+exactly like any other resolved element.** (`deckifyr.web` was the last
+package in this repo actually matching the "intentionally empty
+docstring-only package, spec §20 warning 5's caution against building
+it early" description this note used to make about it -- see this
+file's own "Web application" section above for what it is now.)
 
 **Reference-PPTX support is descoped, not deferred (spec §10.1/§21,
 decided): `deckifyr.pptx.compose` always uses `python-pptx`'s own

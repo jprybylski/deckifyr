@@ -2,28 +2,92 @@
 % Please edit documentation in R/serve.R
 \name{deck_serve}
 \alias{deck_serve}
-\title{Run the local web application}
+\title{Start the local web application}
 \usage{
-deck_serve(host = "127.0.0.1", port = 8000)
+deck_serve(
+  project = ".",
+  host = "127.0.0.1",
+  port = 8000,
+  presentation = "presentation.yaml",
+  open_browser = TRUE,
+  timeout = 15,
+  force = FALSE
+)
 }
 \arguments{
+\item{project}{Path to the project directory to serve. Default \code{"."}.}
+
 \item{host}{Host to bind. Default \code{"127.0.0.1"}.}
 
 \item{port}{Port to bind. Default \code{8000}.}
+
+\item{presentation}{\code{presentation.yaml} path, relative to \code{project}.
+Default \code{"presentation.yaml"}.}
+
+\item{open_browser}{Open the server's URL once it's reachable -- via the
+RStudio Viewer pane when running inside RStudio, otherwise the system
+default browser. Default \code{TRUE}.}
+
+\item{timeout}{Seconds to wait for the server to become reachable before
+giving up and killing the orphaned process. Default \code{15}.}
+
+\item{force}{If \code{host}:\code{port} is already occupied by another deckifyr
+server, kill it first instead of erroring. Never kills a process that
+doesn't look like a deckifyr server, \code{force} or not. Default \code{FALSE}.}
 }
 \value{
-A parsed list from the CLI's JSON output.
+A \code{deckifyr_server} object (a list with class
+\code{"deckifyr_server"}): \code{process} (the \code{processx::process}), \code{host},
+\code{port}, \code{url}, and \code{project}. Pass it to \code{\link[=deck_stop_server]{deck_stop_server()}} to shut
+the server down.
 }
 \description{
-Delegates to \verb{deckifyr serve} in the bundled Python engine.
-\strong{Not implemented yet} -- the optional web application is spec
-section 12's Phase 3 work, deliberately deferred until the CLI and
-schema stabilize (spec section 20, warning 5).
+Launches \verb{deckifyr serve} in the bundled Python engine as a background
+process via \code{processx} -- deliberately not \code{.run_deckifyr_cli()}, which
+blocks until its subprocess exits and would hang forever against a
+long-running server. Waits for the server to accept connections (up to
+\code{timeout} seconds), then optionally opens its URL in a browser. Requires
+the optional \code{web} extra (\code{fastapi}/\code{uvicorn}) to be installed in
+deckifyr's bundled Python environment; if it isn't, the server process
+exits immediately and that failure is surfaced with its captured stderr
+rather than a generic timeout.
+}
+\details{
+Refuses to launch at all if \code{host}:\code{port} is already occupied
+(\code{.port_is_open()}), rather than proceeding and letting
+\code{.wait_for_server()}'s readiness poll connect to whatever is already
+there. This is a real, confirmed failure mode, not a hypothetical: a
+\code{deckifyr_server} handle whose process tree wasn't fully torn down
+(fixed alongside this check -- \code{.launch_server_process()} now sets
+\code{cleanup_tree = TRUE} and \code{deck_stop_server()} calls \code{kill_tree()},
+since \verb{uv run -m deckifyr serve} is a real parent/child pair and
+killing only the tracked \code{uv} PID left the actual Python/uvicorn
+child running, orphaned, still bound to the port) left an old server
+listening on the default port; a second \code{deck_serve()} call at the
+same default port then had its own new process fail to bind (address
+already in use) while \code{.wait_for_server()} still reported success --
+because it was reconnecting to the \emph{old}, stale server the whole
+time, not the new one -- silently pointing the caller at the wrong
+project with no error at all.
+
+\code{force = TRUE} additionally handles the port already being occupied
+by an \emph{existing} deckifyr server (as opposed to a genuinely
+unrelated process, which it never touches, \code{force} or not): it looks
+up the occupant by port (\code{.pids_listening_on_port()}), confirms its
+command line actually looks like a deckifyr server
+(\code{.pid_looks_like_deckifyr_server()}), and kills it before
+proceeding -- the same "stop by port" mechanism \code{\link[=deck_stop_server]{deck_stop_server()}}
+exposes directly, useful here specifically because the \code{deckifyr_server}
+handle for that old server may no longer exist (a fresh R session, or
+one where the object was simply lost) even though the process itself
+is still running.
 }
 \examples{
 \dontrun{
-# Not implemented yet -- always errors today; shown for the intended
-# future usage.
-deck_serve()
+server <- deck_serve(project = "my-deck")
+deck_stop_server(server)
+
+# Restart on the same port without first tracking down the old handle:
+server <- deck_serve(project = "my-deck", force = TRUE)
 }
 }

@@ -14,8 +14,18 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "pyarrow>=14.0",
     "pymupdf>=1.24",
+    # `deckifyr.web` (spec section 12) needs fastapi/uvicorn -- see the
+    # `web` extra below. Folded into `dev` too so `tests/python/
+    # test_web.py` can exercise it with a plain `--extra dev`, the same
+    # "dev also pulls in every lazily-imported extra so the full test
+    # suite runs from one install" pattern `tables`/`quarto`/`preview`
+    # already establish above.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx2>=2.10.0",
 ]
 # `deckifyr.resolvers.table.TableResolver` imports pyarrow lazily, only
 # for `.parquet` sources -- a project using only CSV tables never pays
@@ -67,6 +77,14 @@ build-backend = "setuptools.build_meta"
 # only place that path mapping is declared, don't duplicate it.
 where = ["inst/python"]
 include = ["deckifyr*"]
+
+[tool.setuptools.package-data]
+# The built frontend (web/, spec section 12) -- a real Node build step,
+# which neither the wheel build nor an R package install can run, so
+# the built assets are committed to git (see web/vite.config.ts's own
+# comment) and just need including here so the wheel actually ships
+# them alongside deckifyr.web.app's StaticFiles mount.
+"deckifyr.web" = ["static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]

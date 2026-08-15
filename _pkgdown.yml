@@ -49,6 +49,8 @@ navbar:
           href: articles/config-schema.html
         - text: Python engine
           href: articles/python-engine.html
+        - text: Using the web editor
+          href: articles/web-app.html
 
 articles:
   - title: Articles
@@ -58,13 +60,18 @@ articles:
       - articles/examples
       - articles/config-schema
       - articles/python-engine
+      - articles/web-app
 
 reference:
   - title: Build a deck
-    desc: Validate and compile a `presentation.yaml` into a `.pptx`.
+    desc: >-
+      Validate and compile a `presentation.yaml` into a `.pptx`, render
+      slide previews, or inspect a presentation/built `.pptx`.
     contents:
       - deck_validate
       - deck_build
+      - deck_preview
+      - deck_inspect
   - title: Edit config and slides
     desc: >-
       Read/write one config value, or add/remove/update/move/list slides,
@@ -82,12 +89,10 @@ reference:
     contents:
       - initialize_deck_project
       - deck_schema
-  - title: Not yet implemented
+  - title: Run the web editor
     desc: >-
-      Argument parsing is real; the bundled Python CLI raises
-      `NotImplementedFeatureError` for each of these today (see
-      CLAUDE.md's status table).
+      Start and stop the bundled Python engine's local web application as
+      a background process.
     contents:
-      - deck_preview
-      - deck_inspect
       - deck_serve
+      - deck_stop_server

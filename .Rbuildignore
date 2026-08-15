@@ -39,3 +39,7 @@
 \.egg-info$
 __pycache__$
 \.pyc$
+# web/: the frontend's own source/Node toolchain (spec section 12) --
+# its built output ships inside inst/python/deckifyr/web/static/
+# instead, already part of the R package under inst/.
+^web$

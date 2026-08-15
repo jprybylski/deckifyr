@@ -37,6 +37,31 @@
 # examples/demo-deck/README.md's own "Where the background and
 # watermark come from" section for the exact reproduction steps.
 #
+# man/figures/web-app-editor.png/web-app-no-project.png/web-app-
+# furniture.png (used in vignettes/articles/web-app.Rmd) are a second,
+# independent asset group, checked separately below -- real screenshots
+# of the web editor (inst/python/deckifyr/web/static/'s built frontend,
+# served by a real `deckifyr serve`), not something a build step
+# regenerates. Regenerate with Playwright against a real running
+# server, e.g.:
+#   npm --prefix web run build
+#   # use a scratch copy of examples/demo-deck, not the tracked one --
+#   # the "Show furniture"/"Deck-wide" toggles write real PUTs/PATCHes
+#   # back to presentation.yaml (see the "toggled the tracked demo-deck
+#   # example's watermark off via a live deck_serve() session" incident
+#   # this note exists because of)
+#   cp -r examples/demo-deck /tmp/demo-scratch
+#   uv run deckifyr serve --project /tmp/demo-scratch --port 8330 &
+#   # screenshot http://127.0.0.1:8330/ at 1400x900, zoom set to 75% via
+#   # the toolbar's own <select> so a 13.333in-wide slide fits the
+#   # viewport, "Show furniture" left unchecked (the default) -- save as
+#   # man/figures/web-app-editor.png; check "Show furniture" and
+#   # re-screenshot for man/figures/web-app-furniture.png
+#   # repeat against an empty project directory (no presentation.yaml)
+#   # for man/figures/web-app-no-project.png
+# See the "Rebuilding the web frontend" section of this file for the
+# frontend build step itself.
+#
 # Add a case here whenever a new rendered-doc-asset group is added,
 # alongside a matching note in CONTRIBUTING.md -- this is the
 # machine-checkable half of the same rule, kept next to it so they're
@@ -68,6 +93,17 @@ check_group "the demo-deck example" \
 
 check_group "the PPTX compositor/planner/resolvers demo-deck exercises" \
   '^inst/python/deckifyr/(schema/|plan\.py|pptx/|resolvers/)'
+
+# Separate asset group, separate "touched" check (deliberately not folded
+# into check_group()/assets_touched above -- those two are specifically
+# about the demo-deck PNG/PPTX group, and touching one must not silence a
+# reminder about this unrelated pair of web-editor screenshots).
+web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture)\.png$')
+if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^web/src/'; then
+  echo "pre-commit reminder: staged changes touch the web editor's frontend source" >&2
+  echo "  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)" >&2
+  found=1
+fi
 
 if [ "$found" = "1" ]; then
   echo "" >&2

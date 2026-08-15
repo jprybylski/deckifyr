@@ -21,6 +21,13 @@ tests/testthat/testthat-problems.rds
 # Local tool downloads (quarto CLI tarball, etc.) - not part of the repo
 .tools/
 
+# web/ (spec section 12 frontend) - node_modules is a real install, not
+# source; the Vite dev-server/vitest cache lives at node_modules/.vite,
+# already covered by the line above. The *built* output at
+# inst/python/deckifyr/web/static/ is committed (see web/vite.config.ts's
+# own comment for why), so don't add a blanket ignore for that path here.
+web/node_modules/
+
 # OS
 .DS_Store
 

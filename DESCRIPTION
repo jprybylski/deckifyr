@@ -18,12 +18,14 @@ Imports:
     pyro,
     jsonlite,
     cli,
-    utils
+    utils,
+    processx
 Suggests:
     testthat (>= 3.0.0),
     covr,
     rmarkdown,
-    pkgdown
+    pkgdown,
+    rstudioapi
 Config/testthat/edition: 3
 License: GPL (>= 3)
 Encoding: UTF-8

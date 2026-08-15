@@ -125,3 +125,49 @@ test_that("deck_get_config()/deck_set_config()/slide editors round-trip a real f
   result <- deck_validate(presentation_path)
   expect_true(result$valid)
 })
+
+test_that("deck_serve()/deck_stop_server() run a real background server end to end", {
+  skip_if_not(nzchar(Sys.which("uv")), "uv not on PATH")
+
+  # A fixed test port rather than an OS-assigned free one -- deck_serve()
+  # itself has no "pick any free port" mode (its --port default mirrors
+  # the CLI's own fixed-default posture). A collision with something else
+  # already bound to this exact port on the test runner is a known,
+  # accepted limitation of this test, not handled -- picked high and
+  # uncommon to make that unlikely in practice.
+  test_port <- 48173
+
+  project_dir <- file.path(tempdir(), "deckifyr-wiring-serve")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+  file.copy(
+    file.path(minimal_deck, c("design.yaml", "layouts.yaml", "presentation.yaml")),
+    project_dir
+  )
+
+  server <- deck_serve(
+    project = project_dir, port = test_port, open_browser = FALSE
+  )
+  on.exit(
+    {
+      if (server$process$is_alive()) server$process$kill()
+    },
+    add = TRUE
+  )
+
+  expect_s3_class(server, "deckifyr_server")
+  expect_true(server$process$is_alive())
+
+  # suppressWarnings(): the health endpoint's tiny JSON body has no
+  # trailing newline, which readLines() otherwise flags as an "incomplete
+  # final line" warning -- benign here, not a real problem.
+  health_raw <- suppressWarnings(
+    readLines(url(sprintf("http://127.0.0.1:%d/api/health", test_port)))
+  )
+  health <- jsonlite::fromJSON(paste(health_raw, collapse = ""))
+  expect_equal(health$status, "ok")
+
+  deck_stop_server(server)
+  Sys.sleep(0.3)
+  expect_false(server$process$is_alive())
+})

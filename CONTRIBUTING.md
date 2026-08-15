@@ -33,6 +33,31 @@ uv run --extra dev pytest tests/python/test_units.py -v
 `uv run` manages its own ephemeral venv from `pyproject.toml` -- no
 manual venv activation needed.
 
+## Rebuilding the web frontend
+
+```bash
+cd web && npm install && npm run build
+```
+
+`web/` (spec section 12) is a Vite/React/TypeScript app; its build
+output lands in `inst/python/deckifyr/web/static/` and is committed to
+git, the same "generated output ships in the repo" precedent
+`man/figures/*.png` already sets (see this file's own git-hooks section
+above) -- neither the Python wheel nor an R package install can run a
+Node build at install time. If you touch anything under `web/src/`,
+rerun the command above and commit the resulting diff under
+`inst/python/deckifyr/web/static/` in the same PR. `npm test` (inside
+`web/`) runs the frontend's own vitest suite; run it before opening a
+PR that touches `web/src/`.
+
+`man/figures/web-app-editor.png`/`web-app-no-project.png`/
+`web-app-furniture.png` (real screenshots of a running editor, used in
+`vignettes/articles/web-app.Rmd`) are a second, separate rendered-doc-
+asset group from the `demo-deck-*` one above -- the pre-commit hook
+flags a `web/src/` change that doesn't also touch these two files; see
+`.githooks/pre-commit`'s own header comment for the exact Playwright-
+based regeneration recipe.
+
 ## R setup
 
 ```bash
