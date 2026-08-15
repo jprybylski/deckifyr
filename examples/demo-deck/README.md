@@ -15,6 +15,13 @@ placeholder content.
 
 ## What it builds
 
+Every slide also carries `design.yaml`'s `slide.background_gradient` (a
+light, sequential-blue linear fill), `slide.background_image` (a faint,
+brand-tinted watermark rendering of `assets/logo.png`), and, for this
+build only, a diagonal "DEMO" `furniture.status` watermark (uppercased
+from `metadata.status: demo`) -- see "Where the background and
+watermark come from" below.
+
 1. **Title** -- a markdown heading + italic subtitle (`layout: blank`,
    list-form elements).
 2. **Concentration-Time Profile** -- a two-zone `plot-with-note` layout
@@ -116,6 +123,121 @@ header band, alternating row tint, thin gray grid lines) comes from
 `table_style: pk-summary`, a `design.yaml` `table_styles` entry
 exercising the deck's own brand colors (`primary`/`muted`) rather than
 `python-pptx`'s bundled default table look.
+
+## Where the background and watermark come from
+
+`design.yaml`'s `slide.background_gradient` is a two-stop linear
+gradient (spec section 7.4) -- `#F7FBFF` to `#9ECAE1` at a 135-degree
+angle, ColorBrewer's published "Blues" sequential palette
+(<https://colorbrewer2.org>, class 3). That's a values choice, not a
+code dependency: deckifyr's Python engine doesn't gain an RColorBrewer
+dependency for this (see CLAUDE.md's "one engine, two facades"
+invariant) -- the two hex values are just typed into `design.yaml` like
+any other color. Deliberately more saturated at the darker end than a
+"barely visible" pale wash on both stops -- a very low-contrast gradient
+reads as flat at slide scale, especially in a thumbnail.
+
+`slide.background_image` points at `assets/logo-watermark.png`, a
+faint, brand-tinted rendering of `assets/logo.png` (the same placeholder
+logo the `closing` slide's `logo` element already uses), generated with
+Pillow: near-white pixels become fully transparent, near-black pixels
+become `colors.primary` at low alpha, then the result is composited
+onto a transparent canvas matching the slide's own 13.333:7.5 aspect
+ratio so `contain` fit (the default `image_fit`) covers the slide with
+no letterboxing. Real PNG alpha transparency, not a compositor feature
+-- `background_image` composes it exactly like any other image element,
+with no code changes involved. Regenerate it with:
+
+```python
+from PIL import Image
+
+logo = Image.open("assets/logo.png").convert("RGBA")
+px = logo.load()
+for y in range(logo.height):
+    for x in range(logo.width):
+        r, g, b, a = px[x, y]
+        lum = (r + g + b) / 3
+        if lum > 235:
+            px[x, y] = (0, 0, 0, 0)
+        else:
+            darkness = max(0.0, min(1.0, (235 - lum) / 235))
+            px[x, y] = (36, 87, 166, int(46 * darkness))  # colors.primary, ~18% alpha
+
+logo_cropped = logo.crop(logo.getbbox())
+canvas = Image.new("RGBA", (2000, 1125), (0, 0, 0, 0))
+scaled = logo_cropped.resize(
+    (int(logo_cropped.width * 1.8), int(logo_cropped.height * 1.8)), Image.LANCZOS
+)
+canvas.alpha_composite(scaled, (2000 - scaled.width - 80, 1125 - scaled.height - 100))
+canvas.save("assets/logo-watermark.png")
+```
+
+Finally, `design.yaml`'s `furniture.status` (spec section 7.8) configures
+two placements a build may choose between -- neither is "the" status
+marker on its own:
+
+- `watermark`: the diagonal "DEMO" mark this build actually uses.
+  `rotation: -30` for the diagonal angle, and `z_index: 9999` so it
+  paints *on top* of ordinary slide content instead of behind it -- the
+  conventional Word/Google Docs watermark placement, and the reason this
+  looks like a real watermark rather than a large diagonal label.
+  Painting on top only stays legible because its own `style: watermark`
+  `text_styles` entry sets `opacity: 0.28` on a saturated `color: primary`
+  -- a translucent brand color, not a separately hand-mixed pale one, so
+  it reads consistently whether it's crossing the plain background, the
+  reportifyr figure, the native table, or the rasterized equation image.
+- `corner_br` and `corner_tr`: smaller, simpler, bottom-right/top-right
+  labels using the same `footnote` style branding/page-number already
+  use, with no `rotation`/`z_index`/`opacity` -- alternatives this
+  deck's own `presentation.yaml` could select instead
+  (`status_indicator: corner-br`/`corner-tr`) but doesn't, configured
+  here to show the option exists (`corner_tl`/`corner_bl` are the same
+  idea, just not configured in this particular demo).
+
+<img src="../../man/figures/demo-deck-corner-tr-example.png" alt="demo-deck title slide with status_indicator: corner-tr selected instead of watermark, showing a small, upright &quot;demo&quot; label in the top-right corner" width="480">
+
+The screenshot above is *not* part of this deck's own tracked build --
+`presentation.yaml` here sets `status_indicator: watermark`, so
+`build/demo-deck.pptx` never uses `corner_tr`. It's a one-off render
+from a throwaway copy of this same project with only that one line
+changed, to show the alternative placement actually composed rather
+than just described. Reproduce it with:
+
+```bash
+cp -r examples/demo-deck /tmp/corner-tr-demo
+sed -i.bak 's/^status_indicator: watermark/status_indicator: corner-tr/' \
+  /tmp/corner-tr-demo/presentation.yaml
+uv run deckifyr build /tmp/corner-tr-demo/presentation.yaml
+soffice --headless --convert-to pdf --outdir /tmp/corner-tr-demo \
+  /tmp/corner-tr-demo/build/demo-deck.pptx
+# rasterize page 1 of the PDF at 110dpi (see .githooks/pre-commit's own
+# recipe for the exact PyMuPDF snippet) into
+# man/figures/demo-deck-corner-tr-example.png
+```
+
+Note the lowercase "demo" in that screenshot, unlike the diagonal
+watermark's all-caps "DEMO": `corner_tr` uses `style: footnote`, which
+sets no `text_transform` (unlike `style: watermark`'s own
+`text_transform: uppercase`) -- each placement is free to style its
+text however fits a small corner label versus a large diagonal mark.
+
+Neither placement carries its own text or an on/off switch -- both come
+from `presentation.yaml`: `status_indicator: watermark` picks which
+placement to use (`corner-br`/`corner-tr`/`corner-tl`/`corner-bl`/`none`
+are the other choices). The word itself comes from `metadata.status:
+demo` (already set, for ordinary descriptive purposes) rather than a
+separate `watermark:` field -- this deck deliberately leaves `watermark`
+unset so `deckifyr.plan.expand_presentation`'s own fallback applies,
+rather than typing "demo" a second time. `design.yaml`'s `watermark`
+`text_styles` entry then uppercases it (`text_transform: uppercase`)
+into "DEMO" -- the conventional all-caps status/watermark look --
+without the author writing it that way themselves; setting
+`watermark: CONFIDENTIAL` (or anything else) in `presentation.yaml`
+would override that fallback with different text entirely.
+`deckifyr.plan` always centers a status indicator's text, both
+horizontally and vertically, within its own box -- a short label/word
+(unlike flowing body text) reads correctly centered, and without it a
+large rotated watermark reads distractingly off-center.
 
 ## Building it
 

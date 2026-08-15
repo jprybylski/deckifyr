@@ -39,6 +39,19 @@ RenderMode = Literal["native", "svg", "png", "auto"]
 # own unrelated, still-unimplemented `"footnotes"` element type above.
 FooterPlacement = Literal["below", "notes", "none"]
 
+# `presentation.yaml`'s `PresentationDocument.status_indicator` (spec
+# section 7.8): which of `design.yaml`'s `furniture.status` placements
+# (each its own box/style/rotation/z_index) a build actually uses,
+# `"none"` (or leaving the field unset) meaning none of them do. Shared
+# between `deckifyr.schema.design` (`StatusFurniture`'s own field names,
+# underscored to stay valid Python identifiers) and
+# `deckifyr.schema.presentation` (this literal, spelled with hyphens --
+# a plain YAML string value has no identifier restriction to satisfy),
+# so it's defined once here rather than duplicated in both.
+StatusIndicatorMode = Literal[
+    "watermark", "corner-tr", "corner-tl", "corner-bl", "corner-br", "none"
+]
+
 # The autoshape kinds a `shape` element may draw (spec section 7.7's `type`
 # enum). Deliberately a small, named subset of python-pptx's much larger
 # `MSO_SHAPE` enum -- `deckifyr.pptx.compose`'s `_SHAPE_KIND_MAP` maps each
@@ -96,6 +109,14 @@ class Element(BaseModel):
     rotation: float | None = None
     z_index: int | None = None
     style: str | None = None
+    # Centers text both horizontally and vertically within `box`, rather
+    # than the compositor's own default (left-aligned, top-anchored).
+    # Not a general multi-value alignment field -- a short label/word
+    # (a furniture status indicator, most notably) reads correctly
+    # centered; ordinary flowing body text does not need one, and
+    # `False` (the default) leaves every existing text/markdown element
+    # untouched.
+    center: bool = False
     # `table`-only: a `design.yaml` `table_styles` name controlling fill/
     # border chrome, separate from `style` above (which still governs a
     # table's text_styles-driven typography). `deckifyr.plan` rejects it

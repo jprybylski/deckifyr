@@ -15,7 +15,12 @@ or the downloadable `man/figures/demo-deck.pptx` -- e.g.
 See the hook script itself for the exact trigger list and the
 regeneration recipe. Skip a false positive (a comment or refactor with
 identical composed output, say) with `SKIP_DOCS_ASSET_CHECK=1 git commit`
-or `git commit --no-verify`.
+or `git commit --no-verify`. `man/figures/demo-deck-corner-tr-example.png`
+is a supplementary asset in that same glob, rendered from a throwaway
+`status_indicator: corner-tr` copy of the project rather than
+`presentation.yaml`'s own tracked build -- see the hook script's own
+comment for why, and `examples/demo-deck/README.md` for how to
+regenerate it.
 
 ## Python setup
 
