@@ -59,12 +59,13 @@ change that provably can't affect build output (e.g. a `*.test.ts*` file,
 which the build already excludes).
 
 `man/figures/web-app-editor.png`/`web-app-no-project.png`/
-`web-app-furniture.png` (real screenshots of a running editor, used in
-`vignettes/articles/web-app.Rmd`) are a second, separate rendered-doc-
-asset group from the `demo-deck-*` one above -- the pre-commit hook
-flags a `web/src/` change that doesn't also touch these two files; see
-`.githooks/pre-commit`'s own header comment for the exact Playwright-
-based regeneration recipe.
+`web-app-furniture.png`/`web-app-layout-tab.png`/`web-app-add-slide.png`/
+`web-app-build-preview.png`/`web-app-color-swatch.png` (real screenshots
+of a running editor, used in `vignettes/articles/web-app.Rmd`) are a
+second, separate rendered-doc-asset group from the `demo-deck-*` one
+above -- the pre-commit hook flags a `web/src/` change that doesn't also
+touch at least one of these files; see `.githooks/pre-commit`'s own
+header comment for the exact Playwright-based regeneration recipe.
 
 ## R setup
 

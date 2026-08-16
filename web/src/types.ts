@@ -72,6 +72,15 @@ export interface PlanResponse {
    * initial load; every mutating response also carries its own `dirty`
    * (see `WriteResult`) so the indicator stays live without polling. */
   dirty: boolean;
+  /** Each real slide's `layout` name (`null` = freeform, spec section
+   * 7.6), keyed by slide id -- issue #23's Content/Layout tab uses this
+   * to know which layout to fetch/edit for the selected slide, and to
+   * disable the toggle entirely for a freeform slide (nothing to edit).
+   * `ResolvedSlide` itself carries no `layout` field (spec's own Pass 1/
+   * Pass 2 split keeps that plan-time-only, CLAUDE.md), so this rides on
+   * `GET /api/plan` as a sibling map instead of growing that shared
+   * shape just for this one web-only need. */
+  slide_layouts: Record<string, string | null>;
 }
 
 export interface ProjectInfo {
@@ -159,10 +168,21 @@ export interface JobResult {
   [key: string]: unknown;
 }
 
+/** Sent by `MissingDependencyError.to_dict()` (a missing `soffice`/
+ * `quarto` binary) alongside `code`/`message` -- issue #27's Build tab
+ * surfaces this instead of the raw error text when a preview job fails
+ * for exactly this reason. */
+export interface DependencyInfo {
+  name: string;
+  display_name: string;
+  install_url: string;
+}
+
 export interface ApiErrorBody {
   code?: string;
   message?: string;
   detail?: string;
+  dependency?: DependencyInfo;
 }
 
 export interface Job {
@@ -174,4 +194,14 @@ export interface Job {
 
 export interface JobArtifactsResponse {
   artifacts: string[];
+}
+
+/** `GET /api/preview/availability` (issue #27) -- checked proactively by
+ * the Build tab before offering Preview, rather than only surfacing a
+ * missing-LibreOffice error after the button is clicked. */
+export interface PreviewAvailability {
+  available: boolean;
+  binary: string;
+  display_name: string;
+  install_url: string | null;
 }

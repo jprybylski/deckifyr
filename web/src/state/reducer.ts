@@ -57,6 +57,17 @@ export interface AppState {
    * reload, and a hidden id that no longer exists (e.g. after Remove)
    * is simply inert. */
   hiddenFurnitureIds: string[];
+  /** Content vs Layout view for the selected *real* slide (issue #23's
+   * Content/Layout tab) -- "layout" shows/edits the selected slide's own
+   * named layout's zones (`layouts.yaml`) instead of the slide's own
+   * content, using the same drag/resize/rotate canvas. Always resets to
+   * `"content"` on `SELECT_SLIDE` (same reasoning `selectedElementId`
+   * already resets there): a layout name from the previously-selected
+   * slide isn't meaningful for the new one, and the furniture
+   * pseudo-slide has no layout of its own to show. Purely a client-side
+   * view mode, like `showFurniture` -- never sent to the server on its
+   * own; it only decides which `GET`/`PATCH` target `usePlan` uses. */
+  slideViewMode: "content" | "layout";
   /** Whether the server's in-memory working copy (issue #24's deferred-
    * save editor) currently differs from what's on disk. Lives here, not
    * in `usePlan`'s own local state, specifically because it must survive
@@ -78,6 +89,7 @@ export const initialAppState: AppState = {
   future: [],
   showFurniture: false,
   hiddenFurnitureIds: [],
+  slideViewMode: "content",
   dirty: false,
 };
 
@@ -90,6 +102,7 @@ export type AppAction =
   | { type: "REDO" }
   | { type: "SET_SHOW_FURNITURE"; show: boolean }
   | { type: "TOGGLE_FURNITURE_HIDDEN"; elementId: string }
+  | { type: "SET_SLIDE_VIEW_MODE"; mode: "content" | "layout" }
   | { type: "SET_DIRTY"; dirty: boolean };
 
 const MIN_ZOOM = 0.1;
@@ -100,8 +113,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SELECT_SLIDE":
       // Changing slides always clears element selection -- a selected
       // element id from the previous slide isn't meaningful on the new
-      // one (ids aren't guaranteed unique across slides).
-      return { ...state, selectedSlideId: action.slideId, selectedElementId: null };
+      // one (ids aren't guaranteed unique across slides) -- and always
+      // resets back to Content view (see `slideViewMode`'s own docstring
+      // above for why).
+      return {
+        ...state,
+        selectedSlideId: action.slideId,
+        selectedElementId: null,
+        slideViewMode: "content",
+      };
 
     case "SELECT_ELEMENT":
       return { ...state, selectedElementId: action.elementId };
@@ -134,6 +154,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "SET_SHOW_FURNITURE":
       return { ...state, showFurniture: action.show };
+
+    case "SET_SLIDE_VIEW_MODE":
+      return { ...state, slideViewMode: action.mode, selectedElementId: null };
 
     case "SET_DIRTY":
       return { ...state, dirty: action.dirty };

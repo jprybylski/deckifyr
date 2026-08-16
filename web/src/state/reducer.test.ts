@@ -28,6 +28,25 @@ describe("selection", () => {
   });
 });
 
+describe("slideViewMode", () => {
+  it("defaults to content", () => {
+    expect(initialAppState.slideViewMode).toBe("content");
+  });
+
+  it("sets the view mode and clears element selection", () => {
+    const withElement = { ...initialAppState, selectedElementId: "el-1" };
+    const next = appReducer(withElement, { type: "SET_SLIDE_VIEW_MODE", mode: "layout" });
+    expect(next.slideViewMode).toBe("layout");
+    expect(next.selectedElementId).toBeNull();
+  });
+
+  it("resets to content on SELECT_SLIDE", () => {
+    const inLayoutMode = { ...initialAppState, slideViewMode: "layout" as const };
+    const next = appReducer(inLayoutMode, { type: "SELECT_SLIDE", slideId: "slide-2" });
+    expect(next.slideViewMode).toBe("content");
+  });
+});
+
 describe("showFurniture", () => {
   it("defaults to hidden", () => {
     expect(initialAppState.showFurniture).toBe(false);

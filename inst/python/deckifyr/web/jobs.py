@@ -56,6 +56,11 @@ def _artifacts_from_result(result: dict[str, Any]) -> dict[str, str]:
         artifacts["manifest"] = result["manifest"]
     for index, preview in enumerate(result.get("previews") or []):
         artifacts[f"preview-{index}"] = preview
+    # Only a `deckifyr preview` job's result ever carries this key (issue
+    # #27's embedded-PDF-viewer support) -- an ordinary build's result
+    # dict simply doesn't have it, so this is a no-op there.
+    if result.get("preview_pdf"):
+        artifacts["pdf"] = result["preview_pdf"]
     return artifacts
 
 
@@ -72,25 +77,45 @@ class JobManager:
             presentation_name=presentation_name,
         )
         self._jobs[job.id] = job
-        thread = threading.Thread(target=self._run_build, args=(job,), daemon=True)
+        thread = threading.Thread(
+            target=self._run_subprocess_job,
+            args=(job, ["build", job.presentation_name]),
+            daemon=True,
+        )
+        thread.start()
+        return job
+
+    def submit_preview(
+        self, project_root: Path, presentation_name: str, slides: list[int] | None = None
+    ) -> Job:
+        """Same shape as `submit_build`, shelling out to `deckifyr preview`
+        instead (issue #27's Build-tab preview action) -- `slides`
+        (1-indexed) is forwarded as `--slides` (`_parse_slides_arg` in
+        `cli.py`), omitted entirely for "every slide".
+        """
+        job = Job(
+            id=str(uuid.uuid4()),
+            project_root=project_root,
+            presentation_name=presentation_name,
+        )
+        args = ["preview", job.presentation_name]
+        if slides:
+            args += ["--slides", ",".join(str(n) for n in slides)]
+        self._jobs[job.id] = job
+        thread = threading.Thread(
+            target=self._run_subprocess_job, args=(job, args), daemon=True
+        )
         thread.start()
         return job
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
-    def _run_build(self, job: Job) -> None:
+    def _run_subprocess_job(self, job: Job, command_args: list[str]) -> None:
         job.status = "running"
         try:
             proc = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "deckifyr",
-                    "--json",
-                    "build",
-                    job.presentation_name,
-                ],
+                [sys.executable, "-m", "deckifyr", "--json", *command_args],
                 cwd=str(job.project_root),
                 capture_output=True,
                 text=True,

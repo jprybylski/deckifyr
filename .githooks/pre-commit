@@ -38,12 +38,13 @@
 # watermark come from" section for the exact reproduction steps.
 #
 # man/figures/web-app-editor.png/web-app-no-project.png/web-app-
-# furniture.png (used in vignettes/articles/web-app.Rmd) are a second,
-# independent asset group, checked separately below -- real screenshots
-# of the web editor (inst/python/deckifyr/web/static/'s built frontend,
-# served by a real `deckifyr serve`), not something a build step
-# regenerates. Regenerate with Playwright against a real running
-# server, e.g.:
+# furniture.png/web-app-layout-tab.png/web-app-add-slide.png/
+# web-app-build-preview.png/web-app-color-swatch.png (used in
+# vignettes/articles/web-app.Rmd) are a second, independent asset group,
+# checked separately below -- real screenshots of the web editor
+# (inst/python/deckifyr/web/static/'s built frontend, served by a real
+# `deckifyr serve`), not something a build step regenerates. Regenerate
+# with Playwright against a real running server, e.g.:
 #   npm --prefix web run build
 #   # use a scratch copy of examples/demo-deck, not the tracked one --
 #   # the "Show furniture"/"Deck-wide" toggles write real PUTs/PATCHes
@@ -59,6 +60,17 @@
 #   # re-screenshot for man/figures/web-app-furniture.png
 #   # repeat against an empty project directory (no presentation.yaml)
 #   # for man/figures/web-app-no-project.png
+#   # select a real slide, toggle the toolbar's Content/Layout switch to
+#   # Layout, for man/figures/web-app-layout-tab.png
+#   # click "+ Add slide" in the slide list for
+#   # man/figures/web-app-add-slide.png
+#   # open the Build tab (editable output path + Preview section -- a
+#   # real render if this machine has soffice, otherwise the "LibreOffice
+#   # not installed" message is still a real, useful screenshot of that
+#   # state) for man/figures/web-app-build-preview.png
+#   # open the Config tab's Form view on design.yaml, scroll to a
+#   # `colors` entry (e.g. colors.primary) for
+#   # man/figures/web-app-color-swatch.png
 # See the "Rebuilding the web frontend" section of this file for the
 # frontend build step itself.
 #
@@ -98,10 +110,10 @@ check_group "the PPTX compositor/planner/resolvers demo-deck exercises" \
 # into check_group()/assets_touched above -- those two are specifically
 # about the demo-deck PNG/PPTX group, and touching one must not silence a
 # reminder about this unrelated pair of web-editor screenshots).
-web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture)\.png$')
+web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture|layout-tab|add-slide|build-preview|color-swatch)\.png$')
 if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^web/src/'; then
   echo "pre-commit reminder: staged changes touch the web editor's frontend source" >&2
-  echo "  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)" >&2
+  echo "  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png/web-app-layout-tab.png/web-app-add-slide.png/web-app-build-preview.png/web-app-color-swatch.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)" >&2
   found=1
 fi
 

@@ -30,7 +30,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
@@ -49,28 +49,69 @@ class PreviewRenderConfig:
     timeout_seconds: float = 120
 
 
-_LIBREOFFICE_INSTALL_URL = "https://www.libreoffice.org/download/download/"
+@dataclass
+class PreviewRenderResult:
+    """`render_slide_previews`'s return value -- mirrors
+    `deckifyr.pptx.compose.BuildResult`'s own small-dataclass shape.
+    `pdf_path` is only ever non-`None` when the caller passed
+    `keep_pdf=True` (issue #27's embedded-PDF-viewer support); the
+    conversion always produces an intermediate PDF internally either
+    way, this just decides whether it's kept instead of discarded with
+    the rest of the temp dir.
+    """
+
+    image_paths: list[Path] = field(default_factory=list)
+    pdf_path: Path | None = None
+
+
+# Public (not `_`-prefixed): `deckifyr.web.app`'s `GET /api/preview/availability`
+# route (issue #27) reuses this exact URL for its own proactive
+# "LibreOffice isn't installed" message, rather than duplicating the
+# literal.
+LIBREOFFICE_INSTALL_URL = "https://www.libreoffice.org/download/download/"
 
 
 def _require_soffice(config: PreviewRenderConfig) -> None:
     if shutil.which(config.binary) is None:
         raise MissingDependencyError(
             f"LibreOffice binary {config.binary!r} was not found on PATH -- "
-            f"install LibreOffice ({_LIBREOFFICE_INSTALL_URL}) to render "
+            f"install LibreOffice ({LIBREOFFICE_INSTALL_URL}) to render "
             "slide previews, or set build.preview.binary to its full path",
             name="soffice",
             display_name="LibreOffice",
-            install_url=_LIBREOFFICE_INSTALL_URL,
+            install_url=LIBREOFFICE_INSTALL_URL,
         )
 
 
 def render_slide_previews(
-    pptx_path: Path, out_dir: Path, *, config: PreviewRenderConfig | None = None
-) -> list[Path]:
+    pptx_path: Path,
+    out_dir: Path,
+    *,
+    config: PreviewRenderConfig | None = None,
+    slides: list[int] | None = None,
+    keep_pdf: bool = False,
+) -> PreviewRenderResult:
     """Render each slide of `pptx_path` to a standalone PNG under
     `out_dir` (created if missing), one file per slide
     (`f"{pptx_path.stem}-{page:02d}.png"`, 1-indexed), returned in slide
     order.
+
+    `slides` (issue #27's "preview 1, several, or all slides"): a
+    1-indexed subset to rasterize -- `None` (the default) renders every
+    slide, unchanged from before this parameter existed. LibreOffice
+    still converts the *whole* deck to PDF either way (that's a single,
+    whole-file subprocess call with no per-slide option of its own);
+    `slides` only controls which pages get rasterized to PNG afterward,
+    so it saves rasterization cost, not conversion cost. Raises
+    `ContentValidationError` for any out-of-range index (checked after
+    conversion, once the real page count is known).
+
+    `keep_pdf`: also copy the intermediate PDF LibreOffice produces (it
+    exists internally either way, just normally discarded with the rest
+    of the temp dir) to `out_dir / f"{pptx_path.stem}.pdf"`, returned as
+    `PreviewRenderResult.pdf_path` -- issue #27's embedded-PDF-viewer
+    support, reusing this existing conversion rather than a second
+    PDF-only render path.
 
     Raises `ContentValidationError` if `soffice` isn't on PATH, the
     conversion subprocess fails or times out, or the optional `pymupdf`
@@ -128,11 +169,28 @@ def render_slide_previews(
         out_dir.mkdir(parents=True, exist_ok=True)
         doc = pymupdf.open(str(pdf_path))
         try:
+            page_count = doc.page_count
+            if slides is not None:
+                for page_number in slides:
+                    if not 1 <= page_number <= page_count:
+                        raise ContentValidationError(
+                            f"{pptx_path}: requested slide {page_number} is out "
+                            f"of range -- this deck has {page_count} slide(s)"
+                        )
+            wanted_indices = (
+                sorted(set(slides)) if slides is not None else range(1, page_count + 1)
+            )
             image_paths = []
-            for index, page in enumerate(doc):
-                image_path = out_dir / f"{pptx_path.stem}-{index + 1:02d}.png"
+            for page_number in wanted_indices:
+                page = doc[page_number - 1]
+                image_path = out_dir / f"{pptx_path.stem}-{page_number:02d}.png"
                 page.get_pixmap(dpi=config.dpi).save(str(image_path))
                 image_paths.append(image_path)
+
+            kept_pdf_path: Path | None = None
+            if keep_pdf:
+                kept_pdf_path = out_dir / f"{pptx_path.stem}.pdf"
+                shutil.copy2(pdf_path, kept_pdf_path)
         finally:
             doc.close()
-        return image_paths
+        return PreviewRenderResult(image_paths=image_paths, pdf_path=kept_pdf_path)
