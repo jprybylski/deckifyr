@@ -5,10 +5,10 @@ import { AppProvider } from "../state/AppContext";
 import type { UsePlanResult } from "../state/usePlan";
 import type { ResolvedElement, ResolvedSlide } from "../types";
 
-function renderControls(plan: UsePlanResult) {
+function renderControls(plan: UsePlanResult, onStatusIndicatorChanged?: () => void) {
   return render(
     <AppProvider>
-      <FurnitureControls plan={plan} />
+      <FurnitureControls plan={plan} onStatusIndicatorChanged={onStatusIndicatorChanged} />
     </AppProvider>
   );
 }
@@ -156,32 +156,17 @@ describe("FurnitureControls", () => {
     await waitFor(() => expect(refetch).toHaveBeenCalled());
   });
 
-  it("treats Watermark as a non-entity with no override text, no active render, and no configured style", async () => {
-    const fetchMock = stubFetch({ status_indicator: "none" });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const plan = makePlan({ id: "__furniture__", notes: null, elements: [] }, vi.fn());
-    renderControls(plan);
-
-    await screen.findByText(/select a corner placement in Deck Options to configure/);
-    const watermarkItem = itemFor("Watermark");
-    expect(within(watermarkItem).queryByRole("button")).not.toBeInTheDocument();
-    within(watermarkItem).getByText(
-      /select Watermark in Deck Options, or enter a Watermark override above/
-    );
-  });
-
-  it("offers Add for Watermark once override text is entered, even with a corner active", async () => {
-    // The actual reported requirement: a watermark and a corner status
-    // indicator must be independently addressable -- Watermark's own
-    // Add/Remove never depend on status_indicator at all now, since
-    // `__furniture_watermark` is a genuinely separate element.
+  it("Add defaults to the watermark placement when nothing is selected yet", async () => {
+    // "Add" is now the quick, one-click way to get *a* status indicator
+    // at all -- with nothing selected yet, it defaults to the watermark
+    // placement (mirrors `add_furniture_element`'s own default) rather
+    // than requiring the Deck Options dropdown to be touched first.
     const fetchMock = stubFetch(
-      { status_indicator: "corner-tl", watermark: "test", metadata: { status: "demo" } },
+      { status_indicator: null, watermark: "test", metadata: { status: "demo" } },
       {},
       (url, method) => {
-        if (url === "/api/furniture/elements/__furniture_watermark" && method === "POST") {
-          return Promise.resolve(jsonResponse(200, { element: "__furniture_watermark" }));
+        if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+          return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
         }
         return undefined;
       }
@@ -192,14 +177,14 @@ describe("FurnitureControls", () => {
     const plan = makePlan({ id: "__furniture__", notes: null, elements: [] }, refetch);
     renderControls(plan);
 
-    const watermarkItem = await screen.findByText('will show "test"').then(() => itemFor("Watermark"));
-    fireEvent.click(within(watermarkItem).getByRole("button", { name: "Add" }));
+    const statusItem = await screen.findByText('will show "test"').then(() => itemFor("Status"));
+    fireEvent.click(within(statusItem).getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_watermark" &&
+            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
             call[1]?.method === "POST"
         )
       ).toBe(true);
@@ -207,44 +192,13 @@ describe("FurnitureControls", () => {
     await waitFor(() => expect(refetch).toHaveBeenCalled());
   });
 
-  it("ignores a pre-existing design.yaml watermark style entirely when inactive with no override text", async () => {
-    // Regression: an earlier version separately fetched design.yaml and
-    // showed "Remove" whenever `furniture.status.watermark` merely
-    // *existed* there -- true for a real, previously-built demo project
-    // regardless of anything done this session. That made every other
-    // action (typing override text, toggling the overlay) look like it
-    // did nothing, since the row was already stuck on "Remove" before
-    // any of it. A leftover design.yaml style must never influence this
-    // row on its own -- only actually being active, or override text
-    // having been typed, does.
-    const fetchMock = stubFetch({ status_indicator: "corner-tl", watermark: null, metadata: { status: "demo" } });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const plan = makePlan({ id: "__furniture__", notes: null, elements: [] }, vi.fn());
-    renderControls(plan);
-
-    await screen.findByText("Watermark");
-    const watermarkItem = itemFor("Watermark");
-    expect(within(watermarkItem).queryByRole("button")).not.toBeInTheDocument();
-    within(watermarkItem).getByText(
-      /select Watermark in Deck Options, or enter a Watermark override above/
-    );
-  });
-
-  it("Add succeeds (and activates) even when the underlying style is already configured", async () => {
-    // A stale pre-existing style must not block Add with a confusing
-    // 422 -- it should just succeed, silently, and activate.
+  it("Add materializes the already-selected corner's style, not the watermark default", async () => {
     const fetchMock = stubFetch(
       { status_indicator: "corner-tl", watermark: "test", metadata: { status: "demo" } },
       {},
       (url, method) => {
-        if (url === "/api/furniture/elements/__furniture_watermark" && method === "POST") {
-          return Promise.resolve(
-            jsonResponse(422, {
-              code: "E_SCHEMA_VALIDATION",
-              message: "design.yaml's furniture.status.watermark is already configured",
-            })
-          );
+        if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+          return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
         }
         return undefined;
       }
@@ -255,23 +209,33 @@ describe("FurnitureControls", () => {
     const plan = makePlan({ id: "__furniture__", notes: null, elements: [] }, refetch);
     renderControls(plan);
 
-    const watermarkItem = await screen.findByText('will show "test"').then(() => itemFor("Watermark"));
-    fireEvent.click(within(watermarkItem).getByRole("button", { name: "Add" }));
+    // A corner never honors the watermark override -- preview shows
+    // Deck status ("demo"), not the override ("test").
+    const statusItem = await screen.findByText('will show "demo"').then(() => itemFor("Status"));
+    fireEvent.click(within(statusItem).getByRole("button", { name: "Add" }));
 
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
+            call[1]?.method === "POST"
+        )
+      ).toBe(true);
+    });
     await waitFor(() => expect(refetch).toHaveBeenCalled());
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("offers Remove for an active watermark and calls the remove route", async () => {
+  it("offers Remove for an active status/watermark placement and calls the remove route", async () => {
     // Regression: Remove used to be withheld entirely for status/
-    // watermark. `DELETE /api/furniture/elements/__furniture_watermark`
-    // now also clears `watermark_overlay` (and `status_indicator` if it
-    // was "watermark") server-side in the same action, so a real Remove
-    // button here is safe -- confirmed by `test_web.py`'s own server-side
-    // test, this one only covers that the button exists and fires.
+    // watermark. `DELETE /api/furniture/elements/__furniture_status` now
+    // also clears `status_indicator` server-side in the same action, so
+    // a real Remove button here is safe -- confirmed by `test_web.py`'s
+    // own server-side test, this one only covers that the button exists
+    // and fires.
     const fetchMock = stubFetch({ status_indicator: "watermark" }, {}, (url, method) => {
-      if (url === "/api/furniture/elements/__furniture_watermark" && method === "DELETE") {
-        return Promise.resolve(jsonResponse(200, { element: "__furniture_watermark" }));
+      if (url === "/api/furniture/elements/__furniture_status" && method === "DELETE") {
+        return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
       }
       return undefined;
     });
@@ -279,19 +243,19 @@ describe("FurnitureControls", () => {
 
     const refetch = vi.fn().mockResolvedValue(undefined);
     const plan = makePlan(
-      { id: "__furniture__", notes: null, elements: [furnitureElement("__furniture_watermark")] },
+      { id: "__furniture__", notes: null, elements: [furnitureElement("__furniture_status")] },
       refetch
     );
     renderControls(plan);
 
-    const watermarkItem = await screen.findByText(/configured/).then(() => itemFor("Watermark"));
-    fireEvent.click(within(watermarkItem).getByRole("button", { name: "Remove" }));
+    const statusItem = await screen.findByText(/configured/).then(() => itemFor("Status"));
+    fireEvent.click(within(statusItem).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_watermark" &&
+            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
             call[1]?.method === "DELETE"
         )
       ).toBe(true);
@@ -299,20 +263,61 @@ describe("FurnitureControls", () => {
     await waitFor(() => expect(refetch).toHaveBeenCalled());
   });
 
-  it("offers a client-only Hide/Show toggle for an active watermark, without touching the network", async () => {
+  it("calls onStatusIndicatorChanged after Add/Remove for Status, never for other kinds", async () => {
+    // Regression: `DeckOptions`' own `status_indicator` dropdown is an
+    // independent fetch with no other way to learn this component just
+    // changed it server-side -- a real bug an e2e test caught (see
+    // `App.tsx`'s own `deckOptionsKey` comment). Branding/page-number
+    // never touch `status_indicator`, so they must never fire this.
+    const fetchMock = stubFetch(
+      { status_indicator: null, metadata: { status: "demo" } },
+      {},
+      (url, method) => {
+        if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+          return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
+        }
+        if (url === "/api/furniture/elements/__furniture_branding" && method === "POST") {
+          return Promise.resolve(jsonResponse(200, { element: "__furniture_branding" }));
+        }
+        return undefined;
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onStatusIndicatorChanged = vi.fn();
+    const plan = makePlan({ id: "__furniture__", notes: null, elements: [] }, vi.fn().mockResolvedValue(undefined));
+    renderControls(plan, onStatusIndicatorChanged);
+
+    const brandingItem = await screen.findByText("Branding").then(() => itemFor("Branding"));
+    fireEvent.click(within(brandingItem).getByRole("button", { name: "Add" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          (call) => String(call[0]) === "/api/furniture/elements/__furniture_branding"
+        )
+      ).toBe(true)
+    );
+    expect(onStatusIndicatorChanged).not.toHaveBeenCalled();
+
+    const statusItem = itemFor("Status");
+    fireEvent.click(within(statusItem).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(onStatusIndicatorChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers a client-only Hide/Show toggle only while the active placement is the watermark, without touching the network", async () => {
     const fetchMock = stubFetch({ status_indicator: "watermark" });
     vi.stubGlobal("fetch", fetchMock);
 
     const plan = makePlan(
-      { id: "__furniture__", notes: null, elements: [furnitureElement("__furniture_watermark")] },
+      { id: "__furniture__", notes: null, elements: [furnitureElement("__furniture_status")] },
       vi.fn()
     );
     renderControls(plan);
 
-    const watermarkItem = await screen.findByText(/configured/).then(() => itemFor("Watermark"));
-    const hideButton = within(watermarkItem).getByRole("button", { name: "Hide" });
+    const statusItem = await screen.findByText(/configured/).then(() => itemFor("Status"));
+    const hideButton = within(statusItem).getByRole("button", { name: "Hide" });
     fireEvent.click(hideButton);
-    await within(watermarkItem).findByRole("button", { name: "Show" });
+    await within(statusItem).findByRole("button", { name: "Show" });
     expect(fetchMock.mock.calls.some((call) => call[1]?.method)).toBe(false);
   });
 
@@ -383,32 +388,4 @@ describe("FurnitureControls", () => {
     expect(within(item).getByRole("button", { name: "Add" })).toBeDisabled();
   });
 
-  it("shows both Watermark and Status as active at once when both are configured", async () => {
-    // The actual reported requirement, exercised end to end at the
-    // component level: a watermark and a corner status indicator render
-    // simultaneously.
-    const fetchMock = stubFetch({
-      status_indicator: "corner-tl",
-      watermark: "test",
-      watermark_overlay: true,
-      metadata: { status: "demo" },
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const plan = makePlan(
-      {
-        id: "__furniture__",
-        notes: null,
-        elements: [furnitureElement("__furniture_status"), furnitureElement("__furniture_watermark")],
-      },
-      vi.fn()
-    );
-    renderControls(plan);
-
-    const watermarkItem = await screen.findByText("Watermark").then(() => itemFor("Watermark"));
-    const statusItem = itemFor("Status");
-    within(watermarkItem).getByRole("button", { name: "Remove" });
-    within(watermarkItem).getByRole("button", { name: "Hide" });
-    within(statusItem).getByRole("button", { name: "Remove" });
-  });
 });

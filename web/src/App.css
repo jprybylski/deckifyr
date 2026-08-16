@@ -550,8 +550,16 @@ body {
 .schema-form__nullable > input[type="text"],
 .schema-form__nullable > input[type="number"],
 .schema-form__nullable > select {
-  flex: 0 1 260px;
-  min-width: 0;
+  /* `width`, not `flex: 0 1 260px` -- `.schema-form__nullable` is a
+     *column* flex container, where a flex-basis controls the main axis
+     (height), not width, unlike `.schema-form__field`'s own row-context
+     use of the same-looking rule below. Reusing that row-context value
+     here was the actual, confirmed (not assumed) cause of every
+     optional scalar field rendering as a ~260px-tall, narrow box
+     instead of an ordinary single-line input -- exactly the
+     "input turned into a giant textarea" bug this comment exists to
+     prevent regressing back to. */
+  width: 260px;
   max-width: 100%;
 }
 

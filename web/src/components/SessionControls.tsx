@@ -9,7 +9,7 @@
  * other mutation (`patchElement`, `putConfig`, the furniture routes)
  * only ever touches the server's in-memory working copy.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, getConfig, postDiscard, postSave, putConfig } from "../api/client";
 import { useAppContext } from "../state/AppContext";
 
@@ -19,6 +19,25 @@ export default function SessionControls() {
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Mirrors state.dirty for the `beforeunload` handler below. A plain
+  // `dispatch` alone isn't enough in `handleDiscard`: dispatch only
+  // *schedules* a re-render, it doesn't synchronously update the
+  // `state.dirty` this component's closures see, but
+  // `window.location.reload()` right after it runs immediately, in the
+  // same synchronous tick -- so the `beforeunload` listener below would
+  // still observe the stale `dirty: true` at that instant and fire a
+  // real, unnecessary "leave site?" confirmation on every Discard click.
+  // Confirmed with a real Playwright/Chromium run (not just reasoned
+  // about): `page.on("dialog")` observed a genuine `beforeunload` dialog
+  // fire immediately after a successful `POST /api/discard`, with the
+  // plain-dispatch version of this fix in place. A ref sidesteps React's
+  // render timing entirely: it's updated in place, so setting it right
+  // before `reload()` is visible to the very next `beforeunload` check
+  // no matter when that fires.
+  const dirtyRef = useRef(state.dirty);
+  useEffect(() => {
+    dirtyRef.current = state.dirty;
+  }, [state.dirty]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,13 +60,13 @@ export default function SessionControls() {
   // actually unsaved, standard `beforeunload` pattern.
   useEffect(() => {
     function handleBeforeUnload(event: BeforeUnloadEvent) {
-      if (!state.dirty) return;
+      if (!dirtyRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [state.dirty]);
+  }, []);
 
   async function handleSave() {
     setError(null);
@@ -67,6 +86,12 @@ export default function SessionControls() {
     setDiscarding(true);
     try {
       await postDiscard();
+      // Clear dirty state before reloading -- see dirtyRef's own comment
+      // above for why this must be the ref write, not just the dispatch
+      // (kept below too, so anything that renders before the reload
+      // actually completes reflects the true state as well).
+      dirtyRef.current = false;
+      dispatch({ type: "SET_DIRTY", dirty: false });
       // Simplest correct way to resync every independently-fetched piece
       // of state (`usePlan`'s slides, `ConfigEditor`'s loaded doc,
       // `DeckOptions`' doc) without threading a refetch callback through

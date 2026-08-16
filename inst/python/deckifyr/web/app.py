@@ -24,6 +24,8 @@ background thread (see that module's own docstring for why).
 from __future__ import annotations
 
 import copy
+import shutil
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -40,7 +42,6 @@ from deckifyr.plan import (
     FURNITURE_BRANDING_ID,
     FURNITURE_PAGE_NUMBER_ID,
     FURNITURE_STATUS_ID,
-    FURNITURE_WATERMARK_ID,
     STATUS_INDICATOR_FIELDS,
     ResolvedElement,
     ResolvedSlide,
@@ -133,14 +134,10 @@ def _resolve_furniture_target(
     Raises `DeckifyrError` (`PATH_NOT_FOUND`) for ids with no editable
     geometry at all (`background`, which always fills the slide with no
     `box` of its own in the schema) or whose target isn't selectable
-    right now (`status` with no *corner* `status_indicator` chosen in
+    right now (`status` with no `status_indicator` chosen in
     `presentation.yaml`) -- both are "there's nothing here to edit yet"
     in spirit, the same status a missing `set_value` parent already
-    produces via `_set_element_field` below. `FURNITURE_WATERMARK_ID`
-    always targets `furniture.status.watermark`, independent of
-    `status_indicator`/`watermark_overlay` -- editing its position is
-    harmless whether or not it's currently the active/overlay watermark
-    (`deckifyr.plan.FURNITURE_WATERMARK_ID`'s own docstring).
+    produces via `_set_element_field` below.
     """
     if element_id == FURNITURE_BACKGROUND_ID:
         raise DeckifyrError(
@@ -151,16 +148,14 @@ def _resolve_furniture_target(
         )
     if element_id == FURNITURE_STATUS_ID:
         indicator = presentation_doc.status_indicator
-        if indicator is None or indicator in ("none", "watermark"):
+        if indicator is None or indicator == "none":
             raise DeckifyrError(
-                "no corner status indicator is selected -- choose one in "
+                "no status indicator is selected -- choose one in "
                 "Deck Options first",
                 code=ErrorCode.PATH_NOT_FOUND,
             )
         field_name = STATUS_INDICATOR_FIELDS[indicator]
         return f"furniture.status.{field_name}", True, True, None
-    if element_id == FURNITURE_WATERMARK_ID:
-        return "furniture.status.watermark", True, True, None
     if element_id == FURNITURE_BRANDING_ID:
         return "furniture.branding", False, False, "text"
     if element_id == FURNITURE_PAGE_NUMBER_ID:
@@ -256,7 +251,7 @@ def _default_furniture_value(
     fixed widescreen assumption.
     """
     width_in, height_in = _slide_size_in(design_data)
-    if element_id == FURNITURE_WATERMARK_ID:
+    if element_id == FURNITURE_STATUS_ID and field_name == "watermark":
         box_w, box_h = width_in * 0.75, height_in * 0.25
         return {
             "box": _default_box((width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h),
@@ -337,6 +332,49 @@ def _frontend_build_warning(static_dir: Path, web_src_dir: Path) -> str | None:
     )
 
 
+def _rebuild_frontend(web_dir: Path, *, timeout_seconds: float = 300.0) -> str | None:
+    """Runs `npm run build` in `web_dir` (`web/`, the parent of
+    `web_src_dir`) when `npm` is on PATH, so a stale committed bundle
+    (`_frontend_build_warning` above) gets fixed automatically in a dev
+    checkout instead of only ever being reported -- the actual answer to
+    "why print a warning instead of just rebuilding" rather than a human
+    having to run CONTRIBUTING.md's recipe by hand every time. Only
+    `create_app` calls this, and only when that warning already fired;
+    like `_frontend_build_warning` itself this is a silent no-op for every
+    real end user (an installed wheel/R package has no `web/` to build).
+
+    Returns `None` when there's nothing to report -- either `npm` isn't on
+    PATH (caller falls back to the plain warning, unchanged from before
+    this function existed) or the build succeeded -- otherwise a short
+    message describing what went wrong, meant to be printed alongside
+    (not instead of) the recomputed staleness warning. Never raises: a
+    failed or timed-out auto-rebuild attempt must not crash `deckifyr
+    serve` itself, since the manual `npm run build` recipe still works as
+    a fallback either way.
+    """
+    npm = shutil.which("npm")
+    if npm is None:
+        return None
+    print("deckifyr serve: frontend build is stale -- running `npm run build`...", file=sys.stderr)
+    try:
+        result = subprocess.run(
+            [npm, "run", "build"],
+            cwd=web_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return f"npm run build timed out after {timeout_seconds:.0f}s"
+    except OSError as exc:
+        return f"npm run build could not be started: {exc}"
+    if result.returncode != 0:
+        tail = "\n".join(result.stderr.strip().splitlines()[-15:])
+        return f"npm run build failed (exit {result.returncode}):\n{tail}"
+    print("deckifyr serve: frontend rebuilt successfully.", file=sys.stderr)
+    return None
+
+
 def create_app(
     project_root: Path,
     presentation_name: str = "presentation.yaml",
@@ -351,6 +389,11 @@ def create_app(
     static_dir = Path(__file__).parent / "static"
     web_src_dir = Path(__file__).resolve().parents[4] / "web" / "src"
     frontend_warning = _frontend_build_warning(static_dir, web_src_dir)
+    if frontend_warning is not None:
+        rebuild_failure = _rebuild_frontend(web_src_dir.parent)
+        if rebuild_failure is not None:
+            print(f"deckifyr serve: WARNING: {rebuild_failure}", file=sys.stderr)
+        frontend_warning = _frontend_build_warning(static_dir, web_src_dir)
     if frontend_warning is not None:
         print(f"deckifyr serve: WARNING: {frontend_warning}", file=sys.stderr)
 
@@ -585,7 +628,6 @@ def create_app(
             page_number=1,
             total_pages=len(presentation.slides),
             status_indicator=presentation.status_indicator,
-            watermark_overlay=presentation.watermark_overlay,
             corner_text=presentation.metadata.status,
             watermark_text=resolve_watermark_text(presentation),
             furniture_lenient=True,
@@ -662,31 +704,20 @@ def create_app(
         edited = copy.deepcopy(working_copy.get("design"))
         furniture = edited.setdefault("furniture", {})
 
-        enable_watermark_overlay = False
-        if element_id == FURNITURE_WATERMARK_ID:
-            # Independent of `status_indicator` entirely -- materializing
-            # the watermark's style here also turns on the separate
-            # `watermark_overlay` toggle in the same action, since a
-            # style with nothing pointing at it wouldn't render anything
-            # (`deckifyr.plan.FURNITURE_WATERMARK_ID`'s own docstring for
-            # why this is a genuinely independent, additive concept from
-            # `status_indicator: watermark`).
-            status_block = furniture.setdefault("status", {})
-            if status_block.get("watermark") is not None:
-                raise DeckifyrError(
-                    "design.yaml's furniture.status.watermark is already configured",
-                    code=ErrorCode.SCHEMA_VALIDATION,
-                )
-            status_block["watermark"] = _default_furniture_value(element_id, None, edited)
-            enable_watermark_overlay = True
-        elif element_id == FURNITURE_STATUS_ID:
+        new_status_indicator: str | None = None
+        if element_id == FURNITURE_STATUS_ID:
             indicator = presentation_doc.status_indicator
-            if indicator is None or indicator in ("none", "watermark"):
-                raise DeckifyrError(
-                    "no corner status indicator is selected -- choose one "
-                    "in Deck Options first",
-                    code=ErrorCode.PATH_NOT_FOUND,
-                )
+            if indicator is None or indicator == "none":
+                # Nothing selected yet -- "Add" itself picks a default
+                # placement (watermark, the simplest single-element
+                # case) rather than requiring the Deck Options dropdown
+                # to be touched first, mirroring
+                # `DeckOptions.tsx`'s own `selectStatusIndicator`
+                # collapsing select-and-configure into one action for
+                # the dropdown path. Choosing a corner instead is still
+                # one dropdown change away afterward.
+                indicator = "watermark"
+                new_status_indicator = indicator
             field_name = STATUS_INDICATOR_FIELDS[indicator]
             status_block = furniture.setdefault("status", {})
             if status_block.get(field_name) is not None:
@@ -726,14 +757,15 @@ def create_app(
                 projectio.format_pydantic_error(exc, str(design_path)),
                 code=ErrorCode.SCHEMA_VALIDATION,
             ) from exc
-        if enable_watermark_overlay:
-            # Validated *before* either write commits -- turning the
-            # overlay on with no text source anywhere (no `watermark`
+        if new_status_indicator is not None:
+            # Validated *before* either write commits -- defaulting to
+            # `"watermark"` with no text source anywhere (no `watermark`
             # override, no `metadata.status`) is exactly what
             # `_check_watermark_has_text` exists to reject, the same as
-            # it always has for `status_indicator: watermark`.
+            # it always has for a `status_indicator: watermark` selected
+            # via the Deck Options dropdown.
             edited_presentation = copy.deepcopy(working_copy.get("presentation"))
-            edited_presentation["watermark_overlay"] = True
+            edited_presentation["status_indicator"] = new_status_indicator
             projectio.validate_presentation_data(presentation_path, edited_presentation)
             working_copy.set("presentation", edited_presentation)
         working_copy.set("design", edited)
@@ -747,34 +779,20 @@ def create_app(
         furniture = edited.setdefault("furniture", {})
 
         presentation_updates: dict[str, Any] = {}
-        if element_id == FURNITURE_WATERMARK_ID:
-            status_block = furniture.setdefault("status", {})
-            status_block["watermark"] = None
-            # Always turn the overlay off (it has nothing to render now),
-            # and clear status_indicator too if it was specifically
-            # "watermark" -- but leave the override *text*
-            # (`presentation.watermark`) alone. That's a content choice,
-            # not an activation flag, and stays useful if the watermark
-            # is added back later (`design.yaml` holds the "pieces",
-            # `presentation.yaml` only "implements" -- the same split the
-            # user asked for).
-            presentation_updates["watermark_overlay"] = False
-            if presentation_doc.status_indicator == "watermark":
-                presentation_updates["status_indicator"] = None
-        elif element_id == FURNITURE_STATUS_ID:
+        if element_id == FURNITURE_STATUS_ID:
             indicator = presentation_doc.status_indicator
-            if indicator is None or indicator in ("none", "watermark"):
+            if indicator is None or indicator == "none":
                 raise DeckifyrError(
-                    "no corner status indicator is selected -- choose one "
+                    "no status indicator is selected -- choose one "
                     "in Deck Options first",
                     code=ErrorCode.PATH_NOT_FOUND,
                 )
             field_name = STATUS_INDICATOR_FIELDS[indicator]
             status_block = furniture.setdefault("status", {})
             status_block[field_name] = None
-            # Removing the active corner also clears status_indicator in
-            # the same action -- leaving it pointing at a style that no
-            # longer exists is exactly the dangling-reference footgun
+            # Removing the active placement also clears status_indicator
+            # in the same action -- leaving it pointing at a style that
+            # no longer exists is exactly the dangling-reference footgun
             # this route used to sidestep by refusing to expose Remove
             # at all.
             presentation_updates["status_indicator"] = None

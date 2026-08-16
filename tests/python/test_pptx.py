@@ -261,7 +261,7 @@ def test_furniture_composes_as_ordinary_shapes(project):
     shape_names = {shape.name for shape in slide.shapes}
     assert shape_names == {
         "__furniture_background",
-        "__furniture_watermark",
+        "__furniture_status",
         "__furniture_branding",
         "__furniture_page_number",
         "title",
@@ -775,7 +775,7 @@ def test_status_indicator_watermark_composes_the_status_furniture(project):
     prs = Presentation(str(result.output_path))
     (slide,) = list(prs.slides)
     (shape,) = list(slide.shapes)
-    assert shape.name == "__furniture_watermark"
+    assert shape.name == "__furniture_status"
     assert shape.text_frame.text == "DRAFT"
     # `python-pptx` normalizes a negative rotation into 0-360 range.
     assert shape.rotation == 330
@@ -963,9 +963,9 @@ def test_watermark_with_a_high_z_index_paints_on_top_of_ordinary_content(project
     # Painter's-algorithm order: the watermark's z_index (9999) sorts
     # after the ordinary element's default (0), so it must be added
     # (and therefore painted) last -- on top, not hidden behind it.
-    assert shape_names == ["body", "__furniture_watermark"]
+    assert shape_names == ["body", "__furniture_status"]
 
-    watermark_shape = next(s for s in slide.shapes if s.name == "__furniture_watermark")
+    watermark_shape = next(s for s in slide.shapes if s.name == "__furniture_status")
     run = watermark_shape.text_frame.paragraphs[0].runs[0]
     alpha = run._r.find(qn("a:rPr")).find(qn("a:solidFill")).find(qn("a:srgbClr")).find(
         qn("a:alpha")

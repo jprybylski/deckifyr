@@ -161,27 +161,11 @@ class PresentationDocument(BaseModel):
     # ("draft", "demo", "final", ...), so a status/watermark mark
     # doesn't require typing the same word twice; set this explicitly
     # only when the mark's text should differ from `metadata.status`.
-    # Simply unused when neither `status_indicator` nor `watermark_overlay`
-    # (below) selects anything (see `_check_watermark_has_text` below for
-    # the one case where having neither this nor `metadata.status` is a
-    # validation error rather than a quiet no-op).
+    # Simply unused when `status_indicator` doesn't select the watermark
+    # placement (see `_check_watermark_has_text` below for the one case
+    # where having neither this nor `metadata.status` is a validation
+    # error rather than a quiet no-op).
     watermark: str | None = None
-    # Independent, additive watermark overlay (issue #24 dogfeeding) --
-    # deliberately a *separate* concept from `status_indicator`'s own
-    # `"watermark"` value, not a duplicate of it. `status_indicator:
-    # watermark` means "the status indicator itself takes watermark
-    # form" (mutually exclusive with a corner, exactly as it always has
-    # been -- unchanged). `watermark_overlay: true` means "show a
-    # watermark regardless of what status_indicator says", so it can
-    # render *alongside* a corner placement at the same time -- a real
-    # user hit exactly this gap: wanting a watermark visible together
-    # with a corner-tl status indicator, which the single-select
-    # `status_indicator` field can never represent on its own.
-    # `deckifyr.plan._furniture_layout` renders the watermark whenever
-    # *either* condition is true (`status_indicator == "watermark" or
-    # watermark_overlay`); both being true at once is simply redundant,
-    # not an error -- one watermark still renders, not two.
-    watermark_overlay: bool = False
     slides: list[Slide]
 
     _check_version = field_validator("deckifyr")(check_schema_version)
@@ -203,20 +187,17 @@ class PresentationDocument(BaseModel):
         # small corner placement with no text (`deckifyr.plan
         # ._furniture_layout` simply skips that one, the same "no
         # content, not required" rule an empty layout zone already
-        # follows). Either activation path (`status_indicator: watermark`
-        # or `watermark_overlay: true`) gets this stricter check.
-        # `watermark` unset is fine as long as `metadata.status` supplies
-        # the text instead (`deckifyr.plan.expand_presentation`'s own
-        # fallback) -- this only fails when *neither* would give the
+        # follows). `watermark` unset is fine as long as `metadata.status`
+        # supplies the text instead (`deckifyr.plan.expand_presentation`'s
+        # own fallback) -- this only fails when *neither* would give the
         # compositor anything to show.
         if (
-            (self.status_indicator == "watermark" or self.watermark_overlay)
+            self.status_indicator == "watermark"
             and self.watermark is None
             and self.metadata.status is None
         ):
             raise ValueError(
-                "a watermark is active (status_indicator: watermark or "
-                "watermark_overlay: true) but requires either a non-null "
+                "status_indicator: watermark is active but requires either a non-null "
                 "'watermark' value or a non-null 'metadata.status' (the "
                 "text to display)"
             )

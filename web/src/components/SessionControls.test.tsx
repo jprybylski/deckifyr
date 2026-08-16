@@ -96,7 +96,20 @@ describe("SessionControls", () => {
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
-    const reloadMock = vi.fn();
+    // A real `location.reload()` synchronously fires `beforeunload`
+    // before it navigates away -- reproduced here (jsdom's own mocked
+    // reload does nothing on its own) so this test actually exercises
+    // the race a real Playwright/Chromium run confirmed (see
+    // e2e/discard.spec.ts and dirtyRef's own comment in
+    // SessionControls.tsx): a `dispatch` alone only *schedules* a
+    // re-render, so a `beforeunload` listener closed over the
+    // pre-dispatch `state.dirty` would still see it as `true` at this
+    // exact instant and fire an unnecessary confirmation dialog.
+    let beforeUnloadEvent: Event | undefined;
+    const reloadMock = vi.fn(() => {
+      beforeUnloadEvent = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(beforeUnloadEvent);
+    });
     const originalLocation = window.location;
     Object.defineProperty(window, "location", {
       configurable: true,
@@ -108,6 +121,11 @@ describe("SessionControls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
 
     await waitFor(() => expect(reloadMock).toHaveBeenCalledTimes(1));
+    // Regression check: the beforeunload fired *by* the reload above must
+    // not have been blocked -- i.e. dirty was already false by the time
+    // reload() ran, not just eventually true after a later re-render.
+    expect(beforeUnloadEvent?.defaultPrevented).toBe(false);
+    expect(screen.getByText("All changes saved")).toBeInTheDocument();
 
     Object.defineProperty(window, "location", {
       configurable: true,
