@@ -10,6 +10,11 @@ import { useEffect, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { boxToInches, formatInchesString } from "../geometry";
 import { findElement, inverseForBoxPatch, type UsePlanResult } from "../state/usePlan";
+import {
+  furnitureElementSupportsRotation,
+  furnitureElementSupportsValue,
+  furnitureElementSupportsZIndex,
+} from "./SlideCanvas";
 
 interface Props {
   plan: UsePlanResult;
@@ -17,11 +22,15 @@ interface Props {
 
 export default function ElementInspector({ plan }: Props) {
   const { state } = useAppContext();
-  const { slides } = plan;
-  const [error, setError] = useState<string | null>(null);
+  const { slides, furnitureSlide } = plan;
 
-  const slide = slides?.find((s) => s.id === state.selectedSlideId);
+  const isFurnitureSlideSelected =
+    furnitureSlide !== null && state.selectedSlideId === furnitureSlide.id;
+  const slide = isFurnitureSlideSelected
+    ? furnitureSlide
+    : slides?.find((s) => s.id === state.selectedSlideId);
   const element = findElement(slide, state.selectedElementId);
+  const [error, setError] = useState<string | null>(null);
 
   // Local editable copies of the numeric fields, reset whenever the
   // selected element (or its server-side value) changes -- otherwise a
@@ -51,13 +60,18 @@ export default function ElementInspector({ plan }: Props) {
 
   // `__furniture_*` ids (background/status/branding/page number, spec
   // section 7.8) are synthesized once per slide at plan-time from
-  // design.yaml's `furniture` block, not stored per-slide -- there's no
-  // `PATCH .../elements/{id}` target for one no matter its `type`, so
-  // this note takes priority over the ordinary "not draggable yet" copy
-  // below (which implies future per-slide support that will never
-  // apply here).
+  // design.yaml's `furniture` block. On an ordinary real slide there's
+  // no `PATCH .../elements/{id}` target for one no matter its `type`,
+  // so this note takes priority over the ordinary "not draggable yet"
+  // copy below (which implies future per-slide support that will never
+  // apply here). On the furniture *pseudo*-slide it's the opposite --
+  // these are exactly what's editable there, through `design.yaml`
+  // instead of this slide's own elements (issue #21).
   const isFurniture = element.id.startsWith("__furniture_");
   const isPlaceholder = !["text", "markdown", "image"].includes(element.type);
+  const rotationSupported = !isFurnitureSlideSelected || furnitureElementSupportsRotation(element.id);
+  const zIndexSupported = !isFurnitureSlideSelected || furnitureElementSupportsZIndex(element.id);
+  const valueSupported = !isFurnitureSlideSelected || furnitureElementSupportsValue(element.id);
   // Re-bind as plain (non-optional) locals right after the guard above
   // -- TypeScript can't carry narrowing from an outer `if` into a
   // nested function declaration (the closure could, in principle, run
@@ -67,15 +81,21 @@ export default function ElementInspector({ plan }: Props) {
   const currentElement = element;
 
   async function submitBox() {
-    const patch = {
+    const patch: Parameters<UsePlanResult["applyElementPatch"]>[2] = {
       box: {
         x: Number(fields.x),
         y: Number(fields.y),
         width: Number(fields.width),
         height: Number(fields.height),
       },
-      rotation: Number(fields.rotation),
     };
+    // Branding/page-number furniture have no `rotation` field in
+    // design.yaml's schema -- the backend hard-rejects a patch that
+    // tries to set one there, so this must not send it (see
+    // `SlideCanvas.tsx`'s own `furnitureElementSupportsRotation`).
+    if (rotationSupported) {
+      patch.rotation = Number(fields.rotation);
+    }
     const inverse = inverseForBoxPatch(currentElement, patch);
     try {
       await plan.applyElementPatch(currentSlide.id, currentElement.id, patch, inverse, "edit geometry");
@@ -101,13 +121,24 @@ export default function ElementInspector({ plan }: Props) {
       <h3>{element.type}</h3>
       <p className="element-inspector__id">{element.id}</p>
       {isFurniture ? (
-        <p className="element-inspector__note">
-          This is a deck-wide furniture element (design.yaml's <code>furniture</code> block), not
-          part of this slide -- it's fixed here. Uncheck &ldquo;Show furniture&rdquo; in the
-          toolbar to hide it while editing (view-only, doesn&rsquo;t change the built deck); toggle
-          the watermark/status placement itself above the slide list, or edit
-          background/branding/page-number furniture via the Config tab.
-        </p>
+        isFurnitureSlideSelected ? (
+          <p className="element-inspector__note">
+            This is a deck-wide furniture element (design.yaml's <code>furniture</code> block) --
+            editing its geometry here writes to <code>design.yaml</code>, not this deck's slides,
+            and applies to every slide.
+            {!rotationSupported && " This item has no rotation field."}
+            {!valueSupported &&
+              " Its text isn't stored here and can't be edited on the canvas -- it comes from " +
+                "presentation.yaml (status/watermark text, or the page-number format string)."}
+          </p>
+        ) : (
+          <p className="element-inspector__note">
+            This is a deck-wide furniture element (design.yaml's <code>furniture</code> block), not
+            part of this slide -- it's fixed here. Uncheck &ldquo;Show furniture&rdquo; in the
+            toolbar to hide it while editing (view-only, doesn&rsquo;t change the built deck), or
+            select the &ldquo;⚙ Furniture&rdquo; entry in the slide list to edit it directly.
+          </p>
+        )
       ) : (
         isPlaceholder && (
           <p className="element-inspector__note">
@@ -139,26 +170,30 @@ export default function ElementInspector({ plan }: Props) {
           onChange={(e) => setFields({ ...fields, height: e.target.value })}
         />
       </label>
-      <label>
-        Rotation (deg)
-        <input
-          value={fields.rotation}
-          onChange={(e) => setFields({ ...fields, rotation: e.target.value })}
-        />
-      </label>
+      {rotationSupported && (
+        <label>
+          Rotation (deg)
+          <input
+            value={fields.rotation}
+            onChange={(e) => setFields({ ...fields, rotation: e.target.value })}
+          />
+        </label>
+      )}
       <button type="button" onClick={() => void submitBox()}>
         Apply
       </button>
 
-      <div className="element-inspector__zindex">
-        <span>z-index: {element.z_index}</span>
-        <button type="button" onClick={() => void bump(1)}>
-          Bring forward
-        </button>
-        <button type="button" onClick={() => void bump(-1)}>
-          Send backward
-        </button>
-      </div>
+      {zIndexSupported && (
+        <div className="element-inspector__zindex">
+          <span>z-index: {element.z_index}</span>
+          <button type="button" onClick={() => void bump(1)}>
+            Bring forward
+          </button>
+          <button type="button" onClick={() => void bump(-1)}>
+            Send backward
+          </button>
+        </div>
+      )}
 
       {element.type !== "image" && (
         <p className="element-inspector__hint">

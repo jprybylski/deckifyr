@@ -25,6 +25,7 @@ import type {
   JobArtifactsResponse,
   PlanResponse,
   ProjectInfo,
+  ResolvedSlide,
   ValidateResponse,
   WriteResult,
 } from "../types";
@@ -108,6 +109,41 @@ export function patchElement(
     `/api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
     { method: "PATCH", body: JSON.stringify(body) }
   );
+}
+
+/** `design.yaml`'s `furniture` block, resolved the same way a real
+ * slide's elements are (spec section 7.8, issue #21) -- a synthetic
+ * `ResolvedSlide` with id `"__furniture__"`, shown as its own
+ * pseudo-slide entry rather than the fixed placeholder every real slide
+ * still renders it as. */
+export function getFurniture(): Promise<ResolvedSlide> {
+  return request("/api/furniture");
+}
+
+export function patchFurnitureElement(
+  elementId: string,
+  body: ElementPatchBody
+): Promise<WriteResult> {
+  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Materializes a furniture kind's `design.yaml` sub-object with a
+ * sensible default box/style, if it isn't already configured (a 422 if
+ * it already is) -- the "enable" half of issue #21's "enabling vs
+ * editing" distinction; `removeFurnitureElement` is the other half. */
+export function addFurnitureElement(elementId: string): Promise<WriteResult> {
+  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+    method: "POST",
+  });
+}
+
+export function removeFurnitureElement(elementId: string): Promise<WriteResult> {
+  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function postBuild(): Promise<{ job_id: string }> {

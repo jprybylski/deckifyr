@@ -157,6 +157,39 @@ body {
   color: #b3261e;
 }
 
+.furniture-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #f7f4ea;
+  border: 1px solid #e3d9ad;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.furniture-controls__label {
+  font-weight: bold;
+  color: #5f6368;
+}
+
+.furniture-controls__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.furniture-controls__hint {
+  color: #5f6368;
+  font-size: 0.8rem;
+}
+
+.furniture-controls__error {
+  color: #b3261e;
+}
+
 .slide-list {
   width: 200px;
   flex-shrink: 0;
@@ -183,6 +216,17 @@ body {
 .slide-list__item--active {
   border-color: #2457a6;
   background: #e8eef7;
+}
+
+.slide-list__item--furniture {
+  border-style: dashed;
+  background: #f7f4ea;
+  margin-bottom: 0.75rem;
+}
+
+.slide-list__item--furniture.slide-list__item--active {
+  background: #f0e9d0;
+  border-color: #8a6d1a;
 }
 
 .slide-list__count {
@@ -227,6 +271,16 @@ body {
   color: #b3261e;
 }
 
+.slide-canvas__warning {
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 0.5rem;
+  background: #fdf3d9;
+  border: 1px solid #e3c874;
+  border-radius: 4px;
+  color: #6b5300;
+  font-size: 0.85rem;
+}
+
 .element-inspector {
   width: 260px;
   flex-shrink: 0;
@@ -256,10 +310,231 @@ body {
   flex-wrap: wrap;
 }
 
+.config-editor__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.config-editor__view-toggle {
+  display: flex;
+  border: 1px solid #cccccc;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.config-editor__view-toggle button {
+  border: none;
+  background: #ffffff;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+
+.config-editor__view-toggle button:first-child {
+  border-right: 1px solid #cccccc;
+}
+
+.config-editor__view-toggle button.config-editor__view-btn--active {
+  background: #2457a6;
+  color: #ffffff;
+}
+
 .config-editor__textarea {
   width: 100%;
   font-family: Consolas, monospace;
   font-size: 0.85rem;
+}
+
+/* Highlighted-<pre>-behind-a-transparent-<textarea> overlay for the Raw
+   view (issue #22) -- both children share font/padding/line-height and
+   are absolutely positioned over the same box, `<textarea>` on top with
+   its text made transparent so only its caret/selection paint, and the
+   syntax-colored `<pre>` shows through underneath. `onScroll` in
+   ConfigEditor.tsx keeps the two scrolled together. */
+.config-editor__raw-wrap {
+  position: relative;
+  width: 100%;
+  height: 480px;
+}
+
+.config-editor__raw-highlight,
+.config-editor__textarea--overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0.5rem;
+  font-family: Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.config-editor__raw-highlight {
+  border: 1px solid #cccccc;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #202124;
+  pointer-events: none;
+}
+
+.config-editor__textarea--overlay {
+  border: 1px solid transparent;
+  background: transparent;
+  color: transparent;
+  caret-color: #202124;
+  resize: none;
+}
+
+.json-key {
+  color: #8a3b8f;
+  font-weight: bold;
+}
+
+.json-string {
+  color: #1a7f37;
+}
+
+.json-number {
+  color: #005cc5;
+}
+
+.json-boolean,
+.json-null {
+  color: #b3261e;
+}
+
+.config-editor__form {
+  border: 1px solid #dddddd;
+  border-radius: 4px;
+  padding: 0.75rem;
+  max-height: 480px;
+  max-width: 720px;
+  overflow: auto;
+}
+
+.schema-form__object,
+.schema-form__dict,
+.schema-form__array {
+  /* Explicit, not relied-on-by-default: `.schema-form__nullable`'s own
+     `align-items: flex-start` (needed so a *scalar* nullable field's
+     input doesn't stretch full-width) would otherwise shrink-fit a
+     nested container placed inside it down to its content's natural
+     width instead of the space actually available. */
+  width: 100%;
+}
+
+.schema-form__object {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* A scalar field (string/number/boolean/enum) lays out label+control on
+   one row with a capped control width -- an unconstrained flex-column
+   with default `align-items: stretch` was the actual cause of every
+   text input filling the entire (very wide) form container edge to
+   edge, confirmed against a real screenshot, not just a guess. A field
+   whose value is a nested container (object/dict/array/nullable/raw
+   fallback) switches back to a stacked column below via `:has()`, since
+   those need their own full-width block, not a same-row layout. */
+.schema-form__field {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 2px solid #eeeeee;
+}
+
+.schema-form__field:has(> .schema-form__object),
+.schema-form__field:has(> .schema-form__dict),
+.schema-form__field:has(> .schema-form__array),
+.schema-form__field:has(> .schema-form__nullable),
+.schema-form__field:has(> .schema-form__raw) {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.schema-form__field-label {
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #5f6368;
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+
+.schema-form__field > input[type="text"],
+.schema-form__field > input[type="number"],
+.schema-form__field > select {
+  flex: 0 1 260px;
+  min-width: 0;
+}
+
+.schema-form__required {
+  color: #b3261e;
+}
+
+.schema-form__nullable {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.schema-form__nullable > input[type="text"],
+.schema-form__nullable > input[type="number"],
+.schema-form__nullable > select {
+  flex: 0 1 260px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.schema-form__nullable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: #5f6368;
+}
+
+.schema-form__dict-entry {
+  border: 1px solid #eeeeee;
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.schema-form__dict-entry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+
+.schema-form__dict-add,
+.schema-form__array-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.schema-form__raw-textarea {
+  width: 100%;
+  font-family: Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.schema-form__raw-error {
+  display: block;
+  color: #b3261e;
+  font-size: 0.75rem;
 }
 
 .config-editor__note {
