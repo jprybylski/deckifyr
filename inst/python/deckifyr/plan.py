@@ -48,15 +48,17 @@ SUPPORTED_ELEMENT_TYPES = {
 # design.yaml field it maps to -- the same "mechanism in its own module"
 # split this file's other public helpers already follow.
 FURNITURE_BACKGROUND_ID = "__furniture_background"
+# The one status/watermark element -- `status_indicator` is a strict
+# single-select (spec section 7.8): `"watermark"` and each `corner-*`
+# value are mutually exclusive placements of the *same* element, not
+# separate ones. issue #24 briefly split the watermark out into its own
+# `FURNITURE_WATERMARK_ID`, additive alongside a corner via a separate
+# `watermark_overlay` flag -- reverted (not carried forward) after
+# dogfeeding showed the two-control surface (a Deck Options checkbox and
+# a Furniture-panel Add/Remove pair both toggling the same thing) was
+# more confusing than the corner+watermark combination it enabled was
+# worth.
 FURNITURE_STATUS_ID = "__furniture_status"
-# The overlay watermark (`PresentationDocument.watermark_overlay`, or
-# `status_indicator == "watermark"`) is a *separate* resolved element
-# from `FURNITURE_STATUS_ID` -- deliberately, so a corner placement
-# (`FURNITURE_STATUS_ID`) and the watermark can both be present in the
-# same `Layout` at once (issue #24 dogfeeding: a real user wanted a
-# watermark visible *alongside* a corner-tl status indicator, which a
-# single shared element id could never represent).
-FURNITURE_WATERMARK_ID = "__furniture_watermark"
 FURNITURE_BRANDING_ID = "__furniture_branding"
 FURNITURE_PAGE_NUMBER_ID = "__furniture_page_number"
 
@@ -620,7 +622,6 @@ def _furniture_layout(
     page_number: int,
     total_pages: int,
     status_indicator: str | None = None,
-    watermark_overlay: bool = False,
     corner_text: str | None = None,
     watermark_text: str | None = None,
     lenient: bool = False,
@@ -632,42 +633,32 @@ def _furniture_layout(
     merge, override, and composition machinery rather than a parallel
     code path (spec section 7.8's closing note).
 
-    `status_indicator`/`watermark_overlay` are `presentation.yaml`'s own
-    `PresentationDocument.status_indicator`/`.watermark_overlay`
-    (threaded down via `expand_slide`/`expand_presentation`):
-    `status_indicator` picks *which* corner placement to use (`None`/
-    `"none"`/`"watermark"` all mean no corner). `corner_text`/
-    `watermark_text` are two independently-resolved text values (the
-    corner never honors `presentation.watermark`'s override, the
-    watermark always does -- `resolve_watermark_text`'s own docstring
-    has the reasoning), not the same value reused for both. The
-    watermark itself is rendered as its own element
-    (`FURNITURE_WATERMARK_ID`), independent of the corner, whenever
-    *either* `status_indicator == "watermark"` or `watermark_overlay` is
-    true -- deliberately two different activation paths for the same
-    element, not a duplicate concept: `status_indicator: watermark`
-    means "the status indicator itself takes watermark form" (mutually
-    exclusive with a corner, unchanged from the original design);
-    `watermark_overlay: true` is a separate, additive toggle that can be
-    true *alongside* a corner `status_indicator` at the same time, so a
-    watermark and a corner status indicator can both be visible together
-    (issue #24 dogfeeding -- a single shared element/field could never
-    represent that).
+    `status_indicator` is `presentation.yaml`'s own
+    `PresentationDocument.status_indicator` (threaded down via
+    `expand_slide`/`expand_presentation`): a strict single-select --
+    `None`/`"none"` means no status/watermark element at all, and
+    exactly one of `"watermark"` or a `corner-*` value picks which single
+    `furniture.status` placement renders as `FURNITURE_STATUS_ID`.
+    `corner_text`/`watermark_text` are two independently-resolved text
+    values (the corner never honors `presentation.watermark`'s override,
+    the watermark always does -- `resolve_watermark_text`'s own
+    docstring has the reasoning), not the same value reused for both;
+    which one applies here depends only on whether `status_indicator ==
+    "watermark"`, since it's one element either way.
 
     `lenient` (default `False`, unchanged strict behavior for every
     existing caller -- `deckifyr build`/`validate`/`GET /api/plan` must
     never silently drop configured content, spec section 20 warning 7)
     is a real-slide-vs-furniture-editor distinction, not a relaxation of
     that rule: `deckifyr.web.app`'s `GET /api/furniture` route (issue
-    #21) is the one place a `status_indicator`/`watermark_overlay`
-    selection with no matching `furniture.status` style configured yet
-    -- or a `page_number.format` with a bad placeholder -- is an
-    *expected, mid-fix* state, not an error to surface. With
-    `lenient=True`, either condition just omits that one element from
-    the returned `Layout` instead of raising, so the furniture
-    pseudo-slide (and its `FurnitureControls` "Add" action, the actual
-    fix) stays reachable rather than 500ing the one screen that could
-    fix the problem.
+    #21) is the one place a `status_indicator` selection with no
+    matching `furniture.status` style configured yet -- or a
+    `page_number.format` with a bad placeholder -- is an *expected,
+    mid-fix* state, not an error to surface. With `lenient=True`, either
+    condition just omits that one element from the returned `Layout`
+    instead of raising, so the furniture pseudo-slide (and its
+    `FurnitureControls` "Add" action, the actual fix) stays reachable
+    rather than 500ing the one screen that could fix the problem.
     """
     elements: dict[str, Element] = {}
     status_furniture = design.furniture.status
@@ -683,7 +674,7 @@ def _furniture_layout(
             alt_text=_FURNITURE_BACKGROUND_ALT_TEXT,
         )
 
-    if status_indicator is not None and status_indicator not in ("none", "watermark"):
+    if status_indicator is not None and status_indicator != "none":
         field_name = STATUS_INDICATOR_FIELDS[status_indicator]
         # `design.furniture.status` (the whole `StatusFurniture` block,
         # not just one placement) is itself optional -- a project that
@@ -705,13 +696,15 @@ def _furniture_layout(
                 f"but design.yaml's furniture.status has no {field_name!r} "
                 "configured"
             )
-        # A small corner placement with no text is just empty content --
-        # skipped like any other unfilled, non-required element, not an
-        # error.
-        if indicator_style is not None and corner_text is not None:
+        text = watermark_text if status_indicator == "watermark" else corner_text
+        # A small corner placement (or, per `_check_watermark_has_text`,
+        # an impossible case for the watermark) with no text is just
+        # empty content -- skipped like any other unfilled, non-required
+        # element, not an error.
+        if indicator_style is not None and text is not None:
             elements[FURNITURE_STATUS_ID] = Element(
                 type="text",
-                value=corner_text,
+                value=text,
                 box=indicator_style.box,
                 style=indicator_style.style,
                 rotation=indicator_style.rotation,
@@ -720,31 +713,6 @@ def _furniture_layout(
                 z_index=(
                     indicator_style.z_index
                     if indicator_style.z_index is not None
-                    else _FURNITURE_OVERLAY_Z_INDEX
-                ),
-            )
-
-    if status_indicator == "watermark" or watermark_overlay:
-        watermark_style = status_furniture.watermark if status_furniture is not None else None
-        if watermark_style is None and not lenient:
-            raise ContentValidationError(
-                "a watermark is active (status_indicator: watermark or "
-                "watermark_overlay: true), but design.yaml's furniture.status "
-                "has no 'watermark' configured"
-            )
-        # A full-page watermark with no text is rejected at schema
-        # validation (`PresentationDocument`'s own model validator).
-        if watermark_style is not None and watermark_text is not None:
-            elements[FURNITURE_WATERMARK_ID] = Element(
-                type="text",
-                value=watermark_text,
-                box=watermark_style.box,
-                style=watermark_style.style,
-                rotation=watermark_style.rotation,
-                center=True,
-                z_index=(
-                    watermark_style.z_index
-                    if watermark_style.z_index is not None
                     else _FURNITURE_OVERLAY_Z_INDEX
                 ),
             )
@@ -797,7 +765,6 @@ def expand_slide(
     page_number: int = 1,
     total_pages: int = 1,
     status_indicator: str | None = None,
-    watermark_overlay: bool = False,
     corner_text: str | None = None,
     watermark_text: str | None = None,
     furniture_lenient: bool = False,
@@ -806,7 +773,6 @@ def expand_slide(
         design,
         page_number=page_number,
         total_pages=total_pages,
-        watermark_overlay=watermark_overlay,
         corner_text=corner_text,
         status_indicator=status_indicator,
         watermark_text=watermark_text,
@@ -838,11 +804,10 @@ def expand_slide(
 def resolve_watermark_text(presentation: PresentationDocument) -> str | None:
     """The watermark element's own text (spec section 7.8) -- always
     `presentation.watermark` if set, else `presentation.metadata.status`.
-    Unconditional now that the watermark is its own independent element
-    (`FURNITURE_WATERMARK_ID`), active via `status_indicator: watermark`
-    or `watermark_overlay: true` (either path resolves text the same
-    way). A *corner* placement (`FURNITURE_STATUS_ID`) never uses this --
-    it always shows `metadata.status` verbatim, computed separately by
+    Used only when `status_indicator == "watermark"`. A *corner*
+    placement (the same `FURNITURE_STATUS_ID` element, a different
+    placement of it) never uses this -- it always shows `metadata.status`
+    verbatim, computed separately by
     `expand_slide`/`expand_presentation` as `corner_text`. This split
     exists because a real user set both a `metadata.status` ("demo") and
     a `watermark` override ("test") while a corner was active and got a
@@ -884,7 +849,6 @@ def expand_presentation(
             page_number=index + 1,
             total_pages=total_pages,
             status_indicator=presentation.status_indicator,
-            watermark_overlay=presentation.watermark_overlay,
             corner_text=corner_text,
             watermark_text=watermark_text,
         )

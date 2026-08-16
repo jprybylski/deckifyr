@@ -1,23 +1,28 @@
 /**
  * The deck-wide (not per-slide) toggles a user is most likely to reach
  * for: `presentation.yaml`'s top-level `status_indicator` field (spec
- * section 7.8, corner-or-watermark single-select, unchanged) and the
- * separate, additive `watermark_overlay` boolean -- two *independent*
- * activation paths for the same watermark element
- * (`deckifyr.plan.FURNITURE_WATERMARK_ID`'s own docstring has the full
- * reasoning): `status_indicator: watermark` means "the status indicator
- * itself takes watermark form" (mutually exclusive with a corner);
- * `watermark_overlay: true` means "show a watermark regardless", so it
- * can be on *at the same time* as a corner `status_indicator` -- the
- * actual reported requirement neither a single-select field nor a
- * `design.yaml`-only toggle could represent. Plus the two text sources
- * whichever activation path shows: `metadata.status` (the deck's own
- * descriptive status word -- "demo", "draft", "final", ...) and
+ * section 7.8) -- a strict single-select between no indicator, a
+ * full-page watermark, or one of four corner placements. Plus the two
+ * text sources whichever placement shows: `metadata.status` (the deck's
+ * own descriptive status word -- "demo", "draft", "final", ...) and
  * `watermark` (an optional, rarely-needed override when the mark should
  * say something *different* from `metadata.status`). Reads/writes the
  * full `presentation.yaml` document through the same `GET`/`PUT
  * /api/config/presentation` endpoints `ConfigEditor` uses, mutating only
  * these fields and leaving everything else in the document untouched.
+ *
+ * issue #24 briefly added a separate, additive `watermark_overlay`
+ * boolean (a "Show watermark" checkbox here) so a corner and the full
+ * watermark could render at the same time -- reverted after dogfeeding:
+ * the checkbox turned out to be functionally identical to
+ * `FurnitureControls`' own "Add" button for the same element whenever it
+ * turned the watermark *on*, and diverged from "Remove" in a way that
+ * wasn't visible from either control (the checkbox only flipped the
+ * activation flag, "Remove" deleted the underlying `design.yaml` style
+ * outright) -- two controls in two different panels quietly doing
+ * different things under the same "watermark" label. See
+ * `deckifyr.plan.FURNITURE_STATUS_ID`'s own docstring for the fuller
+ * reasoning.
  *
  * "Deck status" (`metadata.status`) is the primary input for *every*
  * placement, corner or full watermark, and it's already meaningful even
@@ -67,10 +72,9 @@ interface Props {
   onSaved?: () => void;
 }
 
-// Mirrors `FurnitureControls.tsx`'s own literals (see that file's own
-// comment on why these aren't imported from a shared constants module).
+// Mirrors `FurnitureControls.tsx`'s own literal (see that file's own
+// comment on why it isn't imported from a shared constants module).
 const FURNITURE_STATUS_ID = "__furniture_status";
-const FURNITURE_WATERMARK_ID = "__furniture_watermark";
 
 type StatusIndicatorMode =
   | "none"
@@ -159,31 +163,6 @@ export default function DeckOptions({ onSaved }: Props) {
     }
   }
 
-  /** The watermark overlay (`watermark_overlay`) is a separate, additive
-   * toggle from `status_indicator` -- it can be on at the same time as a
-   * corner placement, so a watermark and a corner status indicator can
-   * both be visible together (the actual reported requirement this
-   * schema split exists for; see `deckifyr.plan.FURNITURE_WATERMARK_ID`'s
-   * own docstring). Turning it on mirrors `selectStatusIndicator`'s own
-   * auto-configure behavior -- materializes a default style the same way
-   * `FurnitureControls`' own Add does, so checking the box and seeing it
-   * render collapse into one action; "already configured" (422) is
-   * swallowed the same way. Turning it off only flips the flag, leaving
-   * `design.yaml`'s style alone -- that's a "piece" worth keeping around
-   * in case the overlay is turned back on, not something this checkbox
-   * should delete. */
-  async function toggleWatermarkOverlay(checked: boolean) {
-    const ok = await save({ watermark_overlay: checked });
-    if (!ok || !checked) return;
-    try {
-      await addFurnitureElement(FURNITURE_WATERMARK_ID);
-      onSaved?.();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 422) return;
-      setError(err instanceof ApiError ? err.message : String(err));
-    }
-  }
-
   if (loading) return null;
   if (!doc) {
     return error ? (
@@ -197,8 +176,7 @@ export default function DeckOptions({ onSaved }: Props) {
   const metadata = (doc.metadata as Record<string, unknown>) ?? {};
   const deckStatus = typeof metadata.status === "string" ? metadata.status : "";
   const watermarkOverride = typeof doc.watermark === "string" ? doc.watermark : "";
-  const watermarkOverlay = Boolean(doc.watermark_overlay);
-  const watermarkActive = statusIndicator === "watermark" || watermarkOverlay;
+  const watermarkActive = statusIndicator === "watermark";
 
   return (
     <div className="deck-options">
@@ -229,15 +207,6 @@ export default function DeckOptions({ onSaved }: Props) {
             </option>
           ))}
         </select>
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={watermarkOverlay}
-          disabled={saving}
-          onChange={(e) => void toggleWatermarkOverlay(e.target.checked)}
-        />
-        Show watermark
       </label>
       <label>
         Watermark override

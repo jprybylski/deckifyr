@@ -50,6 +50,14 @@ rerun the command above and commit the resulting diff under
 `web/`) runs the frontend's own vitest suite; run it before opening a
 PR that touches `web/src/`.
 
+The pre-commit hook also *blocks* (not just warns) a commit that stages
+`web/src/` or `web/package(-lock).json` changes without a matching diff
+under `inst/python/deckifyr/web/static/` -- this is the actual shipped
+bundle, not a docs asset, so it isn't gated behind `SKIP_DOCS_ASSET_CHECK`
+the way the reminders below are; use `git commit --no-verify` only for a
+change that provably can't affect build output (e.g. a `*.test.ts*` file,
+which the build already excludes).
+
 `man/figures/web-app-editor.png`/`web-app-no-project.png`/
 `web-app-furniture.png` (real screenshots of a running editor, used in
 `vignettes/articles/web-app.Rmd`) are a second, separate rendered-doc-

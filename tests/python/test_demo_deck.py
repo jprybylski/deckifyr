@@ -77,7 +77,7 @@ def test_demo_deck_builds_five_slides_with_expected_shapes(demo_deck_dir, tmp_pa
 
     furniture = {
         "__furniture_background",
-        "__furniture_watermark",
+        "__furniture_status",
         "__furniture_branding",
         "__furniture_page_number",
     }

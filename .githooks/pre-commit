@@ -105,6 +105,28 @@ if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^
   found=1
 fi
 
+# Third, separate check: inst/python/deckifyr/web/static/ is not a docs
+# asset, it's the actual shipped frontend bundle -- the Python
+# wheel/R package install it, and `deckifyr serve` serves it directly
+# (CONTRIBUTING.md's "Rebuilding the web frontend" section documents the
+# rule; this is that rule enforced, not a stale-docs reminder to be
+# skipped with SKIP_DOCS_ASSET_CHECK). Runtime already carries its own
+# best-effort mtime-based check (`_frontend_build_warning` in
+# `inst/python/deckifyr/web/app.py`, surfaced via `deckifyr serve`'s
+# stderr and `GET /api/health`) but mtimes on a fresh checkout aren't
+# reliable -- this staged-content check is the authoritative one, so it
+# is not gated behind `found`/SKIP_DOCS_ASSET_CHECK and always blocks.
+if printf '%s\n' "$staged" | grep -qE '^web/(src/|package(-lock)?\.json)' \
+  && ! printf '%s\n' "$staged" | grep -qE '^inst/python/deckifyr/web/static/'; then
+  echo "pre-commit error: staged changes touch web/src/ (or web/'s package files) but not" >&2
+  echo "  inst/python/deckifyr/web/static/ -- the committed frontend build is now stale." >&2
+  echo "  Run: cd web && npm install && npm run build" >&2
+  echo "  then stage the resulting diff under inst/python/deckifyr/web/static/." >&2
+  echo "  Bypass only for changes that can't affect the build output (e.g. *.test.ts*" >&2
+  echo "  files, which the build excludes) with git commit --no-verify." >&2
+  exit 1
+fi
+
 if [ "$found" = "1" ]; then
   echo "" >&2
   echo "If the change is purely cosmetic (comments, refactors with identical" >&2

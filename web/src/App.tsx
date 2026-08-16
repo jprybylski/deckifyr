@@ -26,11 +26,25 @@ function EditorTab() {
   const { state } = useAppContext();
   const isFurnitureSlideSelected =
     plan.furnitureSlide !== null && state.selectedSlideId === plan.furnitureSlide.id;
+  // `DeckOptions` fetches `presentation.yaml` once on mount and only
+  // ever updates its own local copy from its own saves -- it has no way
+  // to learn that `FurnitureControls`' "Add" (status-indicator redesign
+  // note: `deckifyr.plan.FURNITURE_STATUS_ID`'s own docstring) just
+  // changed `status_indicator` server-side out from under it. Confirmed
+  // the real way, not assumed: an e2e test clicking Add in the
+  // Furniture panel left the Deck Options dropdown still showing "None"
+  // until something else happened to remount it. Bumping this key
+  // forces a clean remount (and therefore a fresh fetch) the same way
+  // `onSaved` already keeps `usePlan` in sync in the other direction.
+  const [deckOptionsKey, setDeckOptionsKey] = useState(0);
+  const refreshDeckOptions = () => setDeckOptionsKey((k) => k + 1);
   return (
     <div className="editor-layout">
       <Toolbar plan={plan} />
-      <DeckOptions onSaved={plan.refetch} />
-      {isFurnitureSlideSelected && <FurnitureControls plan={plan} />}
+      <DeckOptions key={deckOptionsKey} onSaved={plan.refetch} />
+      {isFurnitureSlideSelected && (
+        <FurnitureControls plan={plan} onStatusIndicatorChanged={refreshDeckOptions} />
+      )}
       <div className="editor-layout__body">
         <SlideList plan={plan} />
         <SlideCanvas plan={plan} />

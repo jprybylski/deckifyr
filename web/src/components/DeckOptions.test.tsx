@@ -358,104 +358,10 @@ describe("DeckOptions", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("checking Show watermark auto-configures a default style, mirroring the dropdown", async () => {
-    // The actual reported requirement: a watermark and a corner status
-    // indicator must be independently activatable -- this checkbox is
-    // the watermark's own additive on/off switch, separate from Status
-    // indicator entirely, so it must work the same while a corner is
-    // already selected.
+  it("shows the watermark-precedence warning while the watermark placement is active", async () => {
     const presentation = {
       deckifyr: "0.1",
-      status_indicator: "corner-tl",
-      watermark_overlay: false,
-      metadata: { status: "demo" },
-      slides: [],
-    };
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "PUT") {
-        return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
-      }
-      if (url === "/api/config/presentation") {
-        return Promise.resolve(jsonResponse(200, presentation));
-      }
-      if (url === "/api/furniture/elements/__furniture_watermark" && method === "POST") {
-        return Promise.resolve(jsonResponse(200, { element: "__furniture_watermark" }));
-      }
-      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<DeckOptions />);
-
-    const checkbox = await screen.findByLabelText("Show watermark");
-    expect(checkbox).not.toBeChecked();
-    fireEvent.click(checkbox);
-
-    await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT");
-      expect(putCall).toBeDefined();
-      const body = JSON.parse((putCall![1] as RequestInit).body as string);
-      expect(body.watermark_overlay).toBe(true);
-      // status_indicator is untouched -- the corner stays selected.
-      expect(body.status_indicator).toBe("corner-tl");
-    });
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(
-          (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_watermark" &&
-            call[1]?.method === "POST"
-        )
-      ).toBe(true);
-    });
-  });
-
-  it("unchecking Show watermark only flips the flag, without deleting the design.yaml style", async () => {
-    const presentation = {
-      deckifyr: "0.1",
-      status_indicator: "corner-tl",
-      watermark_overlay: true,
-      metadata: { status: "demo" },
-      slides: [],
-    };
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "PUT") {
-        return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
-      }
-      if (url === "/api/config/presentation") {
-        return Promise.resolve(jsonResponse(200, presentation));
-      }
-      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<DeckOptions />);
-
-    const checkbox = await screen.findByLabelText("Show watermark");
-    expect(checkbox).toBeChecked();
-    fireEvent.click(checkbox);
-
-    await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT");
-      expect(putCall).toBeDefined();
-      const body = JSON.parse((putCall![1] as RequestInit).body as string);
-      expect(body.watermark_overlay).toBe(false);
-    });
-    // No furniture route touched -- unchecking never deletes the style.
-    expect(
-      fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/furniture/"))
-    ).toBe(false);
-  });
-
-  it("shows the watermark-precedence warning whenever the watermark is active, not just in watermark mode", async () => {
-    const presentation = {
-      deckifyr: "0.1",
-      status_indicator: "corner-tl",
-      watermark_overlay: true,
+      status_indicator: "watermark",
       watermark: "test",
       metadata: { status: "demo" },
       slides: [],

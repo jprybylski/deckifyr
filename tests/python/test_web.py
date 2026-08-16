@@ -1,3 +1,4 @@
+import pathlib
 import shutil
 import time
 
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 from pptx import Presentation
 
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.web.app import _frontend_build_warning, create_app
+from deckifyr.web.app import _frontend_build_warning, _rebuild_frontend, create_app
 
 
 def _copy_minimal_deck(minimal_deck_dir, tmp_path):
@@ -112,6 +113,55 @@ def test_frontend_build_warning_fires_when_no_build_exists_yet(tmp_path):
     (web_src / "App.tsx").write_text("// source")
     warning = _frontend_build_warning(tmp_path / "static", web_src)
     assert warning is not None
+
+
+# --- frontend auto-rebuild (deckifyr.web.app._rebuild_frontend) ---
+
+
+def test_rebuild_frontend_is_a_silent_noop_without_npm_on_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert _rebuild_frontend(tmp_path) is None
+
+
+def test_rebuild_frontend_reports_a_failed_build(tmp_path, monkeypatch):
+    import subprocess as subprocess_module
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm")
+
+    def fake_run(cmd, cwd, capture_output, text, timeout):
+        return subprocess_module.CompletedProcess(cmd, returncode=1, stdout="", stderr="a real build error\n")
+
+    monkeypatch.setattr("deckifyr.web.app.subprocess.run", fake_run)
+    message = _rebuild_frontend(tmp_path)
+    assert message is not None
+    assert "npm run build failed" in message
+    assert "a real build error" in message
+
+
+def test_rebuild_frontend_returns_none_on_a_successful_build(tmp_path, monkeypatch):
+    import subprocess as subprocess_module
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm")
+
+    def fake_run(cmd, cwd, capture_output, text, timeout):
+        return subprocess_module.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("deckifyr.web.app.subprocess.run", fake_run)
+    assert _rebuild_frontend(tmp_path) is None
+
+
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm not on PATH")
+def test_rebuild_frontend_really_rebuilds_the_repo_frontend():
+    # End-to-end against this repo's real web/ checkout (already has
+    # node_modules from earlier `npm install`/`npm test` runs in CI/dev --
+    # see tests/python/test_renderers_quarto.py's own npm-equivalent
+    # skip-when-absent precedent for real-toolchain integration tests).
+    web_src_dir = pathlib.Path(__file__).resolve().parents[2] / "web" / "src"
+    if not (web_src_dir.parent / "node_modules").is_dir():
+        pytest.skip("web/node_modules not installed -- run npm install in web/ first")
+    static_dir = pathlib.Path(__file__).resolve().parents[2] / "inst" / "python" / "deckifyr" / "web" / "static"
+    assert _rebuild_frontend(web_src_dir.parent) is None
+    assert _frontend_build_warning(static_dir, web_src_dir) is None
 
 
 def test_project_reports_bound_paths(client, project_dir):
@@ -369,10 +419,48 @@ def test_add_and_patch_page_number_furniture(client, project_dir):
     assert value_response.status_code == 422
 
 
-def test_status_furniture_requires_status_indicator_selected(client, project_dir):
+def test_add_furniture_status_defaults_to_watermark_when_nothing_selected(client, project_dir):
+    # "Add" is now the quick, one-click way to get *a* status indicator
+    # at all -- with nothing selected yet (status_indicator unset), it
+    # defaults to the watermark placement rather than requiring the Deck
+    # Options dropdown to be touched first (issue #24's follow-up revert:
+    # see `deckifyr.plan.FURNITURE_STATUS_ID`'s own docstring for why the
+    # separate, additive `watermark_overlay` concept this replaced was
+    # dropped). minimal-deck's own `metadata.status` ("draft") supplies
+    # the text.
+    add_response = client.post("/api/furniture/elements/__furniture_status")
+    assert add_response.status_code == 200
+
+    presentation_after = client.get("/api/config/presentation").json()
+    assert presentation_after["status_indicator"] == "watermark"
+
+    on_disk = client.get("/api/config/design").json()
+    assert on_disk["furniture"]["status"]["watermark"] is not None
+
+    plan_response = client.get("/api/furniture")
+    status_element = next(
+        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_status"
+    )
+    assert status_element["value"] == "draft"
+
+
+def test_add_furniture_status_defaulting_to_watermark_fails_with_no_text_source(
+    client, project_dir
+):
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["metadata"]["status"] = None
+    client.put("/api/config/presentation", json=data)
+
+    # Same validation `_check_watermark_has_text` always enforced for a
+    # `status_indicator: watermark` selected via the dropdown -- "Add"
+    # defaulting to it is not a way around that check.
     add_response = client.post("/api/furniture/elements/__furniture_status")
     assert add_response.status_code == 422
+    assert client.get("/api/config/presentation").json().get("status_indicator") is None
 
+
+def test_status_furniture_corner_add_patch_and_remove(client, project_dir):
     presentation_path = project_dir / "presentation.yaml"
     data = yaml.safe_load(presentation_path.read_text())
     data["status_indicator"] = "corner-br"
@@ -385,8 +473,12 @@ def test_status_furniture_requires_status_indicator_selected(client, project_dir
     put_response = client.put("/api/config/presentation", json=data)
     assert put_response.status_code == 200
 
+    # A corner already selected via the dropdown -- "Add" here just
+    # materializes its style, doesn't touch status_indicator (already
+    # set to the right thing).
     add_response = client.post("/api/furniture/elements/__furniture_status")
     assert add_response.status_code == 200
+    assert client.get("/api/config/presentation").json()["status_indicator"] == "corner-br"
 
     plan_response = client.get("/api/furniture")
     status_element = next(
@@ -409,7 +501,7 @@ def test_status_furniture_requires_status_indicator_selected(client, project_dir
     on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["status"]["corner_br"] is None
 
-    # Removing the active corner also clears presentation.yaml's
+    # Removing the active placement also clears presentation.yaml's
     # status_indicator in the same action -- leaving it pointing at a
     # now-nonexistent style would be exactly the dangling-reference
     # footgun Remove used to be withheld to avoid. The override *text*
@@ -420,81 +512,24 @@ def test_status_furniture_requires_status_indicator_selected(client, project_dir
     assert presentation_after["watermark"] == "DRAFT"
 
 
-def test_add_watermark_overlay_works_while_a_corner_is_the_active_placement(client, project_dir):
-    # The actual reported requirement: a watermark and a corner status
-    # indicator must be able to render *simultaneously* --
-    # `watermark_overlay` (presentation.yaml) is a separate, additive
-    # activation path from `status_indicator`, independent of whichever
-    # corner is currently selected.
+def test_remove_furniture_status_while_watermark_is_active(client, project_dir):
     presentation_path = project_dir / "presentation.yaml"
     data = yaml.safe_load(presentation_path.read_text())
-    data["status_indicator"] = "corner-tl"
-    data["watermark"] = "test"
-    put_response = client.put("/api/config/presentation", json=data)
-    assert put_response.status_code == 200
-
-    add_response = client.post("/api/furniture/elements/__furniture_watermark")
-    assert add_response.status_code == 200
-
-    on_disk = client.get("/api/config/design").json()
-    assert on_disk["furniture"]["status"]["watermark"] is not None
-
-    # Adding the watermark overlay turns the toggle on but never touches
-    # status_indicator -- the corner selection is untouched.
-    presentation_after = client.get("/api/config/presentation").json()
-    assert presentation_after["status_indicator"] == "corner-tl"
-    assert presentation_after["watermark_overlay"] is True
-    assert presentation_after["watermark"] == "test"
-
-
-def test_remove_watermark_overlay_does_not_disturb_the_active_corner(client, project_dir):
-    presentation_path = project_dir / "presentation.yaml"
-    data = yaml.safe_load(presentation_path.read_text())
-    data["status_indicator"] = "corner-tl"
+    data["status_indicator"] = "watermark"
     data["watermark"] = "test"
     client.put("/api/config/presentation", json=data)
-    client.post("/api/furniture/elements/__furniture_watermark")
+    assert client.post("/api/furniture/elements/__furniture_status").status_code == 200
 
-    remove_response = client.delete("/api/furniture/elements/__furniture_watermark")
+    remove_response = client.delete("/api/furniture/elements/__furniture_status")
     assert remove_response.status_code == 200
 
     on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["status"]["watermark"] is None
-
-    # Removing the watermark overlay turns the toggle off but must not
-    # clear status_indicator (the corner is unrelated) or the override
-    # *text* (a content choice, not an activation flag -- stays useful if
-    # the watermark is added back later).
     presentation_after = client.get("/api/config/presentation").json()
-    assert presentation_after["status_indicator"] == "corner-tl"
-    assert presentation_after["watermark_overlay"] is False
+    assert presentation_after["status_indicator"] is None
+    # The override *text* is a content choice, not an activation flag --
+    # stays useful if the watermark is selected again later.
     assert presentation_after["watermark"] == "test"
-
-
-def test_watermark_overlay_and_corner_status_render_as_two_separate_elements(client, project_dir):
-    presentation_path = project_dir / "presentation.yaml"
-    data = yaml.safe_load(presentation_path.read_text())
-    data["status_indicator"] = "corner-tl"
-    data["watermark"] = "test"
-    client.put("/api/config/presentation", json=data)
-    assert client.post("/api/furniture/elements/__furniture_status").status_code == 200
-    assert client.post("/api/furniture/elements/__furniture_watermark").status_code == 200
-
-    plan_response = client.get("/api/furniture")
-    assert plan_response.status_code == 200
-    element_ids = {el["id"] for el in plan_response.json()["elements"]}
-    assert "__furniture_status" in element_ids
-    assert "__furniture_watermark" in element_ids
-
-    status_element = next(
-        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_status"
-    )
-    watermark_element = next(
-        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_watermark"
-    )
-    # The corner never honors the watermark override -- only Deck status.
-    assert status_element["value"] == "draft"
-    assert watermark_element["value"] == "test"
 
 
 def test_get_furniture_is_lenient_when_status_indicator_points_at_an_unconfigured_placement(
