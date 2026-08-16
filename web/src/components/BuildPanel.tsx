@@ -9,11 +9,13 @@
  */
 import { useState } from "react";
 import { ApiError, getJobArtifacts, jobArtifactUrl, pollJobUntilDone, postBuild } from "../api/client";
+import { useAppContext } from "../state/AppContext";
 import type { Job, JobStatus } from "../types";
 
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default function BuildPanel() {
+  const { state } = useAppContext();
   const [status, setStatus] = useState<JobStatus | "idle">("idle");
   const [job, setJob] = useState<Job | null>(null);
   const [artifacts, setArtifacts] = useState<string[]>([]);
@@ -47,9 +49,24 @@ export default function BuildPanel() {
 
   return (
     <div className="build-panel">
-      <button type="button" onClick={() => void handleBuild()} disabled={status === "running" || status === "queued"}>
+      <button
+        type="button"
+        onClick={() => void handleBuild()}
+        disabled={status === "running" || status === "queued" || state.dirty}
+      >
         Build
       </button>
+      {state.dirty && (
+        // `POST /api/build` always shells out to a real `deckifyr build`
+        // subprocess that reads straight from disk (issue #24's deferred-
+        // save editor) -- it has no visibility into the in-memory working
+        // copy, so building while dirty would silently produce a `.pptx`
+        // from the last-*saved* state, ignoring in-progress edits. A hard
+        // stop here beats that surprise.
+        <p className="build-panel__dirty-warning">
+          Save your changes before building -- the last saved version has unsaved edits.
+        </p>
+      )}
 
       {status !== "idle" && <p className="build-panel__status">Status: {status}</p>}
       {timedOut && (

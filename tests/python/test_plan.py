@@ -601,7 +601,7 @@ def test_status_indicator_watermark_renders_the_watermark_text():
         slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
     )
     (element,) = resolved.elements
-    assert element.id == "__furniture_status"
+    assert element.id == "__furniture_watermark"
     assert element.type == "text"
     assert element.value == "DRAFT"
     assert element.center is True
@@ -618,7 +618,7 @@ def test_status_indicator_corner_selects_its_own_placement():
     )
     slide = Slide(id="s1", layout=None, elements=[])
     resolved = expand_slide(
-        slide, None, design, strict=True, status_indicator="corner-br", watermark_text="DRAFT"
+        slide, None, design, strict=True, status_indicator="corner-br", corner_text="DRAFT"
     )
     (element,) = resolved.elements
     assert element.x == parse_length("8in", strict=True)
@@ -710,7 +710,7 @@ def test_status_indicator_corner_with_no_watermark_text_is_skipped_not_an_error(
     )
     slide = Slide(id="s1", layout=None, elements=[])
     resolved = expand_slide(
-        slide, None, design, strict=True, status_indicator="corner-tl", watermark_text=None
+        slide, None, design, strict=True, status_indicator="corner-tl", corner_text=None
     )
     assert resolved.elements == []
 
@@ -767,7 +767,7 @@ def test_slide_can_remove_a_furniture_element():
     design = _design(
         furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
-    slide = Slide(id="s1", layout=None, elements={"__furniture_status": Element(remove=True)})
+    slide = Slide(id="s1", layout=None, elements={"__furniture_watermark": Element(remove=True)})
     resolved = expand_slide(
         slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
     )
@@ -781,7 +781,7 @@ def test_slide_can_override_a_furniture_elements_box():
     slide = Slide(
         id="s1",
         layout=None,
-        elements={"__furniture_status": Element(box=_box(width="4in"))},
+        elements={"__furniture_watermark": Element(box=_box(width="4in"))},
     )
     resolved = expand_slide(
         slide, None, design, strict=True, status_indicator="watermark", watermark_text="DRAFT"
@@ -838,7 +838,7 @@ def test_status_indicator_corner_align_depends_on_which_edge(
         design,
         strict=True,
         status_indicator=status_indicator,
-        watermark_text="DRAFT",
+        corner_text="DRAFT",
     )
     (element,) = resolved.elements
     assert element.align == expected_align
@@ -881,7 +881,7 @@ def test_status_indicator_z_index_override_paints_on_top_of_ordinary_content():
     )
     # Ordinary elements default to z_index 0; the watermark's explicit
     # 9999 must sort after it, i.e. paint on top.
-    assert [e.id for e in resolved.elements] == ["title", "__furniture_status"]
+    assert [e.id for e in resolved.elements] == ["title", "__furniture_watermark"]
 
 
 def test_resolve_text_style_passes_opacity_through():
@@ -939,7 +939,7 @@ def test_expand_presentation_threads_status_indicator_and_watermark_through():
         slides=[Slide(id="s1", layout=None, elements=[])],
     )
     (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
-    assert [e.id for e in resolved_slide.elements] == ["__furniture_status"]
+    assert [e.id for e in resolved_slide.elements] == ["__furniture_watermark"]
     assert resolved_slide.elements[0].value == "DRAFT"
 
 
@@ -991,6 +991,76 @@ def test_expand_presentation_explicit_watermark_overrides_metadata_status():
     (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
     (element,) = resolved_slide.elements
     assert element.value == "CONFIDENTIAL"
+
+
+def test_expand_presentation_corner_placement_ignores_watermark_override():
+    # Regression: a real user set metadata.status="demo" and a `watermark`
+    # override ("test") while status_indicator was a corner placement, and
+    # got a corner box showing "test" -- surprising, since "watermark
+    # override" reads as a separate, full-page thing, not a text source
+    # for a small corner label. Only the `"watermark"` placement itself
+    # (test_expand_presentation_explicit_watermark_overrides_metadata_status
+    # above) honors the override; every corner always shows metadata.status.
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import BuildConfig, DesignRef, Metadata
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design(
+        furniture=Furniture(status=StatusFurniture(corner_tl=StatusIndicatorStyle(box=_box())))
+    )
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="T", status="demo"),
+        build=BuildConfig(output="build/out.pptx"),
+        status_indicator="corner-tl",
+        watermark="test",
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
+    (element,) = resolved_slide.elements
+    assert element.value == "demo"
+
+
+def test_expand_presentation_watermark_overlay_coexists_with_a_corner_status_indicator():
+    # The actual reported requirement: a watermark and a corner status
+    # indicator must be able to render *simultaneously* --
+    # `watermark_overlay` is a separate, additive activation path from
+    # `status_indicator`, independent of whichever corner is selected.
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import BuildConfig, DesignRef, Metadata
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design(
+        furniture=Furniture(
+            status=StatusFurniture(
+                corner_tl=StatusIndicatorStyle(box=_box()),
+                watermark=StatusIndicatorStyle(box=_box(width="9in")),
+            )
+        )
+    )
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="T", status="demo"),
+        build=BuildConfig(output="build/out.pptx"),
+        status_indicator="corner-tl",
+        watermark="test",
+        watermark_overlay=True,
+        slides=[Slide(id="s1", layout=None, elements=[])],
+    )
+    (resolved_slide,) = expand_presentation(presentation, design, layouts, strict=True)
+    elements_by_id = {e.id: e for e in resolved_slide.elements}
+    assert set(elements_by_id) == {"__furniture_status", "__furniture_watermark"}
+    # The corner never honors the watermark override -- only Deck status.
+    assert elements_by_id["__furniture_status"].value == "demo"
+    assert elements_by_id["__furniture_watermark"].value == "test"
 
 
 # ---------------------------------------------------------------------------

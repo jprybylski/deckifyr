@@ -167,4 +167,52 @@ describe("App project gate", () => {
     expect(screen.getByTitle("/tmp/proj")).toHaveTextContent("/tmp/proj");
     await waitFor(() => expect(screen.getByText("No slides.")).toBeInTheDocument());
   });
+
+  it("shows the stale-build banner when /api/health reports frontend_warning, and nothing when it's null", async () => {
+    const projectFetches = (frontendWarning: string | null) =>
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/health") {
+          return Promise.resolve(
+            jsonResponse(200, { status: "ok", launcher: "cli", frontend_warning: frontendWarning })
+          );
+        }
+        if (url === "/api/project") {
+          return Promise.resolve(
+            jsonResponse(200, {
+              root: "/tmp/proj",
+              presentation: "/tmp/proj/presentation.yaml",
+              design: "/tmp/proj/design.yaml",
+              layouts: "/tmp/proj/layouts.yaml",
+            })
+          );
+        }
+        if (url === "/api/plan") return Promise.resolve(jsonResponse(200, { slides: [] }));
+        if (url === "/api/furniture") {
+          return Promise.resolve(jsonResponse(200, { id: "__furniture__", notes: null, elements: [] }));
+        }
+        if (url === "/api/config/design") {
+          return Promise.resolve(jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } }));
+        }
+        if (url === "/api/config/presentation") {
+          return Promise.resolve(
+            jsonResponse(200, { deckifyr: "0.1", status_indicator: "none", slides: [] })
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+
+    vi.stubGlobal("fetch", projectFetches("the built frontend under web/static/ is older than web/src/"));
+    const { unmount } = render(<App />);
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/older than web\/src/)
+    );
+    unmount();
+    vi.unstubAllGlobals();
+
+    vi.stubGlobal("fetch", projectFetches(null));
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Editor" })).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

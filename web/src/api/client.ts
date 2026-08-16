@@ -19,6 +19,7 @@ import type {
   ApiErrorBody,
   ConfigDocName,
   ConfigDocument,
+  DiscardResult,
   ElementPatchBody,
   HealthResponse,
   Job,
@@ -26,6 +27,7 @@ import type {
   PlanResponse,
   ProjectInfo,
   ResolvedSlide,
+  SaveResult,
   ValidateResponse,
   WriteResult,
 } from "../types";
@@ -133,17 +135,41 @@ export function patchFurnitureElement(
 /** Materializes a furniture kind's `design.yaml` sub-object with a
  * sensible default box/style, if it isn't already configured (a 422 if
  * it already is) -- the "enable" half of issue #21's "enabling vs
- * editing" distinction; `removeFurnitureElement` is the other half. */
-export function addFurnitureElement(elementId: string): Promise<WriteResult> {
-  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+ * editing" distinction; `removeFurnitureElement` is the other half.
+ *
+ * `field` (status/watermark only): materialize a *specific*
+ * `furniture.status.*` field (`"watermark"`, `"corner_tl"`, ...)
+ * regardless of which one `status_indicator` currently selects --
+ * `FurnitureControls.tsx`'s Watermark row uses this so Add stays
+ * available while a corner is active, but only once a Watermark
+ * override has actually been typed in (that component's own docstring
+ * has the exact rule). Omitted for every other caller, which keeps
+ * deriving the target from `status_indicator` as before. */
+export function addFurnitureElement(elementId: string, field?: string): Promise<WriteResult> {
+  const query = field ? `?field=${encodeURIComponent(field)}` : "";
+  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
     method: "POST",
   });
 }
 
-export function removeFurnitureElement(elementId: string): Promise<WriteResult> {
-  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+export function removeFurnitureElement(elementId: string, field?: string): Promise<WriteResult> {
+  const query = field ? `?field=${encodeURIComponent(field)}` : "";
+  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
     method: "DELETE",
   });
+}
+
+/** Flushes the server's in-memory working copy to disk (issue #24) --
+ * only the documents actually touched since the last save/discard, per
+ * `SaveResult.saved`. */
+export function postSave(): Promise<SaveResult> {
+  return request("/api/save", { method: "POST" });
+}
+
+/** Discards every unsaved edit, reverting the working copy to what's on
+ * disk (issue #24) -- the "test freely, throw it away" button. */
+export function postDiscard(): Promise<DiscardResult> {
+  return request("/api/discard", { method: "POST" });
 }
 
 export function postBuild(): Promise<{ job_id: string }> {

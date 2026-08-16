@@ -43,6 +43,21 @@ describe("showFurniture", () => {
   });
 });
 
+describe("dirty", () => {
+  it("defaults to clean", () => {
+    expect(initialAppState.dirty).toBe(false);
+  });
+
+  it("sets independently of every other field", () => {
+    const dirty = appReducer(initialAppState, { type: "SET_DIRTY", dirty: true });
+    expect(dirty.dirty).toBe(true);
+    expect(dirty.selectedSlideId).toBe(initialAppState.selectedSlideId);
+
+    const clean = appReducer(dirty, { type: "SET_DIRTY", dirty: false });
+    expect(clean.dirty).toBe(false);
+  });
+});
+
 describe("hiddenFurnitureIds", () => {
   it("defaults to empty", () => {
     expect(initialAppState.hiddenFurnitureIds).toEqual([]);

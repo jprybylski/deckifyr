@@ -65,6 +65,13 @@ export interface ResolvedSlide {
 
 export interface PlanResponse {
   slides: ResolvedSlide[];
+  /** Whether the server's in-memory working copy (issue #24's deferred-
+   * save editor) currently differs from what's on disk -- `false` right
+   * after load/save/discard, `true` after any mutation not yet flushed.
+   * This is the one place the client seeds its own dirty indicator on
+   * initial load; every mutating response also carries its own `dirty`
+   * (see `WriteResult`) so the indicator stays live without polling. */
+  dirty: boolean;
 }
 
 export interface ProjectInfo {
@@ -84,6 +91,15 @@ export type Launcher = "cli" | "r";
 export interface HealthResponse {
   status: string;
   launcher: Launcher;
+  /** Non-null only in a dev checkout whose built `web/static/` bundle is
+   * older than `web/src/` (`deckifyr.web.app._frontend_build_warning`) --
+   * a real trap this exists to surface instead of leaving a stale-JS
+   * session to produce confusing, seemingly-random UI bugs that a
+   * browser hard-refresh alone won't fix (StaticFiles really does serve
+   * fresh bytes each request; they're just still the old bytes, because
+   * nobody re-ran `npm run build`). Always `null` outside a source
+   * checkout (an installed wheel/R package never ships `web/src`). */
+  frontend_warning: string | null;
 }
 
 export type ConfigDocName = "design" | "layouts" | "presentation";
@@ -111,7 +127,25 @@ export interface ElementPatchBody {
 
 export interface WriteResult {
   path: string;
+  /** See `PlanResponse.dirty` -- every mutating endpoint reports the
+   * working copy's dirty state right after applying its own edit
+   * (already `false` again if `build.autosave` is on, since the mutation
+   * is flushed to disk before the response is built). */
+  dirty: boolean;
   [key: string]: unknown;
+}
+
+export interface SaveResult {
+  /** Which documents `POST /api/save` actually wrote -- only ones
+   * touched since the last save/discard, never all three unconditionally
+   * (issue #24: saving shouldn't dirty a file's mtime/git diff just
+   * because *something else* in the session changed). */
+  saved: ConfigDocName[];
+  dirty: boolean;
+}
+
+export interface DiscardResult {
+  dirty: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";

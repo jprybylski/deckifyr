@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from pptx import Presentation
 
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.web.app import create_app
+from deckifyr.web.app import _frontend_build_warning, create_app
 
 
 def _copy_minimal_deck(minimal_deck_dir, tmp_path):
@@ -33,9 +33,16 @@ def client(project_dir):
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
+    body = response.json()
     # `launcher` defaults to "cli" -- see test_health_reports_r_launcher
-    # for create_app(..., launcher="r").
-    assert response.json() == {"status": "ok", "launcher": "cli"}
+    # for create_app(..., launcher="r"). `frontend_warning` isn't
+    # asserted here -- its real value depends on this checkout's own
+    # web/src vs web/static mtimes at test-run time, not anything this
+    # test controls; see test_frontend_build_warning_* below for that
+    # logic tested in isolation instead.
+    assert body["status"] == "ok"
+    assert body["launcher"] == "cli"
+    assert "frontend_warning" in body
 
 
 def test_health_reports_r_launcher(tmp_path):
@@ -48,7 +55,63 @@ def test_health_reports_r_launcher(tmp_path):
     with TestClient(app) as local_client:
         response = local_client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "launcher": "r"}
+    assert response.json()["launcher"] == "r"
+
+
+# --- frontend build-staleness warning (deckifyr.web.app._frontend_build_warning) ---
+
+
+def test_frontend_build_warning_is_none_outside_a_dev_checkout(tmp_path):
+    # No `web/src` sibling at all -- mirrors an installed wheel/R
+    # package, which never ships the frontend source tree.
+    assert _frontend_build_warning(tmp_path / "static", tmp_path / "web" / "src") is None
+
+
+def test_frontend_build_warning_is_none_when_the_build_is_current(tmp_path):
+    web_src = tmp_path / "web" / "src"
+    static_dir = tmp_path / "static"
+    web_src.mkdir(parents=True)
+    static_dir.mkdir(parents=True)
+    (web_src / "App.tsx").write_text("// source")
+    time.sleep(0.01)
+    (static_dir / "index.html").write_text("<html></html>")
+    assert _frontend_build_warning(static_dir, web_src) is None
+
+
+def test_frontend_build_warning_fires_when_source_is_newer_than_the_build(tmp_path):
+    web_src = tmp_path / "web" / "src"
+    static_dir = tmp_path / "static"
+    web_src.mkdir(parents=True)
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html></html>")
+    time.sleep(0.01)
+    (web_src / "App.tsx").write_text("// a real fix, not yet compiled")
+    warning = _frontend_build_warning(static_dir, web_src)
+    assert warning is not None
+    assert "npm run build" in warning
+
+
+def test_frontend_build_warning_ignores_test_files(tmp_path):
+    # A touched *.test.tsx must not itself trigger the warning -- only
+    # real source files count, per the module's own docstring.
+    web_src = tmp_path / "web" / "src"
+    static_dir = tmp_path / "static"
+    web_src.mkdir(parents=True)
+    static_dir.mkdir(parents=True)
+    (web_src / "App.tsx").write_text("// source")
+    time.sleep(0.01)
+    (static_dir / "index.html").write_text("<html></html>")
+    time.sleep(0.01)
+    (web_src / "App.test.tsx").write_text("// a newer test-only edit")
+    assert _frontend_build_warning(static_dir, web_src) is None
+
+
+def test_frontend_build_warning_fires_when_no_build_exists_yet(tmp_path):
+    web_src = tmp_path / "web" / "src"
+    web_src.mkdir(parents=True)
+    (web_src / "App.tsx").write_text("// source")
+    warning = _frontend_build_warning(tmp_path / "static", web_src)
+    assert warning is not None
 
 
 def test_project_reports_bound_paths(client, project_dir):
@@ -77,14 +140,19 @@ def test_get_config_unknown_doc_is_404(client):
 
 def test_put_config_design_valid_edit_round_trips(client, project_dir):
     design_path = project_dir / "design.yaml"
-    data = yaml.safe_load(design_path.read_text())
+    original = design_path.read_text()
+    data = yaml.safe_load(original)
     data["colors"]["primary"] = "#123456"
 
     response = client.put("/api/config/design", json=data)
     assert response.status_code == 200
+    assert response.json()["dirty"] is True
 
-    on_disk = yaml.safe_load(design_path.read_text())
-    assert on_disk["colors"]["primary"] == "#123456"
+    # Deferred-save editing (issue #24): an edit lands in the in-memory
+    # working copy, not the file, until an explicit `POST /api/save` --
+    # the whole point is that trying something in the web editor is safe
+    # without dirtying a tracked project's YAML.
+    assert design_path.read_text() == original
 
     response = client.get("/api/config/design")
     assert response.json()["colors"]["primary"] == "#123456"
@@ -148,17 +216,27 @@ def test_plan_has_expected_slide_and_element_shape_with_formatted_geometry(clien
 # --- element PATCH -----------------------------------------------------
 
 
-def test_patch_element_box_and_rotation_updates_file_and_response(client, project_dir):
+def test_patch_element_box_and_rotation_updates_working_copy_and_response(client, project_dir):
+    presentation_path = project_dir / "presentation.yaml"
+    original = presentation_path.read_text()
+
     response = client.patch(
         "/api/slides/title/elements/deck-title",
         json={"box": {"x": 1.0, "y": 2.5}, "rotation": 15},
     )
     assert response.status_code == 200
+    assert response.json()["dirty"] is True
 
-    data = yaml.safe_load((project_dir / "presentation.yaml").read_text())
-    element = data["slides"][0]["elements"][0]
-    assert element["id"] == "deck-title"
-    assert element["box"]["x"] == "1.0in"
+    # Not written to disk until Save -- see test_put_config_design_valid_edit_round_trips.
+    assert presentation_path.read_text() == original
+
+    plan_response = client.get("/api/plan")
+    elements = plan_response.json()["slides"][0]["elements"]
+    element = next(el for el in elements if el["id"] == "deck-title")
+    # `GET /api/plan` formats geometry through `format_length` (spec
+    # section 7.3), which normalizes "1.0in" -> "1in" -- unlike the old
+    # version of this test, which read the raw YAML string back verbatim.
+    assert element["box"]["x"] == "1in"
     assert element["box"]["y"] == "2.5in"
     assert element["rotation"] == 15
 
@@ -222,10 +300,14 @@ def test_patch_furniture_element_background_is_422(client):
 
 def test_add_patch_and_remove_branding_furniture(client, project_dir):
     design_path = project_dir / "design.yaml"
+    original = design_path.read_text()
 
     add_response = client.post("/api/furniture/elements/__furniture_branding")
     assert add_response.status_code == 200
-    on_disk = yaml.safe_load(design_path.read_text())
+    assert add_response.json()["dirty"] is True
+    # Not written to disk until Save -- see test_put_config_design_valid_edit_round_trips.
+    assert design_path.read_text() == original
+    on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["branding"] is not None
 
     # A second add is a conflict, not a silent overwrite.
@@ -241,7 +323,7 @@ def test_add_patch_and_remove_branding_furniture(client, project_dir):
         json={"box": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 0.5}, "value": "Acme Corp"},
     )
     assert patch_response.status_code == 200
-    on_disk = yaml.safe_load(design_path.read_text())
+    on_disk = client.get("/api/config/design").json()
     branding = on_disk["furniture"]["branding"]
     assert branding["box"]["x"] == "1.0in"
     assert branding["text"] == "Acme Corp"
@@ -259,7 +341,7 @@ def test_add_patch_and_remove_branding_furniture(client, project_dir):
 
     remove_response = client.delete("/api/furniture/elements/__furniture_branding")
     assert remove_response.status_code == 200
-    on_disk = yaml.safe_load(design_path.read_text())
+    on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["branding"] is None
 
     plan_response = client.get("/api/furniture")
@@ -277,7 +359,7 @@ def test_add_and_patch_page_number_furniture(client, project_dir):
         json={"box": {"x": 0.5, "y": 0.5, "width": 1.0, "height": 0.3}},
     )
     assert patch_response.status_code == 200
-    on_disk = yaml.safe_load(design_path.read_text())
+    on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["page_number"]["box"]["x"] == "0.5in"
 
     # page_number.format isn't editable through `value` -- Config-tab only.
@@ -294,6 +376,11 @@ def test_status_furniture_requires_status_indicator_selected(client, project_dir
     presentation_path = project_dir / "presentation.yaml"
     data = yaml.safe_load(presentation_path.read_text())
     data["status_indicator"] = "corner-br"
+    # A corner placement always shows metadata.status ("draft" in the
+    # minimal-deck fixture), never `watermark` -- that override only
+    # applies to the full-page `"watermark"` placement (see
+    # `resolve_watermark_text`'s own docstring). Set here specifically to
+    # confirm it's ignored for a corner, not used to derive the assertion.
     data["watermark"] = "DRAFT"
     put_response = client.put("/api/config/presentation", json=data)
     assert put_response.status_code == 200
@@ -305,23 +392,109 @@ def test_status_furniture_requires_status_indicator_selected(client, project_dir
     status_element = next(
         el for el in plan_response.json()["elements"] if el["id"] == "__furniture_status"
     )
-    assert status_element["value"] == "DRAFT"
+    assert status_element["value"] == "draft"
 
     patch_response = client.patch(
         "/api/furniture/elements/__furniture_status",
         json={"rotation": 12, "z_index": 250},
     )
     assert patch_response.status_code == 200
-    design_path = project_dir / "design.yaml"
-    on_disk = yaml.safe_load(design_path.read_text())
+    on_disk = client.get("/api/config/design").json()
     corner_br = on_disk["furniture"]["status"]["corner_br"]
     assert corner_br["rotation"] == 12
     assert corner_br["z_index"] == 250
 
     remove_response = client.delete("/api/furniture/elements/__furniture_status")
     assert remove_response.status_code == 200
-    on_disk = yaml.safe_load(design_path.read_text())
+    on_disk = client.get("/api/config/design").json()
     assert on_disk["furniture"]["status"]["corner_br"] is None
+
+    # Removing the active corner also clears presentation.yaml's
+    # status_indicator in the same action -- leaving it pointing at a
+    # now-nonexistent style would be exactly the dangling-reference
+    # footgun Remove used to be withheld to avoid. The override *text*
+    # (`watermark`) is a content choice, not an activation flag, so it's
+    # left alone.
+    presentation_after = client.get("/api/config/presentation").json()
+    assert presentation_after["status_indicator"] is None
+    assert presentation_after["watermark"] == "DRAFT"
+
+
+def test_add_watermark_overlay_works_while_a_corner_is_the_active_placement(client, project_dir):
+    # The actual reported requirement: a watermark and a corner status
+    # indicator must be able to render *simultaneously* --
+    # `watermark_overlay` (presentation.yaml) is a separate, additive
+    # activation path from `status_indicator`, independent of whichever
+    # corner is currently selected.
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["status_indicator"] = "corner-tl"
+    data["watermark"] = "test"
+    put_response = client.put("/api/config/presentation", json=data)
+    assert put_response.status_code == 200
+
+    add_response = client.post("/api/furniture/elements/__furniture_watermark")
+    assert add_response.status_code == 200
+
+    on_disk = client.get("/api/config/design").json()
+    assert on_disk["furniture"]["status"]["watermark"] is not None
+
+    # Adding the watermark overlay turns the toggle on but never touches
+    # status_indicator -- the corner selection is untouched.
+    presentation_after = client.get("/api/config/presentation").json()
+    assert presentation_after["status_indicator"] == "corner-tl"
+    assert presentation_after["watermark_overlay"] is True
+    assert presentation_after["watermark"] == "test"
+
+
+def test_remove_watermark_overlay_does_not_disturb_the_active_corner(client, project_dir):
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["status_indicator"] = "corner-tl"
+    data["watermark"] = "test"
+    client.put("/api/config/presentation", json=data)
+    client.post("/api/furniture/elements/__furniture_watermark")
+
+    remove_response = client.delete("/api/furniture/elements/__furniture_watermark")
+    assert remove_response.status_code == 200
+
+    on_disk = client.get("/api/config/design").json()
+    assert on_disk["furniture"]["status"]["watermark"] is None
+
+    # Removing the watermark overlay turns the toggle off but must not
+    # clear status_indicator (the corner is unrelated) or the override
+    # *text* (a content choice, not an activation flag -- stays useful if
+    # the watermark is added back later).
+    presentation_after = client.get("/api/config/presentation").json()
+    assert presentation_after["status_indicator"] == "corner-tl"
+    assert presentation_after["watermark_overlay"] is False
+    assert presentation_after["watermark"] == "test"
+
+
+def test_watermark_overlay_and_corner_status_render_as_two_separate_elements(client, project_dir):
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["status_indicator"] = "corner-tl"
+    data["watermark"] = "test"
+    client.put("/api/config/presentation", json=data)
+    assert client.post("/api/furniture/elements/__furniture_status").status_code == 200
+    assert client.post("/api/furniture/elements/__furniture_watermark").status_code == 200
+
+    plan_response = client.get("/api/furniture")
+    assert plan_response.status_code == 200
+    element_ids = {el["id"] for el in plan_response.json()["elements"]}
+    assert "__furniture_status" in element_ids
+    assert "__furniture_watermark" in element_ids
+
+    status_element = next(
+        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_status"
+    )
+    watermark_element = next(
+        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_watermark"
+    )
+    # The corner never honors the watermark override -- only Deck status.
+    assert status_element["value"] == "draft"
+    assert watermark_element["value"] == "test"
 
 
 def test_get_furniture_is_lenient_when_status_indicator_points_at_an_unconfigured_placement(
@@ -363,6 +536,87 @@ def test_furniture_element_unknown_id_is_404(client):
     assert client.patch("/api/furniture/elements/nope", json={}).status_code == 404
     assert client.post("/api/furniture/elements/nope").status_code == 404
     assert client.delete("/api/furniture/elements/nope").status_code == 404
+
+
+# --- save / discard / autosave (issue #24) -------------------------------
+
+
+def test_save_writes_only_touched_documents(client, project_dir):
+    design_path = project_dir / "design.yaml"
+    presentation_path = project_dir / "presentation.yaml"
+    design_before = design_path.read_text()
+    presentation_before = presentation_path.read_text()
+
+    data = yaml.safe_load(design_before)
+    data["colors"]["primary"] = "#654321"
+    response = client.put("/api/config/design", json=data)
+    assert response.json()["dirty"] is True
+
+    # Not written to disk until Save.
+    assert design_path.read_text() == design_before
+    assert presentation_path.read_text() == presentation_before
+
+    save_response = client.post("/api/save")
+    assert save_response.status_code == 200
+    assert save_response.json() == {"saved": ["design"], "dirty": False}
+
+    # Only the touched document was written -- presentation.yaml, never
+    # edited this session, keeps its original bytes untouched.
+    assert design_path.read_text() != design_before
+    assert presentation_path.read_text() == presentation_before
+    assert yaml.safe_load(design_path.read_text())["colors"]["primary"] == "#654321"
+
+
+def test_discard_reverts_unsaved_edits(client, project_dir):
+    design_path = project_dir / "design.yaml"
+    original = design_path.read_text()
+
+    data = yaml.safe_load(original)
+    data["colors"]["primary"] = "#abcdef"
+    response = client.put("/api/config/design", json=data)
+    assert response.json()["dirty"] is True
+
+    discard_response = client.post("/api/discard")
+    assert discard_response.status_code == 200
+    assert discard_response.json() == {"dirty": False}
+
+    # The working copy re-reads from disk on next access -- back to the
+    # original value, and the file itself was never touched either.
+    assert client.get("/api/config/design").json()["colors"]["primary"] != "#abcdef"
+    assert design_path.read_text() == original
+
+
+def test_autosave_flushes_immediately_with_no_separate_save_call(client, project_dir):
+    presentation_path = project_dir / "presentation.yaml"
+    design_path = project_dir / "design.yaml"
+
+    data = yaml.safe_load(presentation_path.read_text())
+    data.setdefault("build", {})["autosave"] = True
+    response = client.put("/api/config/presentation", json=data)
+    assert response.status_code == 200
+    # Turning autosave on is itself an edit, and it flushes right away --
+    # no special-casing needed, since the mutation that sets `autosave:
+    # true` is itself what `_after_mutation` reacts to.
+    assert response.json()["dirty"] is False
+    assert yaml.safe_load(presentation_path.read_text())["build"]["autosave"] is True
+
+    design_data = yaml.safe_load(design_path.read_text())
+    design_data["colors"]["primary"] = "#00ff00"
+    design_response = client.put("/api/config/design", json=design_data)
+    assert design_response.status_code == 200
+    assert design_response.json()["dirty"] is False
+    assert yaml.safe_load(design_path.read_text())["colors"]["primary"] == "#00ff00"
+
+
+def test_get_plan_reports_dirty_state(client, project_dir):
+    assert client.get("/api/plan").json()["dirty"] is False
+
+    data = yaml.safe_load((project_dir / "presentation.yaml").read_text())
+    client.put("/api/config/presentation", json=data)
+    assert client.get("/api/plan").json()["dirty"] is True
+
+    client.post("/api/save")
+    assert client.get("/api/plan").json()["dirty"] is False
 
 
 # --- build job lifecycle ----------------------------------------------

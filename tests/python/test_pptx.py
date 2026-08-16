@@ -261,7 +261,7 @@ def test_furniture_composes_as_ordinary_shapes(project):
     shape_names = {shape.name for shape in slide.shapes}
     assert shape_names == {
         "__furniture_background",
-        "__furniture_status",
+        "__furniture_watermark",
         "__furniture_branding",
         "__furniture_page_number",
         "title",
@@ -775,7 +775,7 @@ def test_status_indicator_watermark_composes_the_status_furniture(project):
     prs = Presentation(str(result.output_path))
     (slide,) = list(prs.slides)
     (shape,) = list(slide.shapes)
-    assert shape.name == "__furniture_status"
+    assert shape.name == "__furniture_watermark"
     assert shape.text_frame.text == "DRAFT"
     # `python-pptx` normalizes a negative rotation into 0-360 range.
     assert shape.rotation == 330
@@ -838,10 +838,13 @@ def test_status_indicator_corner_placement_composes_at_its_own_box(project):
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
         layouts="layouts.yaml",
-        metadata=Metadata(title="Test"),
+        # A corner placement's text always comes from metadata.status, not
+        # `watermark` -- that override only applies to the full-page
+        # `"watermark"` placement (`resolve_watermark_text`'s own
+        # docstring).
+        metadata=Metadata(title="Test", status="APPROVED"),
         build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
         status_indicator="corner-tl",
-        watermark="APPROVED",
         slides=[Slide(id="s1", layout=None, elements=[])],
     )
     result = _build(project, presentation, design)
@@ -876,10 +879,9 @@ def test_status_indicator_corner_tr_is_right_aligned(project):
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
         layouts="layouts.yaml",
-        metadata=Metadata(title="Test"),
+        metadata=Metadata(title="Test", status="APPROVED"),
         build=BuildConfig(output="build/out.pptx", manifest="build/out.manifest.json"),
         status_indicator="corner-tr",
-        watermark="APPROVED",
         slides=[Slide(id="s1", layout=None, elements=[])],
     )
     result = _build(project, presentation, design)
@@ -961,9 +963,9 @@ def test_watermark_with_a_high_z_index_paints_on_top_of_ordinary_content(project
     # Painter's-algorithm order: the watermark's z_index (9999) sorts
     # after the ordinary element's default (0), so it must be added
     # (and therefore painted) last -- on top, not hidden behind it.
-    assert shape_names == ["body", "__furniture_status"]
+    assert shape_names == ["body", "__furniture_watermark"]
 
-    watermark_shape = next(s for s in slide.shapes if s.name == "__furniture_status")
+    watermark_shape = next(s for s in slide.shapes if s.name == "__furniture_watermark")
     run = watermark_shape.text_frame.paragraphs[0].runs[0]
     alpha = run._r.find(qn("a:rPr")).find(qn("a:solidFill")).find(qn("a:srgbClr")).find(
         qn("a:alpha")

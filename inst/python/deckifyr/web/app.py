@@ -24,6 +24,7 @@ background thread (see that module's own docstring for why).
 from __future__ import annotations
 
 import copy
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from deckifyr.plan import (
     FURNITURE_BRANDING_ID,
     FURNITURE_PAGE_NUMBER_ID,
     FURNITURE_STATUS_ID,
+    FURNITURE_WATERMARK_ID,
     STATUS_INDICATOR_FIELDS,
     ResolvedElement,
     ResolvedSlide,
@@ -131,10 +133,14 @@ def _resolve_furniture_target(
     Raises `DeckifyrError` (`PATH_NOT_FOUND`) for ids with no editable
     geometry at all (`background`, which always fills the slide with no
     `box` of its own in the schema) or whose target isn't selectable
-    right now (`status` with no `status_indicator` chosen in
+    right now (`status` with no *corner* `status_indicator` chosen in
     `presentation.yaml`) -- both are "there's nothing here to edit yet"
     in spirit, the same status a missing `set_value` parent already
-    produces via `_set_element_field` below.
+    produces via `_set_element_field` below. `FURNITURE_WATERMARK_ID`
+    always targets `furniture.status.watermark`, independent of
+    `status_indicator`/`watermark_overlay` -- editing its position is
+    harmless whether or not it's currently the active/overlay watermark
+    (`deckifyr.plan.FURNITURE_WATERMARK_ID`'s own docstring).
     """
     if element_id == FURNITURE_BACKGROUND_ID:
         raise DeckifyrError(
@@ -145,14 +151,16 @@ def _resolve_furniture_target(
         )
     if element_id == FURNITURE_STATUS_ID:
         indicator = presentation_doc.status_indicator
-        if indicator is None or indicator == "none":
+        if indicator is None or indicator in ("none", "watermark"):
             raise DeckifyrError(
-                "no status/watermark placement is selected -- choose one "
-                "in Deck Options first",
+                "no corner status indicator is selected -- choose one in "
+                "Deck Options first",
                 code=ErrorCode.PATH_NOT_FOUND,
             )
         field_name = STATUS_INDICATOR_FIELDS[indicator]
         return f"furniture.status.{field_name}", True, True, None
+    if element_id == FURNITURE_WATERMARK_ID:
+        return "furniture.status.watermark", True, True, None
     if element_id == FURNITURE_BRANDING_ID:
         return "furniture.branding", False, False, "text"
     if element_id == FURNITURE_PAGE_NUMBER_ID:
@@ -176,6 +184,67 @@ def _default_box(x_in: float, y_in: float, width_in: float, height_in: float) ->
     }
 
 
+class _WorkingCopy:
+    """In-memory copy of design.yaml/layouts.yaml/presentation.yaml for one
+    `deckifyr serve` process (issue #24's deferred-save editor). Every
+    mutating handler below applies its edit here instead of to the file
+    directly; `POST /api/save` is the only place that still calls
+    `projectio.write_yaml` for a document actually touched this session.
+    Closure-scoped to one `create_app()` call (constructed inside it,
+    like `job_manager`), so it's independent per project/process --
+    required since `tests/python/test_web.py` creates multiple
+    `create_app()` instances in one test process.
+
+    Lazily loads each document's raw dict on first access (mirrors the
+    old always-read-from-disk behavior for whichever doc is asked for
+    first); `discard()` drops everything so the next access re-reads
+    from disk.
+    """
+
+    def __init__(self, presentation_path: Path):
+        self._presentation_path = presentation_path
+        self._docs: dict[str, Any] = {"presentation": None, "design": None, "layouts": None}
+        self._dirty: set[str] = set()
+
+    def _design_layouts_paths(self) -> tuple[Path, Path]:
+        presentation_data = self.get("presentation") or {}
+        base_dir = self._presentation_path.parent
+        design_base = (presentation_data.get("design") or {}).get("base", "design.yaml")
+        layouts_rel = presentation_data.get("layouts", "layouts.yaml")
+        return (base_dir / design_base).resolve(), (base_dir / layouts_rel).resolve()
+
+    def path_for(self, doc: str) -> Path:
+        if doc == "presentation":
+            return self._presentation_path
+        design_path, layouts_path = self._design_layouts_paths()
+        return design_path if doc == "design" else layouts_path
+
+    def get(self, doc: str) -> Any:
+        if self._docs[doc] is None:
+            self._docs[doc] = projectio.read_yaml(self.path_for(doc))
+        return self._docs[doc]
+
+    def set(self, doc: str, data: Any) -> None:
+        self._docs[doc] = data
+        self._dirty.add(doc)
+
+    @property
+    def dirty(self) -> bool:
+        return bool(self._dirty)
+
+    def save(self) -> list[str]:
+        saved = []
+        for doc in sorted(self._dirty):
+            projectio.write_yaml(self.path_for(doc), self._docs[doc])
+            saved.append(doc)
+        self._dirty.clear()
+        return saved
+
+    def discard(self) -> None:
+        self._docs = {"presentation": None, "design": None, "layouts": None}
+        self._dirty.clear()
+
+
 def _default_furniture_value(
     element_id: str, field_name: str | None, design_data: dict[str, Any]
 ) -> dict[str, Any]:
@@ -187,16 +256,14 @@ def _default_furniture_value(
     fixed widescreen assumption.
     """
     width_in, height_in = _slide_size_in(design_data)
+    if element_id == FURNITURE_WATERMARK_ID:
+        box_w, box_h = width_in * 0.75, height_in * 0.25
+        return {
+            "box": _default_box((width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h),
+            "rotation": -30,
+            "z_index": 9999,
+        }
     if element_id == FURNITURE_STATUS_ID:
-        if field_name == "watermark":
-            box_w, box_h = width_in * 0.75, height_in * 0.25
-            return {
-                "box": _default_box(
-                    (width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h
-                ),
-                "rotation": -30,
-                "z_index": 9999,
-            }
         margin = 0.25
         box_w, box_h = min(3.0, width_in * 0.3), 0.4
         x = margin if field_name in ("corner_tl", "corner_bl") else width_in - margin - box_w
@@ -218,6 +285,58 @@ def _default_furniture_value(
     raise HTTPException(status_code=404, detail=f"unknown furniture element {element_id!r}")
 
 
+def _frontend_build_warning(static_dir: Path, web_src_dir: Path) -> str | None:
+    """Dev-checkout-only staleness check for the committed frontend
+    bundle under `static_dir` (`inst/python/deckifyr/web/static/`, spec
+    section 12's own "committed generated output" posture, CLAUDE.md's
+    "Web application" note), given the sibling frontend source tree
+    `web_src_dir` (`<repo root>/web/src`). Real, previously-hit trap this
+    exists to catch early instead of via a long confused debugging round:
+    a genuine source fix in `web/src/` can sit uncompiled while a live
+    `deckifyr serve` session keeps serving the old, pre-fix JS, and a
+    browser hard-refresh alone does *not* help -- `StaticFiles` really is
+    serving fresh bytes off disk each request, they're just still the
+    stale ones, because nobody re-ran `npm run build` after the edit.
+
+    `web_src_dir` is passed in (rather than derived from `__file__` here)
+    specifically so this stays a pure, directly testable function --
+    `create_app` is the one real call site, and it's also the one place
+    that legitimately knows `web/src/` only exists in a real git checkout
+    of this repo: an installed wheel/R package ships `inst/python`/
+    `static/` alone, never the frontend source tree, so
+    `web_src_dir.is_dir()` is `False` for every real end user and this is
+    a silent, zero-cost no-op there, same as the rest of this module's
+    dev-only concerns. Returns `None` when not a dev checkout, when
+    there's no build to compare against yet is arguably a *build-missing*
+    problem `static_dir.is_dir()` already handles elsewhere in
+    `create_app`, or when the build is actually current; otherwise a
+    short, actionable message.
+    """
+    if not web_src_dir.is_dir():
+        return None
+
+    def _latest_mtime(root: Path, suffixes: set[str]) -> float:
+        return max(
+            (
+                p.stat().st_mtime
+                for p in root.rglob("*")
+                if p.is_file() and p.suffix in suffixes and ".test." not in p.name
+            ),
+            default=0.0,
+        )
+
+    source_mtime = _latest_mtime(web_src_dir, {".ts", ".tsx", ".css"})
+    build_mtime = _latest_mtime(static_dir, {".js", ".css", ".html"}) if static_dir.is_dir() else 0.0
+    if source_mtime <= build_mtime:
+        return None
+    return (
+        "the built frontend under web/static/ is older than web/src/ -- "
+        "run `npm run build` in web/ before trusting what this session "
+        "serves; a browser hard-refresh alone will not pick up the "
+        "missing rebuild."
+    )
+
+
 def create_app(
     project_root: Path,
     presentation_name: str = "presentation.yaml",
@@ -227,6 +346,13 @@ def create_app(
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
     job_manager = JobManager()
+    working_copy = _WorkingCopy(presentation_path)
+
+    static_dir = Path(__file__).parent / "static"
+    web_src_dir = Path(__file__).resolve().parents[4] / "web" / "src"
+    frontend_warning = _frontend_build_warning(static_dir, web_src_dir)
+    if frontend_warning is not None:
+        print(f"deckifyr serve: WARNING: {frontend_warning}", file=sys.stderr)
 
     app = FastAPI(title="deckifyr")
 
@@ -236,7 +362,7 @@ def create_app(
         return JSONResponse(status_code=status_code, content=exc.to_dict())
 
     def _load_presentation_doc() -> PresentationDocument:
-        data = projectio.read_yaml(presentation_path)
+        data = working_copy.get("presentation")
         try:
             return PresentationDocument.model_validate(data)
         except PydanticValidationError as exc:
@@ -246,26 +372,37 @@ def create_app(
             ) from exc
 
     def _project_paths() -> tuple[Path, Path, Path]:
-        presentation = _load_presentation_doc()
-        design_path = (presentation_path.parent / presentation.design.base).resolve()
-        layouts_path = (presentation_path.parent / presentation.layouts).resolve()
-        return presentation_path, design_path, layouts_path
+        return presentation_path, working_copy.path_for("design"), working_copy.path_for("layouts")
 
     def _doc_path(doc: str) -> Path:
         if doc not in projectio.DOCUMENT_MODELS:
             raise HTTPException(status_code=404, detail=f"unknown document type {doc!r}")
-        _, design_path, layouts_path = _project_paths()
-        return {
-            "design": design_path,
-            "layouts": layouts_path,
-            "presentation": presentation_path,
-        }[doc]
+        return working_copy.path_for(doc)
 
     def _set_element_field(document: dict, path: str, value: Any) -> None:
         try:
             editor.set_value(document, path, value)
         except editor.PathError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.PATH_NOT_FOUND) from exc
+
+    def _autosave_enabled() -> bool:
+        presentation_data = working_copy.get("presentation") or {}
+        build = presentation_data.get("build") or {}
+        return bool(build.get("autosave", False))
+
+    def _after_mutation() -> bool:
+        """Call at the end of every mutating handler, after its edit has
+        already been applied via `working_copy.set(...)`. Autosaves
+        immediately when `presentation.yaml`'s `build.autosave` is on --
+        this also covers flipping the checkbox itself with no special
+        case, since the `PUT` that sets `autosave: true` is itself the
+        mutation `_after_mutation` reacts to, and it's included in what
+        gets flushed. Returns the `dirty` flag every mutating response
+        carries.
+        """
+        if working_copy.dirty and _autosave_enabled():
+            working_copy.save()
+        return working_copy.dirty
 
     # --- health / project ------------------------------------------
 
@@ -278,7 +415,7 @@ def create_app(
         # instructions -- `presentation.yaml`/`design.yaml`/`layouts.yaml`
         # not existing yet is the whole point of that screen, so it can't
         # depend on a route that requires them).
-        return {"status": "ok", "launcher": launcher}
+        return {"status": "ok", "launcher": launcher, "frontend_warning": frontend_warning}
 
     @app.get("/api/project")
     def get_project() -> dict[str, Any]:
@@ -294,13 +431,21 @@ def create_app(
 
     @app.get("/api/config/{doc}")
     def get_config(doc: str) -> Any:
-        return projectio.read_yaml(_doc_path(doc))
+        if doc not in projectio.DOCUMENT_MODELS:
+            raise HTTPException(status_code=404, detail=f"unknown document type {doc!r}")
+        return working_copy.get(doc)
 
     @app.put("/api/config/{doc}")
     def put_config(doc: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         path = _doc_path(doc)
         if doc == "presentation":
-            return projectio.validate_and_write_presentation(path, body)
+            presentation = projectio.validate_presentation_data(path, body)
+            working_copy.set(doc, body)
+            return {
+                "path": str(path),
+                "slide_count": len(presentation.slides),
+                "dirty": _after_mutation(),
+            }
         try:
             projectio.DOCUMENT_MODELS[doc].model_validate(body)
         except PydanticValidationError as exc:
@@ -308,20 +453,32 @@ def create_app(
                 projectio.format_pydantic_error(exc, str(path)),
                 code=ErrorCode.SCHEMA_VALIDATION,
             ) from exc
-        projectio.write_yaml(path, body)
-        return {"path": str(path)}
+        working_copy.set(doc, body)
+        return {"path": str(path), "dirty": _after_mutation()}
 
     # --- plan / validate ---------------------------------------------
 
+    def _load_working_project() -> tuple[PresentationDocument, DesignDocument, Any]:
+        return projectio.load_project(
+            presentation_path,
+            strict=True,
+            presentation_data=working_copy.get("presentation"),
+            design_data=working_copy.get("design"),
+            layouts_data=working_copy.get("layouts"),
+        )
+
     @app.get("/api/plan")
     def get_plan() -> dict[str, Any]:
-        presentation, design, layouts = projectio.load_project(presentation_path, strict=True)
+        presentation, design, layouts = _load_working_project()
         resolved_slides = expand_presentation(presentation, design, layouts, strict=True)
-        return {"slides": [_serialize_slide(slide) for slide in resolved_slides]}
+        return {
+            "slides": [_serialize_slide(slide) for slide in resolved_slides],
+            "dirty": working_copy.dirty,
+        }
 
     @app.post("/api/validate")
     def post_validate() -> dict[str, Any]:
-        presentation, design, layouts = projectio.load_project(presentation_path, strict=True)
+        presentation, design, layouts = _load_working_project()
         return {
             "valid": True,
             "presentation": str(presentation_path),
@@ -336,7 +493,13 @@ def create_app(
     def patch_element(
         slide_id: str, element_id: str, body: dict[str, Any] = Body(...)
     ) -> dict[str, Any]:
-        data = projectio.load_presentation_raw(presentation_path)
+        data = working_copy.get("presentation")
+        if not isinstance(data, dict) or "slides" not in data:
+            raise DeckifyrError(
+                f"{presentation_path} does not look like a presentation.yaml "
+                "(no top-level 'slides' key)",
+                code=ErrorCode.SCHEMA_VALIDATION,
+            )
         edited = copy.deepcopy(data)
         slides = edited.get("slides") or []
 
@@ -391,14 +554,21 @@ def create_app(
         if "value" in body:
             _set_element_field(edited, f"{prefix}.value", body["value"])
 
-        result = projectio.validate_and_write_presentation(presentation_path, edited)
-        return {"slide": slide_id, "element": element_id, **result}
+        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        working_copy.set("presentation", edited)
+        return {
+            "slide": slide_id,
+            "element": element_id,
+            "presentation": str(presentation_path),
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
 
     # --- furniture pseudo-slide (issue #21) -----------------------------
 
     @app.get("/api/furniture")
     def get_furniture() -> dict[str, Any]:
-        presentation, design, _layouts = projectio.load_project(presentation_path, strict=True)
+        presentation, design, _layouts = _load_working_project()
         synthetic_slide = Slide(id=FURNITURE_SLIDE_ID, layout=None)
         # `furniture_lenient=True`: this route's whole purpose is
         # authoring furniture, so a `status_indicator` selection with no
@@ -415,6 +585,8 @@ def create_app(
             page_number=1,
             total_pages=len(presentation.slides),
             status_indicator=presentation.status_indicator,
+            watermark_overlay=presentation.watermark_overlay,
+            corner_text=presentation.metadata.status,
             watermark_text=resolve_watermark_text(presentation),
             furniture_lenient=True,
         )
@@ -425,12 +597,12 @@ def create_app(
         element_id: str, body: dict[str, Any] = Body(...)
     ) -> dict[str, Any]:
         presentation_doc = _load_presentation_doc()
-        _, design_path, _ = _project_paths()
+        design_path = working_copy.path_for("design")
         prefix, allow_rotation, allow_z_index, text_field = _resolve_furniture_target(
             element_id, presentation_doc
         )
 
-        edited = copy.deepcopy(projectio.read_yaml(design_path))
+        edited = copy.deepcopy(working_copy.get("design"))
         try:
             target = editor.get_value(edited, prefix)
         except editor.PathError as exc:
@@ -480,22 +652,39 @@ def create_app(
                 projectio.format_pydantic_error(exc, str(design_path)),
                 code=ErrorCode.SCHEMA_VALIDATION,
             ) from exc
-        projectio.write_yaml(design_path, edited)
-        return {"element": element_id, "path": str(design_path)}
+        working_copy.set("design", edited)
+        return {"element": element_id, "path": str(design_path), "dirty": _after_mutation()}
 
     @app.post("/api/furniture/elements/{element_id}")
     def add_furniture_element(element_id: str) -> dict[str, Any]:
         presentation_doc = _load_presentation_doc()
-        _, design_path, _ = _project_paths()
-        edited = copy.deepcopy(projectio.read_yaml(design_path))
+        design_path = working_copy.path_for("design")
+        edited = copy.deepcopy(working_copy.get("design"))
         furniture = edited.setdefault("furniture", {})
 
-        if element_id == FURNITURE_STATUS_ID:
-            indicator = presentation_doc.status_indicator
-            if indicator is None or indicator == "none":
+        enable_watermark_overlay = False
+        if element_id == FURNITURE_WATERMARK_ID:
+            # Independent of `status_indicator` entirely -- materializing
+            # the watermark's style here also turns on the separate
+            # `watermark_overlay` toggle in the same action, since a
+            # style with nothing pointing at it wouldn't render anything
+            # (`deckifyr.plan.FURNITURE_WATERMARK_ID`'s own docstring for
+            # why this is a genuinely independent, additive concept from
+            # `status_indicator: watermark`).
+            status_block = furniture.setdefault("status", {})
+            if status_block.get("watermark") is not None:
                 raise DeckifyrError(
-                    "no status/watermark placement is selected -- choose "
-                    "one in Deck Options first",
+                    "design.yaml's furniture.status.watermark is already configured",
+                    code=ErrorCode.SCHEMA_VALIDATION,
+                )
+            status_block["watermark"] = _default_furniture_value(element_id, None, edited)
+            enable_watermark_overlay = True
+        elif element_id == FURNITURE_STATUS_ID:
+            indicator = presentation_doc.status_indicator
+            if indicator is None or indicator in ("none", "watermark"):
+                raise DeckifyrError(
+                    "no corner status indicator is selected -- choose one "
+                    "in Deck Options first",
                     code=ErrorCode.PATH_NOT_FOUND,
                 )
             field_name = STATUS_INDICATOR_FIELDS[indicator]
@@ -537,27 +726,58 @@ def create_app(
                 projectio.format_pydantic_error(exc, str(design_path)),
                 code=ErrorCode.SCHEMA_VALIDATION,
             ) from exc
-        projectio.write_yaml(design_path, edited)
-        return {"element": element_id, "path": str(design_path)}
+        if enable_watermark_overlay:
+            # Validated *before* either write commits -- turning the
+            # overlay on with no text source anywhere (no `watermark`
+            # override, no `metadata.status`) is exactly what
+            # `_check_watermark_has_text` exists to reject, the same as
+            # it always has for `status_indicator: watermark`.
+            edited_presentation = copy.deepcopy(working_copy.get("presentation"))
+            edited_presentation["watermark_overlay"] = True
+            projectio.validate_presentation_data(presentation_path, edited_presentation)
+            working_copy.set("presentation", edited_presentation)
+        working_copy.set("design", edited)
+        return {"element": element_id, "path": str(design_path), "dirty": _after_mutation()}
 
     @app.delete("/api/furniture/elements/{element_id}")
     def remove_furniture_element(element_id: str) -> dict[str, Any]:
         presentation_doc = _load_presentation_doc()
-        _, design_path, _ = _project_paths()
-        edited = copy.deepcopy(projectio.read_yaml(design_path))
+        design_path = working_copy.path_for("design")
+        edited = copy.deepcopy(working_copy.get("design"))
         furniture = edited.setdefault("furniture", {})
 
-        if element_id == FURNITURE_STATUS_ID:
+        presentation_updates: dict[str, Any] = {}
+        if element_id == FURNITURE_WATERMARK_ID:
+            status_block = furniture.setdefault("status", {})
+            status_block["watermark"] = None
+            # Always turn the overlay off (it has nothing to render now),
+            # and clear status_indicator too if it was specifically
+            # "watermark" -- but leave the override *text*
+            # (`presentation.watermark`) alone. That's a content choice,
+            # not an activation flag, and stays useful if the watermark
+            # is added back later (`design.yaml` holds the "pieces",
+            # `presentation.yaml` only "implements" -- the same split the
+            # user asked for).
+            presentation_updates["watermark_overlay"] = False
+            if presentation_doc.status_indicator == "watermark":
+                presentation_updates["status_indicator"] = None
+        elif element_id == FURNITURE_STATUS_ID:
             indicator = presentation_doc.status_indicator
-            if indicator is None or indicator == "none":
+            if indicator is None or indicator in ("none", "watermark"):
                 raise DeckifyrError(
-                    "no status/watermark placement is selected -- choose "
-                    "one in Deck Options first",
+                    "no corner status indicator is selected -- choose one "
+                    "in Deck Options first",
                     code=ErrorCode.PATH_NOT_FOUND,
                 )
             field_name = STATUS_INDICATOR_FIELDS[indicator]
             status_block = furniture.setdefault("status", {})
             status_block[field_name] = None
+            # Removing the active corner also clears status_indicator in
+            # the same action -- leaving it pointing at a style that no
+            # longer exists is exactly the dangling-reference footgun
+            # this route used to sidestep by refusing to expose Remove
+            # at all.
+            presentation_updates["status_indicator"] = None
         elif element_id == FURNITURE_BRANDING_ID:
             furniture["branding"] = None
         elif element_id == FURNITURE_PAGE_NUMBER_ID:
@@ -575,9 +795,28 @@ def create_app(
         # Unsetting a field to `None` can never fail `DesignDocument`
         # validation (every furniture sub-field is already `X | None`),
         # so this skips the validate-then-write try/except the other
-        # routes need.
-        projectio.write_yaml(design_path, edited)
-        return {"element": element_id, "path": str(design_path)}
+        # routes need. Same reasoning for `presentation_updates`: every
+        # field touched there is being set to `None`/`False`, which can
+        # never trip `_check_watermark_has_text` (that validator only
+        # ever rejects an *active* watermark with no text source).
+        if presentation_updates:
+            edited_presentation = copy.deepcopy(working_copy.get("presentation"))
+            edited_presentation.update(presentation_updates)
+            working_copy.set("presentation", edited_presentation)
+        working_copy.set("design", edited)
+        return {"element": element_id, "path": str(design_path), "dirty": _after_mutation()}
+
+    # --- save / discard (issue #24) -------------------------------------
+
+    @app.post("/api/save")
+    def post_save() -> dict[str, Any]:
+        saved = working_copy.save()
+        return {"saved": saved, "dirty": working_copy.dirty}
+
+    @app.post("/api/discard")
+    def post_discard() -> dict[str, Any]:
+        working_copy.discard()
+        return {"dirty": working_copy.dirty}
 
     # --- build jobs ----------------------------------------------------
 
@@ -626,7 +865,6 @@ def create_app(
 
     # --- static frontend, mounted last so /api/* always wins -----------
 
-    static_dir = Path(__file__).parent / "static"
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
     else:
