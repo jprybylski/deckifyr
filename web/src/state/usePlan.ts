@@ -13,16 +13,27 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
+  deleteSlide,
   getConfig,
   getFurniture,
+  getLayoutZones,
   getPlan,
   patchElement,
   patchFurnitureElement,
+  patchLayoutElement,
+  postAddSlide,
 } from "../api/client";
 import { boxToInches, parseInchesString } from "../geometry";
 import type { ElementPatchBody, ResolvedElement, ResolvedSlide } from "../types";
 import { useAppContext } from "./AppContext";
 import type { HistoryEntry } from "./reducer";
+
+/** The synthetic slide id prefix `usePlan`/`SlideCanvas`/`ElementInspector`
+ * use to address a layout's own zones through the same `applyElementPatch`/
+ * undo/redo machinery real slides and the furniture pseudo-slide already
+ * share (issue #23's Content/Layout tab) -- `sendPatch` below strips the
+ * prefix back off to get the real layout name for `patchLayoutElement`. */
+const LAYOUT_SLIDE_PREFIX = "__layout__";
 
 /** The synthetic slide id `GET /api/furniture` returns (issue #21) --
  * matches `deckifyr.web.app`'s own `FURNITURE_SLIDE_ID` constant. Not a
@@ -54,9 +65,11 @@ function readSlideSize(designDoc: Record<string, unknown>): DesignSlideSize {
  * without the caller (`SlideCanvas`/`ElementInspector`) needing to know
  * which backend a given slide id actually maps to. */
 function sendPatch(slideId: string, elementId: string, patch: ElementPatchBody) {
-  return slideId === FURNITURE_SLIDE_ID
-    ? patchFurnitureElement(elementId, patch)
-    : patchElement(slideId, elementId, patch);
+  if (slideId === FURNITURE_SLIDE_ID) return patchFurnitureElement(elementId, patch);
+  if (slideId.startsWith(LAYOUT_SLIDE_PREFIX)) {
+    return patchLayoutElement(slideId.slice(LAYOUT_SLIDE_PREFIX.length), elementId, patch);
+  }
+  return patchElement(slideId, elementId, patch);
 }
 
 export function findElement(
@@ -75,10 +88,33 @@ export interface UsePlanResult {
    * `slides.map` consumer (slide numbering, Toolbar, ...) is unaffected.
    * `null` while loading, same as `slides`/`slideSize`. */
   furnitureSlide: ResolvedSlide | null;
+  /** Each real slide's `layout` name (`null` = freeform), keyed by slide
+   * id (issue #23's Content/Layout tab) -- `PlanResponse.slide_layouts`,
+   * unchanged shape. */
+  slideLayouts: Record<string, string | null>;
+  /** The currently-loaded layout's own zones (issue #23), or `null`
+   * before `loadLayoutZones` has been called for one -- distinct from
+   * `slides`/`furnitureSlide` in that it's fetched on demand (only when
+   * Layout view is actually toggled on for a slide), not eagerly on
+   * every `refetch`. */
+  layoutSlide: ResolvedSlide | null;
+  layoutError: string | null;
+  loadLayoutZones: (layoutName: string) => Promise<void>;
   slideSize: DesignSlideSize | null;
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+  /** Add/remove a slide (issue #23) -- not part of the undo/redo patch
+   * history (structural, not a field edit, same as furniture add/remove
+   * today). Both refetch the plan on success. */
+  addSlide: (body: {
+    id: string;
+    layout: string | null;
+    index?: number;
+    after?: string;
+    before?: string;
+  }) => Promise<void>;
+  removeSlide: (slideId: string) => Promise<void>;
   /** Applies `patch`, recording `inverse` (the affected fields' prior
    * values, computed by the caller) as an undo step. Throws `ApiError`
    * on a 422 rejection -- the caller decides how to surface it (e.g.
@@ -101,9 +137,23 @@ export function usePlan(): UsePlanResult {
   const { state, dispatch } = useAppContext();
   const [slides, setSlides] = useState<ResolvedSlide[] | null>(null);
   const [furnitureSlide, setFurnitureSlide] = useState<ResolvedSlide | null>(null);
+  const [slideLayouts, setSlideLayouts] = useState<Record<string, string | null>>({});
+  const [layoutSlide, setLayoutSlide] = useState<ResolvedSlide | null>(null);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
   const [slideSize, setSlideSize] = useState<DesignSlideSize | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const loadLayoutZones = useCallback(async (layoutName: string) => {
+    try {
+      const zones = await getLayoutZones(layoutName);
+      setLayoutSlide(zones);
+      setLayoutError(null);
+    } catch (err) {
+      setLayoutSlide(null);
+      setLayoutError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, []);
 
   const refetch = useCallback(async () => {
     // `Promise.allSettled`, not `Promise.all` -- these three are
@@ -126,6 +176,7 @@ export function usePlan(): UsePlanResult {
 
     if (planResult.status === "fulfilled") {
       setSlides(planResult.value.slides);
+      setSlideLayouts(planResult.value.slide_layouts ?? {});
       // Seeds the shared dirty indicator from the working copy's own
       // state -- important on a mid-session browser refresh, where a
       // freshly-mounted `AppContext` would otherwise default back to
@@ -153,12 +204,54 @@ export function usePlan(): UsePlanResult {
     refetch();
   }, [refetch]);
 
+  /** `refetch()` covers `slides`/`furnitureSlide`/`slideSize` but not
+   * `layoutSlide` (fetched on demand per layout name, not eagerly) --
+   * without this, committing a drag on a layout zone would visually
+   * "snap back" right after the PATCH resolves, since the canvas is
+   * driven by `layoutSlide`'s stale, pre-drag geometry until something
+   * else happens to reload it. Only refetches the layout actually
+   * touched (`patchedSlideId`'s `__layout__<name>` prefix, matching
+   * `sendPatch`'s own routing), and only when one was already loaded --
+   * a patch/undo/redo against an ordinary slide or the furniture
+   * pseudo-slide leaves `layoutSlide` untouched, same as before. */
+  const refetchAfterPatch = useCallback(
+    async (patchedSlideId: string) => {
+      await refetch();
+      if (patchedSlideId.startsWith(LAYOUT_SLIDE_PREFIX) && layoutSlide) {
+        await loadLayoutZones(patchedSlideId.slice(LAYOUT_SLIDE_PREFIX.length));
+      }
+    },
+    [refetch, loadLayoutZones, layoutSlide]
+  );
+
   // Default slide selection to the first slide once the plan loads.
   useEffect(() => {
     if (slides && slides.length > 0 && state.selectedSlideId === null) {
       dispatch({ type: "SELECT_SLIDE", slideId: slides[0].id });
     }
   }, [slides, state.selectedSlideId, dispatch]);
+
+  const addSlide = useCallback(
+    async (body: {
+      id: string;
+      layout: string | null;
+      index?: number;
+      after?: string;
+      before?: string;
+    }) => {
+      await postAddSlide(body);
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const removeSlide = useCallback(
+    async (slideId: string) => {
+      await deleteSlide(slideId);
+      await refetch();
+    },
+    [refetch]
+  );
 
   const applyElementPatch = useCallback(
     async (
@@ -171,9 +264,9 @@ export function usePlan(): UsePlanResult {
       await sendPatch(slideId, elementId, patch);
       const entry: HistoryEntry = { slideId, elementId, patch, inverse, label };
       dispatch({ type: "PUSH_HISTORY", entry });
-      await refetch();
+      await refetchAfterPatch(slideId);
     },
-    [dispatch, refetch]
+    [dispatch, refetchAfterPatch]
   );
 
   const undo = useCallback(async () => {
@@ -181,24 +274,30 @@ export function usePlan(): UsePlanResult {
     if (!entry) return;
     await sendPatch(entry.slideId, entry.elementId, entry.inverse);
     dispatch({ type: "UNDO" });
-    await refetch();
-  }, [state.past, dispatch, refetch]);
+    await refetchAfterPatch(entry.slideId);
+  }, [state.past, dispatch, refetchAfterPatch]);
 
   const redo = useCallback(async () => {
     const entry = state.future[0];
     if (!entry) return;
     await sendPatch(entry.slideId, entry.elementId, entry.patch);
     dispatch({ type: "REDO" });
-    await refetch();
-  }, [state.future, dispatch, refetch]);
+    await refetchAfterPatch(entry.slideId);
+  }, [state.future, dispatch, refetchAfterPatch]);
 
   return {
     slides,
     furnitureSlide,
+    slideLayouts,
+    layoutSlide,
+    layoutError,
+    loadLayoutZones,
     slideSize,
     loading,
     error,
     refetch,
+    addSlide,
+    removeSlide,
     applyElementPatch,
     undo,
     redo,

@@ -49,8 +49,10 @@ from deckifyr.plan import (
     expand_slide,
     resolve_watermark_text,
 )
+from deckifyr.renderers.preview import LIBREOFFICE_INSTALL_URL
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
+from deckifyr.schema.layouts import Element, LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_INCH, format_length, parse_length
 from deckifyr.web.jobs import JobManager
@@ -176,6 +178,68 @@ def _default_box(x_in: float, y_in: float, width_in: float, height_in: float) ->
         "y": f"{y_in:.3f}in",
         "width": f"{width_in:.3f}in",
         "height": f"{height_in:.3f}in",
+    }
+
+
+def _resolve_layout_zone(
+    element_id: str, element: Element, design_data: dict[str, Any], order: int
+) -> dict[str, Any]:
+    """A `layouts.yaml` zone as `_serialize_element`-shaped JSON (issue
+    #23's Content/Layout tab), deliberately *not* built by reusing
+    `deckifyr.plan.expand_slide`/`_resolve_element` the way the furniture
+    pseudo-slide (`GET /api/furniture`) reuses it for its own synthetic
+    slide.
+
+    A real layout zone typically has no `value`/`source` of its own at
+    all -- that's the slide override's job (spec section 7.2/7.6's whole
+    override model; `title-content`'s own `content` zone is `type: slot`
+    with no value, only ever filled in by a slide) -- and `slot`/
+    `footnotes` aren't even in `SUPPORTED_ELEMENT_TYPES`. Confirmed the
+    hard way, not assumed: `_resolve_element`'s content-presence gate
+    (`_has_content`) means an empty, non-required zone silently resolves
+    to `None` (dropped entirely, not shown) and an empty *required* zone
+    (e.g. this layout's own `title`) hard-raises `ContentValidationError`
+    -- both wrong for a view whose whole point is showing every zone's
+    box so it can be dragged, regardless of whether it currently holds
+    content. So this resolves geometry/type/chrome directly from the
+    `Element` schema object instead, with no content-presence gate and no
+    `SUPPORTED_ELEMENT_TYPES`/`required` enforcement -- those remain
+    build-time concerns, checked once a slide actually uses this layout
+    (`expand_slide`, unchanged).
+    """
+    box = element.box
+    if box is not None:
+        box_json = {
+            "x": format_length(parse_length(box.x, strict=True)),
+            "y": format_length(parse_length(box.y, strict=True)),
+            "width": format_length(parse_length(box.width, strict=True)),
+            "height": format_length(parse_length(box.height, strict=True)),
+        }
+    else:
+        width_in, height_in = _slide_size_in(design_data)
+        box_json = _default_box(0.5, 0.5, min(3.0, width_in * 0.3), 0.4)
+    return {
+        "id": element_id,
+        "type": element.type or "text",
+        "value": element.value,
+        "source": element.source,
+        "box": box_json,
+        "rotation": element.rotation or 0,
+        "z_index": element.z_index or 0,
+        "order": order,
+        "style": None,
+        "fit": element.fit or "contain",
+        "overflow": element.overflow or "error",
+        "render_mode": element.render_mode or "native",
+        "alt_text": element.alt_text,
+        "required": element.required,
+        "footer_placement": element.footer_placement,
+        "shape_kind": element.shape_kind,
+        "shape_style": None,
+        "table_style": element.table_style,
+        "center": element.center,
+        "align": element.align,
+        "children": [],
     }
 
 
@@ -517,6 +581,12 @@ def create_app(
         return {
             "slides": [_serialize_slide(slide) for slide in resolved_slides],
             "dirty": working_copy.dirty,
+            # `slide.layout` per real slide id (issue #23's Layout tab) --
+            # `ResolvedSlide` itself carries no `layout` field (spec's own
+            # Pass 1/Pass 2 split, CLAUDE.md), so this is read straight off
+            # `presentation.slides` rather than growing that shared
+            # dataclass just for the web layer's own benefit.
+            "slide_layouts": {slide.id: slide.layout for slide in presentation.slides},
         }
 
     @app.post("/api/validate")
@@ -604,6 +674,128 @@ def create_app(
             "element": element_id,
             "presentation": str(presentation_path),
             "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    # --- slide add/remove (issue #23) -----------------------------------
+    #
+    # Thin wrappers over `deckifyr.editor.add_slide`/`remove_slide`
+    # (already real, unit-tested, and used by the CLI's own `slide add`/
+    # `slide remove` subcommands) applied to the working copy's
+    # `presentation.yaml` dict -- same validate-then-`working_copy.set`
+    # shape every other mutating route here already uses, and the same
+    # `DuplicateSlideIdError`/`SlideNotFoundError`/`AmbiguousPlacementError`
+    # -> `DeckifyrError` code mapping `cli.py`'s `_cmd_slide_add`/
+    # `_cmd_slide_move` already establish (`CONTENT_VALIDATION`/
+    # `REFERENCE_NOT_FOUND`/`CONTENT_VALIDATION`, all 422 per
+    # `_ERROR_CODE_STATUS`).
+
+    @app.post("/api/slides")
+    def add_slide(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        edited = copy.deepcopy(working_copy.get("presentation"))
+        try:
+            editor.add_slide(
+                edited,
+                id=body["id"],
+                layout=body.get("layout"),
+                index=body.get("index"),
+                after=body.get("after"),
+                before=body.get("before"),
+            )
+        except editor.DuplicateSlideIdError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        except editor.SlideNotFoundError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+        except editor.AmbiguousPlacementError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        working_copy.set("presentation", edited)
+        return {
+            "id": body["id"],
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    @app.delete("/api/slides/{slide_id}")
+    def remove_slide(slide_id: str) -> dict[str, Any]:
+        edited = copy.deepcopy(working_copy.get("presentation"))
+        try:
+            editor.remove_slide(edited, slide_id)
+        except editor.SlideNotFoundError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        working_copy.set("presentation", edited)
+        return {
+            "id": slide_id,
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    # --- layout zones (issue #23's Content/Layout tab) -------------------
+    #
+    # A layout's own zones, resolved and edited the same way the
+    # furniture pseudo-slide's own elements are: `GET /api/layouts/{name}`
+    # reuses `expand_slide` with a synthetic, empty `Slide` (the same
+    # trick `GET /api/furniture` already uses), and the PATCH route below
+    # mirrors `patch_furniture_element`'s shape but targets `layouts.yaml`
+    # instead of `design.yaml`. Unlike a slide's own `elements` (which may
+    # be dict- or list-keyed, spec section 7.6), `Layout.elements` is
+    # always dict-keyed, so there's no list-form branch to handle here.
+
+    @app.get("/api/layouts/{layout_name}")
+    def get_layout_zones(layout_name: str) -> dict[str, Any]:
+        _presentation, _design, layouts = _load_working_project()
+        if layout_name not in layouts.layouts:
+            raise HTTPException(status_code=404, detail=f"unknown layout {layout_name!r}")
+        design_data = working_copy.get("design") or {}
+        elements = [
+            _resolve_layout_zone(element_id, element, design_data, order)
+            for order, (element_id, element) in enumerate(
+                layouts.layouts[layout_name].elements.items()
+            )
+        ]
+        elements.sort(key=lambda e: (e["z_index"], e["order"]))
+        return {"id": f"__layout__{layout_name}", "notes": None, "elements": elements}
+
+    @app.patch("/api/layouts/{layout_name}/elements/{element_id}")
+    def patch_layout_element(
+        layout_name: str, element_id: str, body: dict[str, Any] = Body(...)
+    ) -> dict[str, Any]:
+        layouts_path = working_copy.path_for("layouts")
+        edited = copy.deepcopy(working_copy.get("layouts"))
+        prefix = f"layouts.{layout_name}.elements.{element_id}"
+        try:
+            editor.get_value(edited, prefix)
+        except editor.PathError as exc:
+            raise DeckifyrError(
+                f"no zone {element_id!r} on layout {layout_name!r}",
+                code=ErrorCode.PATH_NOT_FOUND,
+            ) from exc
+
+        if "box" in body and body["box"]:
+            for field_name, raw_value in body["box"].items():
+                if field_name not in ("x", "y", "width", "height"):
+                    continue
+                _set_element_field(edited, f"{prefix}.box.{field_name}", f"{raw_value}in")
+        if "rotation" in body:
+            _set_element_field(edited, f"{prefix}.rotation", body["rotation"])
+        if "z_index" in body:
+            _set_element_field(edited, f"{prefix}.z_index", body["z_index"])
+        if "value" in body:
+            _set_element_field(edited, f"{prefix}.value", body["value"])
+
+        try:
+            LayoutsDocument.model_validate(edited)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                projectio.format_pydantic_error(exc, str(layouts_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+        working_copy.set("layouts", edited)
+        return {
+            "layout": layout_name,
+            "element": element_id,
+            "path": str(layouts_path),
             "dirty": _after_mutation(),
         }
 
@@ -841,6 +1033,35 @@ def create_app(
     @app.post("/api/build")
     def post_build() -> dict[str, Any]:
         job = job_manager.submit_build(project_root, presentation_name)
+        return {"job_id": job.id}
+
+    # --- preview (issue #27) --------------------------------------------
+
+    @app.get("/api/preview/availability")
+    def get_preview_availability() -> dict[str, Any]:
+        """Proactive LibreOffice-availability check (issue #27: "with
+        information there if they don't [have the appropriate
+        binaries]") -- checked up front rather than only surfaced after a
+        failed Preview click. Reads `build.preview.binary` off the
+        working copy the same way `_build_preview_config`
+        (`deckifyr.pptx.compose`) resolves it for a real build, defaulting
+        to `"soffice"` unset.
+        """
+        presentation_data = working_copy.get("presentation") or {}
+        preview_config = ((presentation_data.get("build") or {}).get("preview") or {})
+        binary = preview_config.get("binary", "soffice")
+        available = shutil.which(binary) is not None
+        return {
+            "available": available,
+            "binary": binary,
+            "display_name": "LibreOffice",
+            "install_url": None if available else LIBREOFFICE_INSTALL_URL,
+        }
+
+    @app.post("/api/preview")
+    def post_preview(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+        slides = body.get("slides")
+        job = job_manager.submit_preview(project_root, presentation_name, slides=slides)
         return {"job_id": job.id}
 
     @app.get("/api/jobs/{job_id}")

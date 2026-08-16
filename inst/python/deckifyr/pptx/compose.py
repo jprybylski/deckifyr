@@ -161,6 +161,10 @@ class BuildResult:
     slide_count: int
     warnings: list[str] = field(default_factory=list)
     preview_paths: list[Path] = field(default_factory=list)
+    # Only non-`None` when `compose_and_write`'s `keep_preview_pdf=True`
+    # (issue #27's embedded-PDF-viewer support, `deckifyr preview`'s own
+    # always-on choice -- see that CLI command's own comment).
+    preview_pdf_path: Path | None = None
 
 
 @dataclass
@@ -1128,6 +1132,8 @@ def compose_and_write(
     design_path: Path,
     layouts_path: Path,
     force_previews: bool = False,
+    preview_slides: list[int] | None = None,
+    keep_preview_pdf: bool = False,
 ) -> BuildResult:
     started_at = datetime.now(timezone.utc)
     prs, element_manifest, warnings = compose(
@@ -1146,12 +1152,17 @@ def compose_and_write(
     # An ordinary `deckifyr build` only renders when `build.previews` is
     # set, per that field's own docstring.
     preview_paths: list[Path] = []
+    preview_pdf_path: Path | None = None
     if presentation.build.previews or force_previews:
-        preview_paths = render_slide_previews(
+        preview_result = render_slide_previews(
             output_path,
             output_path.parent / "previews",
             config=_build_preview_config(presentation),
+            slides=preview_slides,
+            keep_pdf=keep_preview_pdf,
         )
+        preview_paths = preview_result.image_paths
+        preview_pdf_path = preview_result.pdf_path
 
     manifest = {
         "deckifyr_version": DECKIFYR_VERSION,
@@ -1172,6 +1183,7 @@ def compose_and_write(
         "elements": element_manifest,
         "output": {"path": str(output_path), "sha256": _sha256_file(output_path)},
         "previews": [str(p) for p in preview_paths],
+        "preview_pdf": str(preview_pdf_path) if preview_pdf_path else None,
         "warnings": warnings,
     }
 
@@ -1187,4 +1199,5 @@ def compose_and_write(
         slide_count=len(resolved_slides),
         warnings=warnings,
         preview_paths=preview_paths,
+        preview_pdf_path=preview_pdf_path,
     )

@@ -1,19 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach } from "vitest";
 import SlideList from "./SlideList";
 import { AppProvider } from "../state/AppContext";
 import type { UsePlanResult } from "../state/usePlan";
 import type { ResolvedSlide } from "../types";
 
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 function makePlan(overrides: Partial<UsePlanResult>): UsePlanResult {
   return {
     slides: null,
     furnitureSlide: null,
+    slideLayouts: {},
+    layoutSlide: null,
+    layoutError: null,
+    loadLayoutZones: vi.fn(),
     slideSize: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
+    addSlide: vi.fn(),
+    removeSlide: vi.fn(),
     applyElementPatch: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn(),
@@ -31,7 +44,10 @@ function renderList(plan: UsePlanResult) {
   );
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const FURNITURE: ResolvedSlide = { id: "__furniture__", notes: null, elements: [] };
 const SLIDE: ResolvedSlide = { id: "title", notes: null, elements: [] };
@@ -90,5 +106,85 @@ describe("SlideList", () => {
 
     expect(screen.getByText("server unreachable")).toBeInTheDocument();
     expect(screen.queryByText(/⚙ Furniture/)).not.toBeInTheDocument();
+  });
+});
+
+describe("SlideList add/remove (issue #23)", () => {
+  it("opens the add-slide form, fetches layout options, and submits a new slide", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/config/layouts") {
+        return Promise.resolve(
+          jsonResponse(200, { deckifyr: "0.1", layouts: { "title-content": {}, blank: {} } })
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const addSlide = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: FURNITURE, addSlide });
+    renderList(plan);
+
+    fireEvent.click(screen.getByText("+ Add slide"));
+    await waitFor(() => expect(screen.getByText("title-content")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("New slide id"), {
+      target: { value: "new-slide" },
+    });
+    fireEvent.change(screen.getByLabelText("Layout"), { target: { value: "title-content" } });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() =>
+      expect(addSlide).toHaveBeenCalledWith({ id: "new-slide", layout: "title-content" })
+    );
+    // Form closes on success.
+    await waitFor(() => expect(screen.queryByLabelText("New slide id")).not.toBeInTheDocument());
+  });
+
+  it("defaults to a freeform (null) layout when none is picked", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { layouts: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const addSlide = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: FURNITURE, addSlide });
+    renderList(plan);
+
+    fireEvent.click(screen.getByText("+ Add slide"));
+    fireEvent.change(screen.getByLabelText("New slide id"), {
+      target: { value: "freeform-slide" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() =>
+      expect(addSlide).toHaveBeenCalledWith({ id: "freeform-slide", layout: null })
+    );
+  });
+
+  it("shows a two-step confirm before removing a slide, cancel keeps it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { layouts: {} })));
+    const removeSlide = vi.fn();
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: FURNITURE, removeSlide });
+    renderList(plan);
+
+    fireEvent.click(screen.getByTitle('Remove slide "title"'));
+    expect(screen.getByText(/Remove .title.\?/)).toBeInTheDocument();
+    expect(removeSlide).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByText(/Remove .title.\?/)).not.toBeInTheDocument();
+    expect(removeSlide).not.toHaveBeenCalled();
+  });
+
+  it("removes a slide after Confirm", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { layouts: {} })));
+    const removeSlide = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: FURNITURE, removeSlide });
+    renderList(plan);
+
+    fireEvent.click(screen.getByTitle('Remove slide "title"'));
+    fireEvent.click(screen.getByText("Confirm"));
+
+    await waitFor(() => expect(removeSlide).toHaveBeenCalledWith("title"));
   });
 });

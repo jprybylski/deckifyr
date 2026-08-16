@@ -160,6 +160,54 @@ describe("SchemaForm -- ambiguous anyOf falls back to raw JSON", () => {
     fireEvent.change(textarea, { target: { value: "{not json" } });
     expect(screen.getByText(/./, { selector: ".schema-form__raw-error" })).toBeInTheDocument();
   });
+
+  it("still shows a color swatch when the raw-JSON-fallback value happens to be a hex string", () => {
+    // The real-world case this exists for: `colors:` entries always hit
+    // this ambiguous-anyOf fallback (`str | ColorDerivation`), even on a
+    // project whose own colors are all plain hex literals -- confirmed
+    // against a real `examples/demo-deck` session, not assumed.
+    const onChange = renderForm(schema, defs, { primary: "#2457a6" });
+    const colorInput = screen.getByLabelText("color picker") as HTMLInputElement;
+    expect(colorInput.type).toBe("color");
+    expect(colorInput.value).toBe("#2457a6");
+
+    fireEvent.change(colorInput, { target: { value: "#ff0000" } });
+    expect(onChange).toHaveBeenCalledWith({ primary: "#ff0000" });
+  });
+
+  it("shows no color swatch when the fallback value isn't a hex string (a derivation object)", () => {
+    renderForm(schema, defs, { primary: { base: "text", lighten: 0.2 } });
+    expect(screen.queryByLabelText("color picker")).not.toBeInTheDocument();
+  });
+});
+
+describe("SchemaForm -- color swatch (issue #23)", () => {
+  const schema: JSONSchema = { type: "string" };
+
+  it("shows a color input alongside the text input when the value is a 6-digit hex color", () => {
+    render(<SchemaForm schema={schema} defs={{}} value="#2457a6" onChange={vi.fn()} />);
+    const colorInput = screen.getByLabelText("color picker") as HTMLInputElement;
+    expect(colorInput.type).toBe("color");
+    expect(colorInput.value).toBe("#2457a6");
+  });
+
+  it("expands a 3-digit shorthand hex for the color input's own value", () => {
+    render(<SchemaForm schema={schema} defs={{}} value="#abc" onChange={vi.fn()} />);
+    const colorInput = screen.getByLabelText("color picker") as HTMLInputElement;
+    expect(colorInput.value).toBe("#aabbcc");
+  });
+
+  it("does not show a color input for a non-hex string", () => {
+    render(<SchemaForm schema={schema} defs={{}} value="primary" onChange={vi.fn()} />);
+    expect(screen.queryByLabelText("color picker")).not.toBeInTheDocument();
+  });
+
+  it("picking a color updates the same value the text input holds", () => {
+    const onChange = renderForm(schema, {}, "#2457a6");
+    const colorInput = screen.getByLabelText("color picker");
+    fireEvent.change(colorInput, { target: { value: "#ff0000" } });
+    expect(onChange).toHaveBeenCalledWith("#ff0000");
+  });
 });
 
 describe("SchemaForm -- against the real design.yaml schema", () => {

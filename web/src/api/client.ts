@@ -25,6 +25,7 @@ import type {
   Job,
   JobArtifactsResponse,
   PlanResponse,
+  PreviewAvailability,
   ProjectInfo,
   ResolvedSlide,
   SaveResult,
@@ -113,6 +114,45 @@ export function patchElement(
   );
 }
 
+/** Add/remove a slide (issue #23) -- thin wrappers over
+ * `deckifyr.editor.add_slide`/`remove_slide` applied to the server's
+ * working copy, same deferred-save semantics as every other mutation
+ * here (not written to disk until Save). `layout: null` is `Slide`'s
+ * own valid freeform value, not "omitted". */
+export function postAddSlide(body: {
+  id: string;
+  layout: string | null;
+  index?: number;
+  after?: string;
+  before?: string;
+}): Promise<WriteResult> {
+  return request("/api/slides", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteSlide(slideId: string): Promise<WriteResult> {
+  return request(`/api/slides/${encodeURIComponent(slideId)}`, { method: "DELETE" });
+}
+
+/** A layout's own zones (issue #23's Content/Layout tab), resolved as
+ * `ResolvedSlide`-shaped JSON the same way the furniture pseudo-slide
+ * is -- see `deckifyr.web.app._resolve_layout_zone`'s own docstring for
+ * why this is a dedicated resolution path rather than reusing
+ * `expand_slide` the way `getFurniture` does. */
+export function getLayoutZones(layoutName: string): Promise<ResolvedSlide> {
+  return request(`/api/layouts/${encodeURIComponent(layoutName)}`);
+}
+
+export function patchLayoutElement(
+  layoutName: string,
+  elementId: string,
+  body: ElementPatchBody
+): Promise<WriteResult> {
+  return request(
+    `/api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
+    { method: "PATCH", body: JSON.stringify(body) }
+  );
+}
+
 /** `design.yaml`'s `furniture` block, resolved the same way a real
  * slide's elements are (spec section 7.8, issue #21) -- a synthetic
  * `ResolvedSlide` with id `"__furniture__"`, shown as its own
@@ -174,6 +214,27 @@ export function postDiscard(): Promise<DiscardResult> {
 
 export function postBuild(): Promise<{ job_id: string }> {
   return request("/api/build", { method: "POST" });
+}
+
+/** Proactive LibreOffice-availability check (issue #27: "with
+ * information there if they don't [have the appropriate binaries]") --
+ * `BuildPanel` calls this on mount so a missing `soffice` shows as an
+ * inline message with an install link *before* Preview is even
+ * clickable, not only as an error after a failed attempt. */
+export function getPreviewAvailability(): Promise<PreviewAvailability> {
+  return request("/api/preview/availability");
+}
+
+/** Renders a preview build (issue #27) -- `slides` (1-indexed) renders
+ * only those slides; omitted/undefined renders every slide. Reuses the
+ * same job-polling/artifact-download machinery as `postBuild` (`Job` is
+ * generic across kinds) -- the `pdf` artifact key (when present) is the
+ * embedded-PDF-viewer support, `preview-N` keys are per-slide PNGs. */
+export function postPreview(slides?: number[]): Promise<{ job_id: string }> {
+  return request("/api/preview", {
+    method: "POST",
+    body: JSON.stringify(slides && slides.length > 0 ? { slides } : {}),
+  });
 }
 
 export function getJob(jobId: string): Promise<Job> {

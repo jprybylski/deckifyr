@@ -66,13 +66,65 @@ def test_render_slide_previews_produces_one_png_per_slide(tmp_path):
     prs.save(str(pptx_path))
 
     out_dir = tmp_path / "previews"
-    image_paths = render_slide_previews(pptx_path, out_dir)
+    result = render_slide_previews(pptx_path, out_dir)
 
-    assert len(image_paths) == 2
-    assert [p.name for p in image_paths] == [
+    assert len(result.image_paths) == 2
+    assert [p.name for p in result.image_paths] == [
         "two-slides-01.png",
         "two-slides-02.png",
     ]
-    for image_path in image_paths:
+    for image_path in result.image_paths:
         assert image_path.is_file()
         assert image_path.stat().st_size > 0
+    assert result.pdf_path is None
+
+
+@requires_soffice
+def test_render_slide_previews_slides_filter_renders_only_requested_pages(tmp_path):
+    prs = Presentation()
+    blank_layout = next(
+        layout for layout in prs.slide_layouts if layout.name == "Blank"
+    )
+    for _ in range(3):
+        prs.slides.add_slide(blank_layout)
+    pptx_path = tmp_path / "three-slides.pptx"
+    prs.save(str(pptx_path))
+
+    out_dir = tmp_path / "previews"
+    result = render_slide_previews(pptx_path, out_dir, slides=[2])
+
+    assert [p.name for p in result.image_paths] == ["three-slides-02.png"]
+    assert not (out_dir / "three-slides-01.png").exists()
+    assert not (out_dir / "three-slides-03.png").exists()
+
+
+@requires_soffice
+def test_render_slide_previews_slides_filter_rejects_out_of_range_index(tmp_path):
+    prs = Presentation()
+    blank_layout = next(
+        layout for layout in prs.slide_layouts if layout.name == "Blank"
+    )
+    prs.slides.add_slide(blank_layout)
+    pptx_path = tmp_path / "one-slide.pptx"
+    prs.save(str(pptx_path))
+
+    with pytest.raises(ContentValidationError, match="out of range"):
+        render_slide_previews(pptx_path, tmp_path / "previews", slides=[5])
+
+
+@requires_soffice
+def test_render_slide_previews_keep_pdf_saves_the_intermediate_pdf(tmp_path):
+    prs = Presentation()
+    blank_layout = next(
+        layout for layout in prs.slide_layouts if layout.name == "Blank"
+    )
+    prs.slides.add_slide(blank_layout)
+    pptx_path = tmp_path / "one-slide.pptx"
+    prs.save(str(pptx_path))
+
+    out_dir = tmp_path / "previews"
+    result = render_slide_previews(pptx_path, out_dir, keep_pdf=True)
+
+    assert result.pdf_path == out_dir / "one-slide.pdf"
+    assert result.pdf_path.is_file()
+    assert result.pdf_path.stat().st_size > 0

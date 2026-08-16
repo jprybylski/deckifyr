@@ -1,61 +1,235 @@
 /**
- * Triggers a build (`POST /api/build`), polls `GET /api/jobs/{id}` via
+ * Triggers a build (`POST /api/build`) or a preview render
+ * (`POST /api/preview`, issue #27), polls `GET /api/jobs/{id}` via
  * `api/client.ts`'s `pollJobUntilDone` (bounded -- see that function's
  * own docstring for why it doesn't poll forever), and shows the result:
  * warning count, and artifact download links. `<a href={jobArtifactUrl(...)}>`
  * is a plain same-origin GET download, no special handling needed (this
  * isn't a Claude Artifact's sandboxed viewer -- the download-link
  * restriction that applies there doesn't apply to this app).
+ *
+ * Issue #27 also adds: an editable `build.output` path (PUT the whole
+ * `presentation.yaml` back on blur, same pattern `DeckOptions.tsx`
+ * already uses for its own inline fields), a proactive LibreOffice-
+ * availability check (`GET /api/preview/availability`) shown *before*
+ * Preview is even clickable rather than only as an error after a failed
+ * attempt, an indeterminate progress bar while a job is queued/running
+ * (the backend reports no real percentage, so this is honest about
+ * that -- see `ProgressBar`), and, once a preview job succeeds, a grid
+ * of per-slide PNGs plus an embedded `<iframe>` PDF viewer (the
+ * browser's own built-in PDF viewer, no new dependency) whenever the
+ * job's artifacts include a `pdf` key.
  */
-import { useState } from "react";
-import { ApiError, getJobArtifacts, jobArtifactUrl, pollJobUntilDone, postBuild } from "../api/client";
+import { useEffect, useState } from "react";
+import {
+  ApiError,
+  getConfig,
+  getJobArtifacts,
+  getPreviewAvailability,
+  jobArtifactUrl,
+  pollJobUntilDone,
+  postBuild,
+  postPreview,
+  putConfig,
+} from "../api/client";
 import { useAppContext } from "../state/AppContext";
-import type { Job, JobStatus } from "../types";
+import type { ApiErrorBody, Job, JobStatus, PreviewAvailability } from "../types";
 
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
-export default function BuildPanel() {
-  const { state } = useAppContext();
-  const [status, setStatus] = useState<JobStatus | "idle">("idle");
-  const [job, setJob] = useState<Job | null>(null);
-  const [artifacts, setArtifacts] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [timedOut, setTimedOut] = useState(false);
+/** Indeterminate only -- `Job` carries no progress percentage, just
+ * `queued`/`running`/`succeeded`/`failed`, so this shows *that* a job
+ * is in flight without pretending to know how far along it is. */
+function ProgressBar({ status }: { status: JobStatus | "idle" }) {
+  if (status !== "queued" && status !== "running") return null;
+  return (
+    <div className="build-panel__progress" role="progressbar" aria-label={`${status}…`}>
+      <div className="build-panel__progress-bar" />
+    </div>
+  );
+}
 
-  async function handleBuild() {
-    setError(null);
-    setTimedOut(false);
-    setArtifacts([]);
-    setJob(null);
-    setStatus("queued");
+/** A failed job whose error carries `dependency` (a missing `soffice`/
+ * `quarto` binary, `MissingDependencyError.to_dict()`) shows that
+ * dependency's name/install link instead of the raw error text --
+ * issue #27's "with information there if they don't [have the
+ * binaries]", surfaced for a job failure the same way
+ * `getPreviewAvailability`'s proactive check does before one even
+ * starts. */
+function JobErrorDisplay({ error }: { error: ApiErrorBody }) {
+  if (error.dependency) {
+    return (
+      <p className="build-panel__error" role="alert">
+        This requires {error.dependency.display_name}, which isn&rsquo;t installed.{" "}
+        <a href={error.dependency.install_url} target="_blank" rel="noreferrer">
+          Install {error.dependency.display_name}
+        </a>
+      </p>
+    );
+  }
+  return (
+    <pre className="build-panel__error" role="alert">
+      {error.message ?? error.detail ?? JSON.stringify(error)}
+    </pre>
+  );
+}
+
+interface JobRunState {
+  status: JobStatus | "idle";
+  job: Job | null;
+  artifacts: string[];
+  error: string | null;
+  timedOut: boolean;
+}
+
+const IDLE_JOB_STATE: JobRunState = {
+  status: "idle",
+  job: null,
+  artifacts: [],
+  error: null,
+  timedOut: false,
+};
+
+/** Runs `submit()`, polls the returned job to completion (or the poll
+ * budget), and fetches its artifact list on a terminal status -- shared
+ * by the Build and Preview buttons below, which otherwise differ only
+ * in what they submit. */
+async function runJob(submit: () => Promise<{ job_id: string }>): Promise<JobRunState> {
+  const { job_id } = await submit();
+  const finished = await pollJobUntilDone(job_id, { timeoutMs: POLL_TIMEOUT_MS });
+  if (finished.status === "succeeded" || finished.status === "failed") {
+    const { artifacts } = await getJobArtifacts(job_id);
+    return { status: finished.status, job: finished, artifacts, error: null, timedOut: false };
+  }
+  return { status: finished.status, job: finished, artifacts: [], error: null, timedOut: true };
+}
+
+export default function BuildPanel() {
+  const { state, dispatch } = useAppContext();
+
+  // --- output path (issue #27) ----------------------------------------
+  const [outputDoc, setOutputDoc] = useState<Record<string, unknown> | null>(null);
+  const [outputSaving, setOutputSaving] = useState(false);
+  const [outputError, setOutputError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getConfig("presentation")
+      .then((doc) => {
+        if (!cancelled) setOutputDoc(doc);
+      })
+      .catch((err) => {
+        if (!cancelled) setOutputError(err instanceof ApiError ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const outputBuild = (outputDoc?.build as Record<string, unknown> | undefined) ?? {};
+  const outputValue = typeof outputBuild.output === "string" ? outputBuild.output : "";
+
+  async function saveOutputPath(value: string) {
+    if (!outputDoc || value === outputValue || value.trim() === "") return;
+    const next = { ...outputDoc, build: { ...outputBuild, output: value } };
+    setOutputSaving(true);
     try {
-      const { job_id } = await postBuild();
-      const finished = await pollJobUntilDone(job_id, { timeoutMs: POLL_TIMEOUT_MS });
-      setJob(finished);
-      setStatus(finished.status);
-      if (finished.status === "succeeded" || finished.status === "failed") {
-        const { artifacts: keys } = await getJobArtifacts(job_id);
-        setArtifacts(keys);
-      } else {
-        // Still running/queued after the poll budget -- surface "still
-        // running" rather than silently spinning forever.
-        setTimedOut(true);
-      }
+      const result = await putConfig("presentation", next);
+      setOutputDoc(next);
+      setOutputError(null);
+      // `putConfig` only touches the server's working copy (issue #24) --
+      // without this, the header's Save/Discard/dirty indicator would
+      // have no way to know this edit happened at all.
+      dispatch({ type: "SET_DIRTY", dirty: result.dirty });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-      setStatus("idle");
+      setOutputError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setOutputSaving(false);
     }
   }
 
+  // --- preview availability (issue #27) -------------------------------
+  const [availability, setAvailability] = useState<PreviewAvailability | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPreviewAvailability()
+      .then((data) => {
+        if (!cancelled) setAvailability(data);
+      })
+      .catch(() => {
+        // Best-effort -- Preview just stays enabled on failure; a real
+        // attempt would surface the same missing-dependency error anyway.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // --- build job -------------------------------------------------------
+  const [build, setBuild] = useState<JobRunState>(IDLE_JOB_STATE);
+
+  async function handleBuild() {
+    setBuild({ ...IDLE_JOB_STATE, status: "queued" });
+    try {
+      setBuild(await runJob(postBuild));
+    } catch (err) {
+      setBuild({ ...IDLE_JOB_STATE, error: err instanceof ApiError ? err.message : String(err) });
+    }
+  }
+
+  // --- preview job (issue #27) -----------------------------------------
+  const [preview, setPreview] = useState<JobRunState>(IDLE_JOB_STATE);
+  const [slidesInput, setSlidesInput] = useState("");
+
+  function parsedSlides(): number[] | undefined {
+    const tokens = slidesInput
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    return tokens.length > 0 ? tokens : undefined;
+  }
+
+  async function handlePreview() {
+    setPreview({ ...IDLE_JOB_STATE, status: "queued" });
+    try {
+      setPreview(await runJob(() => postPreview(parsedSlides())));
+    } catch (err) {
+      setPreview({ ...IDLE_JOB_STATE, error: err instanceof ApiError ? err.message : String(err) });
+    }
+  }
+
+  const previewUnavailable = availability !== null && !availability.available;
+  const previewImageKeys = preview.artifacts
+    .filter((key) => key.startsWith("preview-"))
+    .sort((a, b) => Number(a.slice("preview-".length)) - Number(b.slice("preview-".length)));
+  const previewJobId = preview.job?.id;
+
   return (
     <div className="build-panel">
+      <label className="build-panel__output">
+        Output path
+        <input
+          key={outputValue}
+          defaultValue={outputValue}
+          disabled={outputSaving || !outputDoc}
+          onBlur={(e) => void saveOutputPath(e.target.value)}
+        />
+      </label>
+      {outputError && (
+        <p className="build-panel__error" role="alert">
+          {outputError}
+        </p>
+      )}
+
       <button
         type="button"
         onClick={() => void handleBuild()}
-        disabled={status === "running" || status === "queued" || state.dirty}
+        disabled={build.status === "running" || build.status === "queued" || state.dirty}
       >
         Build
       </button>
+      <ProgressBar status={build.status} />
       {state.dirty && (
         // `POST /api/build` always shells out to a real `deckifyr build`
         // subprocess that reads straight from disk (issue #24's deferred-
@@ -68,44 +242,106 @@ export default function BuildPanel() {
         </p>
       )}
 
-      {status !== "idle" && <p className="build-panel__status">Status: {status}</p>}
-      {timedOut && (
+      {build.status !== "idle" && <p className="build-panel__status">Status: {build.status}</p>}
+      {build.timedOut && (
         <p className="build-panel__timeout">
           Still running after {Math.round(POLL_TIMEOUT_MS / 1000)}s of polling -- check back
           later, the build may still finish server-side.
         </p>
       )}
 
-      {job?.result && (
+      {build.job?.result && (
         <div className="build-panel__result">
-          <p>Slides: {job.result.slide_count ?? "?"}</p>
-          <p>Warnings: {job.result.warning_count ?? 0}</p>
+          <p>Slides: {build.job.result.slide_count ?? "?"}</p>
+          <p>Warnings: {build.job.result.warning_count ?? 0}</p>
         </div>
       )}
 
-      {job?.error && (
+      {build.job?.error && <JobErrorDisplay error={build.job.error} />}
+      {build.error && (
         <pre className="build-panel__error" role="alert">
-          {job.error.message ?? job.error.detail ?? JSON.stringify(job.error)}
+          {build.error}
         </pre>
       )}
 
-      {error && (
-        <pre className="build-panel__error" role="alert">
-          {error}
-        </pre>
-      )}
-
-      {job && artifacts.length > 0 && (
+      {build.job && build.artifacts.length > 0 && (
         <ul className="build-panel__artifacts">
-          {artifacts.map((key) => (
+          {build.artifacts.map((key) => (
             <li key={key}>
-              <a href={jobArtifactUrl(job.id, key)} download>
+              <a href={jobArtifactUrl(build.job!.id, key)} download>
                 {key}
               </a>
             </li>
           ))}
         </ul>
       )}
+
+      <div className="build-panel__preview">
+        <h3>Preview</h3>
+        {availability && previewUnavailable && (
+          <p className="build-panel__availability-warning" role="alert">
+            Preview requires {availability.display_name}, which isn&rsquo;t installed.{" "}
+            {availability.install_url && (
+              <a href={availability.install_url} target="_blank" rel="noreferrer">
+                Install {availability.display_name}
+              </a>
+            )}
+          </p>
+        )}
+        <label>
+          Slides to preview
+          <input
+            placeholder="e.g. 1,3 -- blank = all slides"
+            value={slidesInput}
+            onChange={(e) => setSlidesInput(e.target.value)}
+            disabled={previewUnavailable}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => void handlePreview()}
+          disabled={
+            preview.status === "running" ||
+            preview.status === "queued" ||
+            state.dirty ||
+            previewUnavailable
+          }
+        >
+          Preview
+        </button>
+        <ProgressBar status={preview.status} />
+        {preview.status !== "idle" && (
+          <p className="build-panel__status">Status: {preview.status}</p>
+        )}
+        {preview.timedOut && (
+          <p className="build-panel__timeout">
+            Still running after {Math.round(POLL_TIMEOUT_MS / 1000)}s of polling -- check back
+            later.
+          </p>
+        )}
+        {preview.job?.error && <JobErrorDisplay error={preview.job.error} />}
+        {preview.error && (
+          <pre className="build-panel__error" role="alert">
+            {preview.error}
+          </pre>
+        )}
+
+        {previewJobId && previewImageKeys.length > 0 && (
+          <div className="build-panel__preview-images">
+            {previewImageKeys.map((key) => (
+              <img key={key} src={jobArtifactUrl(previewJobId, key)} alt={key} />
+            ))}
+          </div>
+        )}
+
+        {previewJobId && preview.artifacts.includes("pdf") && (
+          <iframe
+            className="build-panel__pdf-viewer"
+            title="Preview PDF"
+            src={jobArtifactUrl(previewJobId, "pdf")}
+          />
+        )}
+      </div>
     </div>
   );
 }

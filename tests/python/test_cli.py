@@ -203,3 +203,36 @@ def test_preview_renders_one_png_per_slide(minimal_deck_dir, tmp_path, capsys):
     assert len(output["previews"]) == 2
     for preview_path in output["previews"]:
         assert Path(preview_path).is_file()
+    # `deckifyr preview` always keeps the intermediate PDF (issue #27) --
+    # unlike an ordinary `build.previews: true` build, which never does.
+    assert output["preview_pdf"] is not None
+    assert Path(output["preview_pdf"]).is_file()
+
+
+@requires_soffice
+def test_preview_slides_flag_renders_only_the_requested_slide(
+    minimal_deck_dir, tmp_path, capsys
+):
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+
+    exit_code = main(
+        ["--json", "preview", str(tmp_path / "presentation.yaml"), "--slides", "2"]
+    )
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["slide_count"] == 2
+    assert len(output["previews"]) == 1
+    assert Path(output["previews"][0]).name.endswith("-02.png")
+
+
+def test_preview_slides_flag_rejects_non_integer_input(minimal_deck_dir, tmp_path, capsys):
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+
+    exit_code = main(
+        ["--json", "preview", str(tmp_path / "presentation.yaml"), "--slides", "nope"]
+    )
+    assert exit_code != EXIT_OK
+    output = json.loads(capsys.readouterr().err)
+    assert output["code"] == "E_CONTENT_VALIDATION"

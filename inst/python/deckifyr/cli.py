@@ -279,6 +279,22 @@ def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
     return projectio.validate_and_write_presentation(path, data)
 
 
+def _parse_slides_arg(raw: str | None) -> list[int] | None:
+    """Parses `--slides`' comma-separated 1-indexed list (`"1,3"`) into
+    `[1, 3]`, or `None` for "not given" (render every slide, unchanged
+    from before this flag existed).
+    """
+    if raw is None:
+        return None
+    try:
+        return [int(token.strip()) for token in raw.split(",") if token.strip()]
+    except ValueError as exc:
+        raise DeckifyrError(
+            f"--slides must be a comma-separated list of integers, got {raw!r}",
+            code=ErrorCode.CONTENT_VALIDATION,
+        ) from exc
+
+
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     presentation_path = Path(args.presentation).resolve()
     presentation, design, layouts = projectio.load_project(
@@ -292,6 +308,10 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     # `force_previews=True`: an explicit `deckifyr preview` invocation
     # always renders, regardless of the project's own `build.previews`
     # flag -- see `compose_and_write`'s own docstring note on this.
+    # `keep_preview_pdf=True`: this command already pays the LibreOffice
+    # PDF-conversion cost, so keeping the intermediate PDF around (issue
+    # #27's embedded-PDF-viewer support) is free -- unlike an ordinary
+    # `build.previews: true` build, which never keeps it.
     result = compose_and_write(
         presentation,
         design,
@@ -301,11 +321,14 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
         design_path=(project_root / presentation.design.base).resolve(),
         layouts_path=(project_root / presentation.layouts).resolve(),
         force_previews=True,
+        preview_slides=_parse_slides_arg(args.slides),
+        keep_preview_pdf=True,
     )
 
     return {
         "output": str(result.output_path),
         "previews": [str(p) for p in result.preview_paths],
+        "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
         "slide_count": result.slide_count,
     }
 
@@ -486,6 +509,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "preview", help="render each slide to a PNG (requires LibreOffice on PATH)"
     )
     preview_parser.add_argument("presentation")
+    preview_parser.add_argument(
+        "--slides",
+        default=None,
+        help="comma-separated 1-indexed slide numbers to render (default: all), e.g. 1,3",
+    )
     add_strict_flag(preview_parser)
     preview_parser.set_defaults(handler=_cmd_preview)
 

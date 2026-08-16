@@ -320,6 +320,136 @@ def test_patch_element_invalid_value_is_422_and_file_unchanged(client, project_d
     assert presentation_path.read_text() == original
 
 
+# --- slide add/remove (issue #23) ---------------------------------------
+
+
+def test_add_slide_appends_by_default(client, project_dir):
+    response = client.post("/api/slides", json={"id": "new-slide", "layout": "blank"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slide_count"] == 3
+    assert body["dirty"] is True
+
+    plan = client.get("/api/plan").json()
+    assert [s["id"] for s in plan["slides"]] == ["title", "content-slide", "new-slide"]
+    assert plan["slide_layouts"]["new-slide"] == "blank"
+
+    # Not written to disk until Save.
+    presentation_path = project_dir / "presentation.yaml"
+    assert "new-slide" not in presentation_path.read_text()
+
+
+def test_add_slide_with_freeform_layout_and_placement(client):
+    response = client.post(
+        "/api/slides", json={"id": "freeform", "layout": None, "after": "title"}
+    )
+    assert response.status_code == 200
+    plan = client.get("/api/plan").json()
+    assert [s["id"] for s in plan["slides"]] == ["title", "freeform", "content-slide"]
+    assert plan["slide_layouts"]["freeform"] is None
+
+
+def test_add_slide_duplicate_id_is_422(client):
+    response = client.post("/api/slides", json={"id": "title", "layout": "blank"})
+    assert response.status_code == 422
+
+
+def test_add_slide_unknown_after_reference_is_422(client):
+    response = client.post(
+        "/api/slides", json={"id": "new-slide", "layout": "blank", "after": "nope"}
+    )
+    assert response.status_code == 422
+
+
+def test_add_slide_ambiguous_placement_is_422(client):
+    response = client.post(
+        "/api/slides",
+        json={"id": "new-slide", "layout": "blank", "after": "title", "index": 0},
+    )
+    assert response.status_code == 422
+
+
+def test_remove_slide_updates_working_copy(client, project_dir):
+    response = client.delete("/api/slides/content-slide")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slide_count"] == 1
+    assert body["dirty"] is True
+
+    plan = client.get("/api/plan").json()
+    assert [s["id"] for s in plan["slides"]] == ["title"]
+
+    presentation_path = project_dir / "presentation.yaml"
+    assert "content-slide" in presentation_path.read_text()  # unchanged until Save
+
+
+def test_remove_slide_unknown_id_is_422(client):
+    response = client.delete("/api/slides/does-not-exist")
+    assert response.status_code == 422
+
+
+# --- layout zones (issue #23's Content/Layout tab) -----------------------
+
+
+def test_get_layout_zones_returns_resolved_boxes(client):
+    response = client.get("/api/layouts/title-content")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "__layout__title-content"
+    zone_ids = {el["id"] for el in body["elements"]}
+    assert zone_ids == {"title", "content", "footnotes"}
+    title_zone = next(el for el in body["elements"] if el["id"] == "title")
+    assert title_zone["box"] == {
+        "x": "0.7in",
+        "y": "0.35in",
+        "width": "11.9in",
+        "height": "0.65in",
+    }
+
+
+def test_get_layout_zones_empty_layout_has_no_elements(client):
+    response = client.get("/api/layouts/blank")
+    assert response.status_code == 200
+    assert response.json()["elements"] == []
+
+
+def test_get_layout_zones_unknown_layout_is_404(client):
+    response = client.get("/api/layouts/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_patch_layout_element_updates_box_and_working_copy(client, project_dir):
+    layouts_path = project_dir / "layouts.yaml"
+    original = layouts_path.read_text()
+
+    response = client.patch(
+        "/api/layouts/title-content/elements/title",
+        json={"box": {"x": 1.0, "y": 0.5}},
+    )
+    assert response.status_code == 200
+    assert response.json()["dirty"] is True
+    assert layouts_path.read_text() == original  # not written until Save
+
+    body = client.get("/api/layouts/title-content").json()
+    title_zone = next(el for el in body["elements"] if el["id"] == "title")
+    assert title_zone["box"]["x"] == "1in"
+    assert title_zone["box"]["y"] == "0.5in"
+
+    # Every slide using this layout sees the change too (shared state).
+    plan = client.get("/api/plan").json()
+    content_slide = next(s for s in plan["slides"] if s["id"] == "content-slide")
+    title_el = next(el for el in content_slide["elements"] if el["id"] == "title")
+    assert title_el["box"]["x"] == "1in"
+
+
+def test_patch_layout_element_unknown_zone_is_422(client):
+    response = client.patch(
+        "/api/layouts/title-content/elements/does-not-exist",
+        json={"box": {"x": 1, "y": 1}},
+    )
+    assert response.status_code == 422
+
+
 # --- furniture pseudo-slide (issue #21) ---------------------------------
 
 
@@ -697,6 +827,76 @@ def test_build_job_lifecycle(client):
 def test_job_not_found_is_404(client):
     response = client.get("/api/jobs/does-not-exist")
     assert response.status_code == 404
+
+
+# --- preview (issue #27) -------------------------------------------------
+
+requires_soffice = pytest.mark.skipif(
+    shutil.which("soffice") is None, reason="soffice binary not found on PATH"
+)
+
+
+def test_preview_availability_reports_soffice_on_path(client):
+    response = client.get("/api/preview/availability")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["binary"] == "soffice"
+    assert body["available"] is (shutil.which("soffice") is not None)
+    if body["available"]:
+        assert body["install_url"] is None
+    else:
+        assert body["install_url"] == "https://www.libreoffice.org/download/download/"
+
+
+def test_preview_availability_reports_unavailable_for_a_bogus_binary(
+    client, project_dir
+):
+    doc = yaml.safe_load((project_dir / "presentation.yaml").read_text())
+    doc["build"]["preview"] = {"binary": "definitely-not-a-real-binary"}
+    put_response = client.put("/api/config/presentation", json=doc)
+    assert put_response.status_code == 200
+
+    response = client.get("/api/preview/availability")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["binary"] == "definitely-not-a-real-binary"
+    assert body["available"] is False
+    assert body["display_name"] == "LibreOffice"
+    assert body["install_url"] == "https://www.libreoffice.org/download/download/"
+
+
+@requires_soffice
+def test_preview_job_lifecycle_produces_selected_previews_and_pdf(client):
+    response = client.post("/api/preview", json={"slides": [1]})
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+
+    status = None
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        job_response = client.get(f"/api/jobs/{job_id}")
+        assert job_response.status_code == 200
+        status = job_response.json()["status"]
+        if status in ("succeeded", "failed"):
+            break
+        time.sleep(0.25)
+
+    job_body = job_response.json()
+    assert status == "succeeded", job_body
+
+    artifact_keys = client.get(f"/api/jobs/{job_id}/artifacts").json()["artifacts"]
+    assert set(artifact_keys) == {"pdf", "preview-0", "pptx"}
+    assert "preview-1" not in artifact_keys  # only slide 1 was requested
+
+    pdf_response = client.get(f"/api/jobs/{job_id}/artifacts/pdf")
+    assert pdf_response.status_code == 200
+    assert pdf_response.content[:4] == b"%PDF"
+
+
+def test_post_preview_with_no_body_defaults_to_all_slides(client):
+    response = client.post("/api/preview")
+    assert response.status_code == 200
+    assert "job_id" in response.json()
 
 
 # --- schemas -------------------------------------------------------------

@@ -99,6 +99,33 @@ plan and lets you:
 * Drag, resize, and rotate `text`, `markdown`, and `image` elements.
 * Click a selected `text`/`markdown` element again to edit its text
   inline.
+* Add a slide from the slide list's own "+ Add slide" button -- pick a
+  named layout, or "Freeform (no layout)" for an empty starting point
+  (`layout: null`), then give it an id:
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-add-slide.png" alt="The slide list's Add slide form open: a New slide id text field and a Layout dropdown listing the project's named layouts plus a Freeform (no layout) option, with Add and Cancel buttons below" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Adding a slide -- pick a layout or leave it freeform</p>
+  </div>
+
+  Remove a slide from its own row's "Remove" button -- a two-step
+  inline confirm, not a browser dialog, with a reminder that Discard
+  still undoes it right up until you Save.
+* Toggle a selected slide between its **Content** and its **Layout**
+  (the toolbar's own Content/Layout switch) -- Layout view shows and
+  lets you drag/resize/rotate that slide's own named layout's zones
+  (`layouts.yaml`) directly, on the same canvas:
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-layout-tab.png" alt="A slide toggled to Layout view: the toolbar shows Content and Layout buttons with Layout active, a banner reads Editing shared layout plot-with-note -- changes apply to every slide using it, and the canvas shows two empty zone boxes from that layout" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Layout view on a slide using the "plot-with-note" layout</p>
+  </div>
+
+  The banner is a real warning, not decoration: a layout is shared, so
+  repositioning a zone here moves it for *every* slide using that
+  layout, not just the one you switched from. The toggle is disabled
+  (with an inline reason) on the furniture pseudo-slide and on a
+  freeform slide, since neither has a layout of its own to edit.
 * Set the deck's own status (`metadata.status` -- "demo", "draft",
   "final", ...) and toggle the deck-wide status/watermark placement
   (`presentation.yaml`'s `status_indicator`, spec section 7.8) on or
@@ -135,10 +162,34 @@ plan and lets you:
   syntax-highlighted, live-validated raw JSON -- toggle between the two
   at any time. Either way, nothing is written back to disk until it
   passes the same server-side schema validation `deck_set_config()`
-  uses.
-* Trigger a build and watch it run as a background job.
+  uses. Any field whose current value is a literal hex color -- most
+  visibly `design.yaml`'s own `colors:` palette -- gets a small color
+  swatch next to it, backed by the browser's native color picker:
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-color-swatch.png" alt="The Config tab's Form view on design.yaml's colors block: text, muted, primary, and accent entries, each with a small color swatch (black, gray, blue, red respectively) next to its hex value" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Color swatches on design.yaml's colors palette</p>
+  </div>
+* On the Build tab, see and edit where the built `.pptx` will go
+  (`presentation.yaml`'s `build.output`) right there, instead of only
+  through the Config tab. Trigger a full build and watch it run as a
+  background job, or trigger a **Preview** -- one, several
+  (`e.g. 1,3`), or every slide. Preview needs LibreOffice; whether it's
+  actually installed is checked up front, with an install link shown
+  right there if it isn't, rather than only surfacing as a failed-job
+  error after you click. Both Build and Preview show an animated
+  progress bar while queued/running (the
+  backend doesn't report a real percentage, so this is honest about
+  that rather than faking one). A finished Preview shows a PNG per
+  requested slide plus an embedded PDF viewer of the whole deck (your
+  browser's own built-in PDF viewer, reused as-is):
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful Preview: an editable Output path field, a Build button, a Preview section with five rendered slide thumbnails, and an embedded PDF viewer below showing the first slide with page thumbnails on the left" width="700" loading="lazy">
+  <p style="font-size:0.85em;">A finished Preview: per-slide images plus the embedded PDF viewer</p>
+  </div>
 * Download the resulting `.pptx`, its manifest, and any rendered
-  previews once the build finishes.
+  previews once a build finishes.
 
 ## What it deliberately doesn't do yet
 
@@ -160,6 +211,12 @@ before you reach for it instead of editing YAML directly:
   just without a preview inside it.
 * **No image cropping or snapping guides.** Positioning is freehand;
   there's no ruler/grid snap or alignment assist yet.
+* **Layout view only edits a layout's existing zones' geometry --
+  there's no way to add or remove a zone from the canvas.** Reshaping
+  what a layout (`layouts.yaml`) offers at all -- a new zone, or
+  deleting one -- still means editing the YAML or using
+  `deck_set_config()`; Layout view just repositions what's already
+  there.
 * **The furniture pseudo-slide only edits geometry (box/rotation),
   never the underlying text.** A status/watermark or page-number
   element's displayed word isn't a literal `design.yaml` field -- it's
@@ -174,10 +231,12 @@ before you reach for it instead of editing YAML directly:
   -- get a typed input. A field whose schema allows more than one
   non-null shape (e.g. a `colors:` entry, which may be a literal hex
   string or a derived-color object) can't be disambiguated generically,
-  so it's a small inline JSON field there instead of a fully-typed one.
-  The Raw view (a toggle away) always covers the whole document either
-  way. Comments and formatting in the on-disk YAML still aren't
-  preserved through a save, in either view -- the same limitation
+  so it's a small inline JSON field there instead of a fully-typed one
+  (it still gets a color swatch when its current value happens to be a
+  literal hex string, same as an ordinary color field). The Raw view (a
+  toggle away) always covers the whole document either way. Comments
+  and formatting in the on-disk YAML still aren't preserved through a
+  save, in either view -- the same limitation
   `deck_set_config()`/`deck_*_slide()` already have.
 
 None of this is hidden behind the scenes -- if you hit one of these

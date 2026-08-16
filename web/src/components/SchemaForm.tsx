@@ -79,6 +79,17 @@ function unwrapNullable(
   return { inner: null, nullable };
 }
 
+const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+/** `<input type="color">` requires a full 6-digit hex -- expands a
+ * 3-digit shorthand (`#abc` -> `#aabbcc`) purely for that input's own
+ * `value`; the paired text field always keeps whatever the document
+ * actually holds, shorthand or not. */
+function _expandHexShorthand(hex: string): string {
+  const [, r, g, b] = hex;
+  return `#${r}${r}${g}${g}${b}${b}`;
+}
+
 function defaultForSchema(schema: JSONSchema): unknown {
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     return (schema.enum as unknown[])[0];
@@ -104,7 +115,19 @@ function defaultForSchema(schema: JSONSchema): unknown {
  * value, used whenever this renderer can't confidently model a
  * schema shape. Re-syncs its local text from `value` whenever `value`
  * changes from outside (including its own successful `onChange` calls,
- * which is harmless -- it just re-serializes to the same content). */
+ * which is harmless -- it just re-serializes to the same content).
+ *
+ * Also gets its own color swatch (issue #23) whenever the *current
+ * value* is a literal hex string, independent of the schema-shape
+ * fallback that put it here in the first place -- `colors:`'s own entry
+ * schema is exactly this ambiguous-anyOf case (`str | ColorDerivation`)
+ * for every project, including one that only ever uses plain hex
+ * literals, so without this the swatch from the plain-`string`-schema
+ * branch below would never actually reach the one field (`colors:`)
+ * issue #23's own "a little box showing the color" ask was most likely
+ * about. Confirmed against a real `deckifyr serve` session, not assumed
+ * from the schema alone -- `examples/demo-deck/design.yaml`'s `colors:`
+ * block renders through this exact fallback. */
 function RawJsonField({ value, onChange }: { value: unknown; onChange: (next: unknown) => void }) {
   const [text, setText] = useState(() => JSON.stringify(value ?? null, null, 2));
   const [error, setError] = useState<string | null>(null);
@@ -125,8 +148,19 @@ function RawJsonField({ value, onChange }: { value: unknown; onChange: (next: un
     }
   }
 
+  const isHexColor = typeof value === "string" && HEX_COLOR_RE.test(value);
+
   return (
     <div className="schema-form__raw">
+      {isHexColor && (
+        <input
+          type="color"
+          className="schema-form__color-swatch"
+          aria-label="color picker"
+          value={(value as string).length === 4 ? _expandHexShorthand(value as string) : value}
+          onChange={(e) => handleChange(JSON.stringify(e.target.value))}
+        />
+      )}
       <textarea
         className="schema-form__raw-textarea"
         value={text}
@@ -383,12 +417,31 @@ export default function SchemaForm({ schema, defs, value, onChange }: Props) {
   }
 
   if (resolved.type === "string") {
+    const text = typeof value === "string" ? value : "";
+    // A small swatch + native color picker (issue #23) whenever the
+    // field's *current value* is already a literal hex color -- no
+    // field-name heuristic (a `colors:` entry's key is an arbitrary
+    // token name, not necessarily containing "color"), so this works
+    // generically for `colors:` entries, gradient stops, table-style
+    // colors, anywhere a literal hex is already stored. A token string
+    // (e.g. "primary", used elsewhere via `design.colors.get(token,
+    // token)`'s own "token or bare literal" fallback) just shows the
+    // plain text input, same as before this existed, until it holds a
+    // real hex value.
+    const isHexColor = HEX_COLOR_RE.test(text);
     return (
-      <input
-        type="text"
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <span className="schema-form__string">
+        <input type="text" value={text} onChange={(e) => onChange(e.target.value)} />
+        {isHexColor && (
+          <input
+            type="color"
+            className="schema-form__color-swatch"
+            aria-label="color picker"
+            value={text.length === 4 ? _expandHexShorthand(text) : text}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
+      </span>
     );
   }
 
