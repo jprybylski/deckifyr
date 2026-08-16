@@ -1,5 +1,28 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* Deferred-save editing in the web editor (issue #24): `deckifyr serve`
+  now holds one in-memory working copy of `design`/`layouts`/
+  `presentation.yaml` for the life of the process instead of writing
+  straight to disk on every mutation. Edits stay in memory until an
+  explicit **Save** (or the new `build.autosave: true`), and a new
+  **Discard** reloads from disk -- this is what makes it safe to try
+  new features against a real project (e.g. `examples/demo-deck`)
+  without dirtying tracked files.
+* The full-page watermark overlay is now its own independently-
+  activatable furniture element (`presentation.watermark_overlay`)
+  rather than being tangled with `status_indicator`'s corner-or-
+  watermark single-select, so a corner status indicator and a
+  full-page watermark can render at the same time.
+* `deckifyr serve` now warns (on stderr, and as a banner in the app
+  itself via `GET /api/health`'s new `frontend_warning` field) when a
+  dev checkout's built `web/static/` bundle is older than `web/src/` --
+  a browser hard-refresh alone doesn't catch this, since the server is
+  still serving genuinely stale, uncompiled JS.
+
 # deckifyr 0.2.0
 
 ## Added
