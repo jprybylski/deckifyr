@@ -1,13 +1,28 @@
 /**
  * The deck-wide (not per-slide) toggles a user is most likely to reach
- * for: `presentation.yaml`'s top-level `status_indicator`/`watermark`
- * fields (spec section 7.8) -- the actual on/off switch for the
- * watermark/status furniture placement `SlideCanvas` now renders as
- * fixed, non-draggable content (see that file's own `FURNITURE_PREFIX`
- * comment). Reads/writes the full `presentation.yaml` document through
- * the same `GET`/`PUT /api/config/presentation` endpoints
- * `ConfigEditor` uses, mutating only these two fields and leaving
+ * for: `presentation.yaml`'s top-level `status_indicator` field (spec
+ * section 7.8) -- the actual on/off switch for the watermark/status
+ * furniture placement `SlideCanvas` now renders as fixed, non-draggable
+ * content (see that file's own `FURNITURE_PREFIX` comment) -- plus the
+ * two text sources that field's chosen placement actually displays:
+ * `metadata.status` (the deck's own descriptive status word -- "demo",
+ * "draft", "final", ...) and `watermark` (an optional, rarely-needed
+ * override when the mark itself should say something *different* from
+ * `metadata.status`). Reads/writes the full `presentation.yaml`
+ * document through the same `GET`/`PUT /api/config/presentation`
+ * endpoints `ConfigEditor` uses, mutating only these fields and leaving
  * everything else in the document untouched.
+ *
+ * "Deck status" (`metadata.status`), not "watermark text", is the
+ * primary input: `deckifyr.plan.resolve_watermark_text` uses
+ * `watermark ?? metadata.status`, so this one field is what actually
+ * feeds *any* placement -- a corner as much as the full-page watermark
+ * -- and it's already meaningful even with `status_indicator: none`
+ * (plain descriptive metadata). The earlier version of this component
+ * only exposed the `watermark` override, labeled generically "Text" --
+ * confusing for a corner placement (nothing here is a "watermark" in
+ * that case) and for the common case of just wanting to set the deck's
+ * status once. A real user hit this confusion directly.
  *
  * Deliberately narrow: `design.yaml`'s other furniture blocks
  * (`background`/`branding`/`page_number`) are enabled by the *presence*
@@ -16,9 +31,24 @@
  * out of scope here the same way `ConfigEditor` itself stays a raw JSON
  * textarea rather than a schema-driven form (see its own module
  * comment). Those remain editable only via the Config tab.
+ *
+ * `onSaved` (optional): called after a successful PUT. This component
+ * does its own independent `GET`/`PUT /api/config/presentation` fetch
+ * rather than going through `usePlan`, so without this callback a
+ * change here (status_indicator, or the watermark text -- both directly
+ * affect the furniture pseudo-slide's `__furniture_status` element,
+ * issue #21) never reaches `usePlan`'s own cached `slides`/
+ * `furnitureSlide` -- confirmed the confusing way: the canvas kept
+ * showing the *previous* watermark text until some unrelated action
+ * happened to trigger `usePlan.refetch()` (e.g. dragging an element).
+ * `App.tsx`'s `EditorTab` wires this to `plan.refetch`.
  */
 import { useEffect, useState } from "react";
 import { ApiError, getConfig, putConfig } from "../api/client";
+
+interface Props {
+  onSaved?: () => void;
+}
 
 type StatusIndicatorMode =
   | "none"
@@ -37,7 +67,7 @@ const STATUS_INDICATOR_OPTIONS: Array<{ value: StatusIndicatorMode; label: strin
   { value: "corner-br", label: "Corner: bottom-right" },
 ];
 
-export default function DeckOptions() {
+export default function DeckOptions({ onSaved }: Props) {
   const [doc, setDoc] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +98,7 @@ export default function DeckOptions() {
       await putConfig("presentation", next);
       setDoc(next);
       setError(null);
+      onSaved?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -85,11 +116,26 @@ export default function DeckOptions() {
   }
 
   const statusIndicator = (doc.status_indicator as StatusIndicatorMode | null) ?? "none";
-  const watermarkText = typeof doc.watermark === "string" ? doc.watermark : "";
+  const metadata = (doc.metadata as Record<string, unknown>) ?? {};
+  const deckStatus = typeof metadata.status === "string" ? metadata.status : "";
+  const watermarkOverride = typeof doc.watermark === "string" ? doc.watermark : "";
 
   return (
     <div className="deck-options">
       <span className="deck-options__label">Deck-wide:</span>
+      <label>
+        Deck status
+        <input
+          defaultValue={deckStatus}
+          disabled={saving}
+          placeholder="e.g. demo, draft, final"
+          onBlur={(e) => {
+            const value = e.target.value;
+            if (value === deckStatus) return;
+            void save({ metadata: { ...metadata, status: value === "" ? null : value } });
+          }}
+        />
+      </label>
       <label>
         Status/watermark
         <select
@@ -109,14 +155,14 @@ export default function DeckOptions() {
       </label>
       {statusIndicator !== "none" && (
         <label>
-          Text
+          Watermark override
           <input
-            defaultValue={watermarkText}
+            defaultValue={watermarkOverride}
             disabled={saving}
-            placeholder="(falls back to metadata.status)"
+            placeholder={deckStatus ? `(falls back to "${deckStatus}" above)` : "(falls back to Deck status above)"}
             onBlur={(e) => {
               const value = e.target.value;
-              if (value === watermarkText) return;
+              if (value === watermarkOverride) return;
               void save({ watermark: value === "" ? null : value });
             }}
           />

@@ -43,6 +43,38 @@ describe("showFurniture", () => {
   });
 });
 
+describe("hiddenFurnitureIds", () => {
+  it("defaults to empty", () => {
+    expect(initialAppState.hiddenFurnitureIds).toEqual([]);
+  });
+
+  it("toggling an id adds it, toggling again removes it", () => {
+    const hidden = appReducer(initialAppState, {
+      type: "TOGGLE_FURNITURE_HIDDEN",
+      elementId: "__furniture_status",
+    });
+    expect(hidden.hiddenFurnitureIds).toEqual(["__furniture_status"]);
+
+    const shownAgain = appReducer(hidden, {
+      type: "TOGGLE_FURNITURE_HIDDEN",
+      elementId: "__furniture_status",
+    });
+    expect(shownAgain.hiddenFurnitureIds).toEqual([]);
+  });
+
+  it("tracks multiple hidden ids independently", () => {
+    const first = appReducer(initialAppState, {
+      type: "TOGGLE_FURNITURE_HIDDEN",
+      elementId: "__furniture_status",
+    });
+    const both = appReducer(first, {
+      type: "TOGGLE_FURNITURE_HIDDEN",
+      elementId: "__furniture_branding",
+    });
+    expect(both.hiddenFurnitureIds).toEqual(["__furniture_status", "__furniture_branding"]);
+  });
+});
+
 describe("zoom", () => {
   it("sets zoom within range", () => {
     const next = appReducer(initialAppState, { type: "SET_ZOOM", zoom: 2 });

@@ -634,6 +634,76 @@ def test_status_indicator_with_no_design_placement_raises():
         )
 
 
+def test_status_indicator_with_furniture_status_entirely_unset_raises_not_crashes():
+    # Regression: `design.furniture.status` (the whole `StatusFurniture`
+    # block) is itself optional, not just each of its placement fields --
+    # a project with no status placement configured at all has it `None`,
+    # not a `StatusFurniture()` with every field `None`. The old code did
+    # an unguarded `getattr(design.furniture.status, field_name)`, which
+    # raised `AttributeError` here instead of the intended
+    # `ContentValidationError` -- caught by testing this exact shape
+    # (`minimal-deck`'s own `design.yaml` has no `furniture.status`
+    # block), not reasoned out in advance.
+    design = _design(furniture=Furniture())
+    slide = Slide(id="s1", layout=None, elements=[])
+    with pytest.raises(ContentValidationError):
+        expand_slide(
+            slide, None, design, strict=True, status_indicator="corner-tl", watermark_text="DRAFT"
+        )
+
+
+def test_furniture_lenient_omits_an_unconfigured_status_placement_instead_of_raising():
+    # `furniture_lenient=True` (issue #21's `GET /api/furniture`) is the
+    # one caller allowed to treat "status_indicator points at a
+    # placement design.yaml hasn't configured yet" as "just don't
+    # render it" rather than a hard error -- every other caller
+    # (`expand_presentation`, `GET /api/plan`, `deckifyr build`/
+    # `validate`) keeps the strict behavior above unchanged.
+    design = _design(furniture=Furniture())
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide,
+        None,
+        design,
+        strict=True,
+        status_indicator="corner-tl",
+        watermark_text="DRAFT",
+        furniture_lenient=True,
+    )
+    assert resolved.elements == []
+
+
+def test_furniture_lenient_omits_a_page_number_with_a_bad_placeholder_instead_of_raising():
+    design = _design(
+        furniture=Furniture(page_number=PageNumberFurniture(box=_box(), format="{author}"))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide, None, design, strict=True, page_number=1, total_pages=1, furniture_lenient=True
+    )
+    assert resolved.elements == []
+
+
+def test_furniture_lenient_still_resolves_unrelated_configured_furniture():
+    # An unconfigured status placement must not take down branding, which
+    # has nothing wrong with it -- each furniture kind resolves (or is
+    # omitted) independently in lenient mode.
+    design = _design(
+        furniture=Furniture(branding=BrandingFurniture(text="Acme", box=_box()))
+    )
+    slide = Slide(id="s1", layout=None, elements=[])
+    resolved = expand_slide(
+        slide,
+        None,
+        design,
+        strict=True,
+        status_indicator="corner-tl",
+        watermark_text="DRAFT",
+        furniture_lenient=True,
+    )
+    assert [e.id for e in resolved.elements] == ["__furniture_branding"]
+
+
 def test_status_indicator_corner_with_no_watermark_text_is_skipped_not_an_error():
     design = _design(
         furniture=Furniture(status=StatusFurniture(corner_tl=StatusIndicatorStyle(box=_box())))

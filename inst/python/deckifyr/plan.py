@@ -42,11 +42,15 @@ SUPPORTED_ELEMENT_TYPES = {
 # synthesized fresh per slide by `_furniture_layout` below. The
 # `__furniture_` prefix keeps these out of the way of author-chosen zone/
 # element ids, so the ordinary duplicate-id check in
-# `_iter_slide_element_pairs` is a non-issue in practice.
-_FURNITURE_BACKGROUND_ID = "__furniture_background"
-_FURNITURE_STATUS_ID = "__furniture_status"
-_FURNITURE_BRANDING_ID = "__furniture_branding"
-_FURNITURE_PAGE_NUMBER_ID = "__furniture_page_number"
+# `_iter_slide_element_pairs` is a non-issue in practice. Public (no
+# leading underscore) because `deckifyr.web.app`'s furniture-editing
+# routes (issue #21) need to resolve an incoming element id back to the
+# design.yaml field it maps to -- the same "mechanism in its own module"
+# split this file's other public helpers already follow.
+FURNITURE_BACKGROUND_ID = "__furniture_background"
+FURNITURE_STATUS_ID = "__furniture_status"
+FURNITURE_BRANDING_ID = "__furniture_branding"
+FURNITURE_PAGE_NUMBER_ID = "__furniture_page_number"
 
 # Furniture must never obscure real slide content by default (spec
 # section 7.8), so it paints well behind the implicit `z_index: 0` every
@@ -573,7 +577,11 @@ def _resolve_element(
 # section 7.8's `StatusFurniture` docstring explains why the two spellings
 # differ). `"none"`/`None` are deliberately absent -- both mean "no status
 # indicator at all" and are handled before this mapping is consulted.
-_STATUS_INDICATOR_FIELDS = {
+# Public alongside the `FURNITURE_*_ID` constants above -- `deckifyr.web
+# .app`'s furniture routes need the same mapping to resolve which
+# `design.yaml` `furniture.status.*` field a `status_indicator` selection
+# targets.
+STATUS_INDICATOR_FIELDS = {
     "watermark": "watermark",
     "corner-tr": "corner_tr",
     "corner-tl": "corner_tl",
@@ -605,6 +613,7 @@ def _furniture_layout(
     total_pages: int,
     status_indicator: str | None = None,
     watermark_text: str | None = None,
+    lenient: bool = False,
 ) -> Layout:
     """Expand `design.yaml`'s `furniture` block (spec section 7.8) into
     reserved, low-`z_index` elements. Furniture is not a new element
@@ -619,11 +628,25 @@ def _furniture_layout(
     *which* of `design.yaml`'s `furniture.status` placements to use
     (`None`/`"none"` means none at all), `watermark_text` is the actual
     word to show.
+
+    `lenient` (default `False`, unchanged strict behavior for every
+    existing caller -- `deckifyr build`/`validate`/`GET /api/plan` must
+    never silently drop configured content, spec section 20 warning 7)
+    is a real-slide-vs-furniture-editor distinction, not a relaxation of
+    that rule: `deckifyr.web.app`'s `GET /api/furniture` route (issue
+    #21) is the one place a `status_indicator` selection with no
+    matching `furniture.status` style configured yet -- or a
+    `page_number.format` with a bad placeholder -- is an *expected,
+    mid-fix* state, not an error to surface. With `lenient=True`, either
+    condition just omits that one element from the returned `Layout`
+    instead of raising, so the furniture pseudo-slide (and its
+    `FurnitureControls` "Add" action, the actual fix) stays reachable
+    rather than 500ing the one screen that could fix the problem.
     """
     elements: dict[str, Element] = {}
 
     if design.slide.background_image:
-        elements[_FURNITURE_BACKGROUND_ID] = Element(
+        elements[FURNITURE_BACKGROUND_ID] = Element(
             type="image",
             source=design.slide.background_image,
             box=Box(
@@ -634,9 +657,23 @@ def _furniture_layout(
         )
 
     if status_indicator is not None and status_indicator != "none":
-        field_name = _STATUS_INDICATOR_FIELDS[status_indicator]
-        indicator_style = getattr(design.furniture.status, field_name)
-        if indicator_style is None:
+        field_name = STATUS_INDICATOR_FIELDS[status_indicator]
+        # `design.furniture.status` (the whole `StatusFurniture` block,
+        # not just one placement) is itself optional -- a project that
+        # never configured any status placement at all has it `None`,
+        # not an all-`None`-fields object; `getattr` on `None` crashes
+        # rather than reporting "not configured" the same way a single
+        # missing field does. A real, previously-latent bug (not
+        # introduced by `lenient`): the unguarded `getattr` below raised
+        # `AttributeError` instead of the intended `ContentValidationError`
+        # in this case, in strict mode too -- caught by a lenient-mode
+        # regression test against minimal-deck, which has no
+        # `furniture.status` block at all.
+        status_furniture = design.furniture.status
+        indicator_style = (
+            getattr(status_furniture, field_name) if status_furniture is not None else None
+        )
+        if indicator_style is None and not lenient:
             raise ContentValidationError(
                 f"presentation.yaml sets status_indicator: {status_indicator!r}, "
                 f"but design.yaml's furniture.status has no {field_name!r} "
@@ -647,8 +684,8 @@ def _furniture_layout(
         # small corner placement with no text is just empty content --
         # skipped like any other unfilled, non-required element, not an
         # error.
-        if watermark_text is not None:
-            elements[_FURNITURE_STATUS_ID] = Element(
+        if indicator_style is not None and watermark_text is not None:
+            elements[FURNITURE_STATUS_ID] = Element(
                 type="text",
                 value=watermark_text,
                 box=indicator_style.box,
@@ -665,7 +702,7 @@ def _furniture_layout(
 
     branding = design.furniture.branding
     if branding is not None:
-        elements[_FURNITURE_BRANDING_ID] = Element(
+        elements[FURNITURE_BRANDING_ID] = Element(
             type="text",
             value=branding.text,
             box=branding.box,
@@ -676,15 +713,22 @@ def _furniture_layout(
     page_number_furniture = design.furniture.page_number
     if page_number_furniture is not None and page_number_furniture.enabled:
         try:
-            text = page_number_furniture.format.format(page=page_number, total=total_pages)
+            text: str | None = page_number_furniture.format.format(
+                page=page_number, total=total_pages
+            )
         except KeyError as exc:
-            raise ContentValidationError(
-                "design.yaml furniture.page_number.format "
-                f"{page_number_furniture.format!r}: only {{page}} and "
-                f"{{total}} placeholders are supported (unknown placeholder "
-                f"{exc})"
-            ) from exc
-        elements[_FURNITURE_PAGE_NUMBER_ID] = Element(
+            if not lenient:
+                raise ContentValidationError(
+                    "design.yaml furniture.page_number.format "
+                    f"{page_number_furniture.format!r}: only {{page}} and "
+                    f"{{total}} placeholders are supported (unknown placeholder "
+                    f"{exc})"
+                ) from exc
+            text = None
+    else:
+        text = None
+    if text is not None:
+        elements[FURNITURE_PAGE_NUMBER_ID] = Element(
             type="text",
             value=text,
             box=page_number_furniture.box,
@@ -705,6 +749,7 @@ def expand_slide(
     total_pages: int = 1,
     status_indicator: str | None = None,
     watermark_text: str | None = None,
+    furniture_lenient: bool = False,
 ) -> ResolvedSlide:
     furniture_layout = _furniture_layout(
         design,
@@ -712,6 +757,7 @@ def expand_slide(
         total_pages=total_pages,
         status_indicator=status_indicator,
         watermark_text=watermark_text,
+        lenient=furniture_lenient,
     )
     combined_layout = Layout(
         elements={**furniture_layout.elements, **(layout.elements if layout else {})}
@@ -736,6 +782,27 @@ def expand_slide(
     return ResolvedSlide(id=slide.id, elements=resolved, notes=slide.notes)
 
 
+def resolve_watermark_text(presentation: PresentationDocument) -> str | None:
+    """The status/watermark placement's actual text (spec section 7.8).
+
+    `presentation.watermark` is an explicit override; unset (the usual
+    case, per this field's own docstring), the status indicator's text
+    falls back to `metadata.status` -- the same free-text field authors
+    already set ("draft", "demo", "final", ...) for descriptive
+    purposes, so a status/watermark mark doesn't require typing the
+    same word twice. `TextStyle.text_transform` (spec section 7.4),
+    not this fallback, is what turns "demo" into "DEMO" -- this only
+    decides which string gets used at all. Public (not `_`-prefixed)
+    because `deckifyr.web.app`'s `GET /api/furniture` route needs the
+    same fallback outside of a full `expand_presentation` call.
+    """
+    return (
+        presentation.watermark
+        if presentation.watermark is not None
+        else presentation.metadata.status
+    )
+
+
 def expand_presentation(
     presentation: PresentationDocument,
     design: DesignDocument,
@@ -744,19 +811,7 @@ def expand_presentation(
     strict: bool,
 ) -> list[ResolvedSlide]:
     total_pages = len(presentation.slides)
-    # `presentation.watermark` is an explicit override; unset (the usual
-    # case, per this field's own docstring), the status indicator's text
-    # falls back to `metadata.status` -- the same free-text field authors
-    # already set ("draft", "demo", "final", ...) for descriptive
-    # purposes, so a status/watermark mark doesn't require typing the
-    # same word twice. `TextStyle.text_transform` (spec section 7.4),
-    # not this fallback, is what turns "demo" into "DEMO" -- this only
-    # decides which string gets used at all.
-    watermark_text = (
-        presentation.watermark
-        if presentation.watermark is not None
-        else presentation.metadata.status
-    )
+    watermark_text = resolve_watermark_text(presentation)
     return [
         expand_slide(
             slide,

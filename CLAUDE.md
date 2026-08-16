@@ -711,7 +711,9 @@ installed. On the frontend, `web/src/components/SlideCanvas.tsx`'s own
 `DRAGGABLE_TYPES` is `text`/`markdown`/`image` -- those three render as
 real Konva `Group`s that can be dragged, resized, and rotated
 (committing back through `PATCH /api/slides/{slide}/elements
-/{element}`); `shape`/`group`/`table`/`reportifyr`/`quarto` elements
+/{element}`, or, on the furniture pseudo-slide, `PATCH /api/furniture
+/elements/{element}` -- see this section's own furniture-pseudo-slide
+paragraph below); `shape`/`group`/`table`/`reportifyr`/`quarto` elements
 render as a static, labeled, dashed placeholder box, per that
 component's own module comment naming this as this project's deliberate
 scope. `image` is draggable/resizable/rotatable like text, but still
@@ -733,9 +735,12 @@ bigger dependency surface than this repo's own low-dependency precedent
 (`colorsys` over a color-math library) was willing to clear for a much
 smaller win -- server-side validation (`PUT`'s `model_validate`/
 `validate_and_write_presentation`) still rejects a bad edit before it's
-written, same as `deckifyr set`. A schema-driven form generated from
-`GET /api/schemas/{doc}` is documented in that same file as explicit
-future scope, not built here. The built frontend under `inst/python
+written, same as `deckifyr set`. (A schema-driven form generated from
+`GET /api/schemas/{doc}` was this paragraph's own documented future
+scope at the time it was written -- now built, see this section's own
+config-editor paragraph below; `ConfigEditor.tsx` no longer stays JSON-
+textarea-only, though the JSON-not-YAML reasoning above is unchanged.)
+The built frontend under `inst/python
 /deckifyr/web/static/` (`index.html` + hashed `assets/*.js`/`*.css`) is
 committed generated output, the same posture `man/figures/*.png`
 already has -- neither `pip install` nor `R CMD build`/`R CMD INSTALL`
@@ -764,6 +769,120 @@ once reachable, `deck_serve()` opens the server's URL via
 `rstudioapi::viewer()` when running inside RStudio (a new
 `Suggests`-only soft dependency, `DESCRIPTION`) or `utils::browseURL()`
 otherwise.
+
+**The furniture pseudo-slide (issue #21) is real: a synthetic
+"⚙ Furniture" entry in the slide list shows design.yaml's `furniture`
+block on its own canvas, editable with the same drag/resize/rotate
+machinery real slide elements use, backed by `GET`/`PATCH`/`POST`/
+`DELETE /api/furniture[/elements/{id}]`.** `GET /api/furniture` builds
+a synthetic `Slide(id="__furniture__", layout=None)` and calls
+`deckifyr.plan.expand_slide` on it directly -- `expand_slide` already
+computes furniture elements internally and merges them with whatever
+`layout` is passed, so `layout=None` makes it return exactly the
+furniture elements with zero new plan.py resolution logic. `plan.py`'s
+`FURNITURE_*_ID`/`STATUS_INDICATOR_FIELDS` (previously `_`-prefixed
+module-private) are now public for this reason. PATCH/POST/DELETE
+resolve a furniture element id to a dotted path into `design.yaml`'s
+raw dict (`furniture.status.<field>`/`furniture.branding`/
+`furniture.page_number`) and reuse the same validate-then-write shape
+`put_config`/`patch_element` already use; a field a kind's schema
+doesn't have (rotation/z_index on branding/page-number, `value` on
+anything but branding's own `text`) is a hard 422, never a silent
+no-op, matching spec §20 warning 7.
+
+Two real bugs surfaced only by actually using this against
+`examples/demo-deck`, not by reasoning about the code:
+
+- **Konva's default rotation pivot is a node's own `(x,y)` (top-left);
+  `python-pptx`/OOXML's `<a:xfrm rot="...">` rotates a shape around its
+  own *center*.** Every rotated furniture placement (the watermark at
+  -30°, every corner at ±90°) was previewing at the wrong position --
+  a configured `corner_tr` placement's text swung up past the slide
+  entirely and was, in practice, unfindable. Fixed in
+  `SlideCanvas.tsx` by positioning every draggable/placeholder `Group`
+  at its box's *center* (`x + width/2, y + height/2`) with a matching
+  `offsetX`/`offsetY` (children still drawn at local `(0,0)`, unchanged
+  visually at `rotation: 0`) -- `handleDragEnd`/`handleTransformEnd`
+  convert Konva's now-center-based `node.x()`/`node.y()` back to the
+  box's top-left (`centerToTopLeftPx`, exported for unit testing) before
+  building a `PATCH` body, since the schema still stores top-left `x`/
+  `y`. Verified against a real demo-deck corner box, not just asserted:
+  the before/after `man/figures/web-app-furniture.png` diff is a good
+  visual proof (the diagonal watermark placeholder used to swing up and
+  overlap the title; it now stays centered on the slide).
+- **`status_indicator` pointing at a placement `design.yaml` hasn't
+  configured yet used to 500 the *one* screen that could fix it.**
+  `_furniture_layout` (the real build/`GET /api/plan` path) correctly
+  raises `ContentValidationError` there on purpose (spec §20 warning
+  7) -- but `GET /api/furniture` was going through the exact same
+  strict path, so picking a new placement in "Deck Options" before
+  giving it a style broke the furniture editor too, with no way back
+  in short of hand-editing YAML. Fixed with a new `lenient: bool`
+  parameter on `_furniture_layout`/`expand_slide` (default `False`,
+  every existing caller unchanged): `GET /api/furniture` passes
+  `furniture_lenient=True` and gets that one element omitted instead of
+  an exception, so `FurnitureControls`' own "Add" stays reachable.
+  `usePlan.ts`'s `refetch` also switched from `Promise.all` to
+  `Promise.allSettled` for the same reason -- a `GET /api/plan` failure
+  must not also blank out `furnitureSlide`, which may have succeeded.
+  Along the way, `getattr(design.furniture.status, field_name)`
+  (`design.furniture.status` itself is optional, not just each of its
+  fields) turned out to raise a raw `AttributeError` instead of the
+  intended `ContentValidationError` whenever a project had no
+  `furniture.status` block configured at all, in strict mode too -- a
+  second real, previously-latent bug the same lenient-mode regression
+  test caught.
+
+Two UX corrections from the same dogfeeding session, both in
+`FurnitureControls.tsx`: `PATCH /api/furniture/elements/__furniture_status`
+always resolves to whichever placement `status_indicator` currently
+selects, so a "Remove" button there would delete the *active*
+placement's style while `presentation.yaml` still points at it,
+breaking the plan for every slide -- there is no Remove for status, only
+a hint pointing at the "Deck-wide" bar's own dropdown (`None`), which is
+the actual safe off-switch and never touches `design.yaml`. And the
+client-only "Hide" toggle (`state.hiddenFurnitureIds`, `reducer.ts` --
+never sent to the server) is offered only for the full-page `watermark`
+placement, not corners/background/branding: watermark is the one kind
+large enough to bury everything else while positioning it (`z_index:
+9999`, on top of ordinary content by design), the others are small or
+sit behind content already. `DeckOptions.tsx` also gained a "Deck
+status" field bound to `metadata.status` -- the actual primary input
+`deckifyr.plan.resolve_watermark_text`'s own `watermark ?? metadata
+.status` fallback is built around -- after a real user typed text into
+what was then the only field (labeled generically "Text", writing
+`presentation.watermark`) and had no way to tell what it would produce
+on a *corner* placement, where nothing is a "watermark." That original
+field is relabeled "Watermark override" and stays -- it's still the
+right field for the rarer case where the mark itself should say
+something different from the deck's own status.
+
+**The config editor's Form/Raw toggle (issue #22) is real:
+`ConfigEditor.tsx` now defaults to a schema-driven form
+(`SchemaForm.tsx`) instead of a JSON textarea, with a syntax-
+highlighted, live-validated raw view (`jsonHighlight.ts`) a toggle
+away.** Both are dependency-free, matching this repo's existing low-
+dependency precedent (`colorsys` over a color-math library) -- no
+CodeMirror/Monaco/ajv. `SchemaForm.tsx` is a recursive renderer driven
+by `GET /api/schemas/{doc}`'s real pydantic JSON Schema output
+(`$defs`/`$ref`, `X | None` as `anyOf` with a `"null"` branch): object/
+array/enum/scalar fields each get a typed input, and an open dict with
+no fixed `properties` (`colors`/`text_styles`/`shape_styles`/
+`table_styles`) gets an add/remove named-entry list. An `anyOf`/`oneOf`
+with more than one *non-null* branch -- `colors`' own `str |
+ColorDerivation` entry values are the real example -- can't be
+disambiguated generically, so that one leaf falls back to a small
+inline raw-JSON field instead of guessing wrong; this is a documented,
+intentional scope boundary (see `SchemaForm.tsx`'s own module
+docstring), the same kind this repo already keeps elsewhere (`render_mode:
+svg`, unset `table_style`). `jsonHighlight.ts` is a small regex
+tokenizer, not a real parser -- `JSON.parse` (now run live, on every
+keystroke, not only at Save) remains the actual validation authority;
+the highlighted view is the standard dependency-free trick, a
+`<pre>`-with-colored-spans behind a transparent-text `<textarea>`, kept
+scrolled together via `onScroll`. Switching Raw -> Form is blocked
+(with an inline error) while the current raw text doesn't parse, so the
+form is never handed a value that doesn't match what's on screen.
 
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found

@@ -1,0 +1,793 @@
+{
+  "$defs": {
+    "Box": {
+      "additionalProperties": false,
+      "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "string"
+        },
+        "y": {
+          "title": "Y",
+          "type": "string"
+        },
+        "width": {
+          "title": "Width",
+          "type": "string"
+        },
+        "height": {
+          "title": "Height",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Box",
+      "type": "object"
+    },
+    "BrandingFurniture": {
+      "additionalProperties": false,
+      "description": "An organization/department label. Unlike `status`/`page_number`\nthere's no `enabled` flag -- whether the `furniture.branding` block is\npresent at all *is* the toggle, matching spec section 7.8's own\nexample YAML. `text` is a literal string: general variable/expression\nsubstitution (e.g. `{organization}`) is a separate, still-open design\nquestion (spec section 21) that this does not preempt.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "box": {
+          "$ref": "#/$defs/Box"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
+        }
+      },
+      "required": [
+        "text",
+        "box"
+      ],
+      "title": "BrandingFurniture",
+      "type": "object"
+    },
+    "ColorDerivation": {
+      "additionalProperties": false,
+      "description": "One `colors:` entry computed from another token/literal instead of\na hand-picked literal hex value. `base` may name a `colors:` token or\na literal hex value, the same \"token or bare literal\" convention\nevery other color-bearing field in `design.yaml` already uses.\nExactly one of `lighten`/`darken`/`saturate`/`desaturate`/`mix` must\nbe set; `weight` (0.0-1.0, default 0.5 when `mix` is set) is only\nvalid alongside `mix` -- it's the fraction of `mix`'s own color\nblended in (0.0 = all `base`, 1.0 = all `mix`).",
+      "properties": {
+        "base": {
+          "title": "Base",
+          "type": "string"
+        },
+        "lighten": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lighten"
+        },
+        "darken": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Darken"
+        },
+        "saturate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saturate"
+        },
+        "desaturate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Desaturate"
+        },
+        "mix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mix"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "base"
+      ],
+      "title": "ColorDerivation",
+      "type": "object"
+    },
+    "Defaults": {
+      "additionalProperties": false,
+      "properties": {
+        "overflow": {
+          "default": "error",
+          "enum": [
+            "error",
+            "shrink",
+            "clip",
+            "continue"
+          ],
+          "title": "Overflow",
+          "type": "string"
+        },
+        "image_fit": {
+          "default": "contain",
+          "enum": [
+            "contain",
+            "cover",
+            "stretch",
+            "none"
+          ],
+          "title": "Image Fit",
+          "type": "string"
+        },
+        "rotation": {
+          "default": 0,
+          "title": "Rotation",
+          "type": "number"
+        },
+        "footer_height": {
+          "default": "0.4in",
+          "title": "Footer Height",
+          "type": "string"
+        },
+        "footer_style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footer Style"
+        },
+        "table_style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Style"
+        }
+      },
+      "title": "Defaults",
+      "type": "object"
+    },
+    "Fonts": {
+      "additionalProperties": true,
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "heading": {
+          "title": "Heading",
+          "type": "string"
+        },
+        "monospace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monospace"
+        }
+      },
+      "required": [
+        "body",
+        "heading"
+      ],
+      "title": "Fonts",
+      "type": "object"
+    },
+    "Furniture": {
+      "additionalProperties": false,
+      "description": "`design.yaml`'s `furniture` block (spec section 7.8). Every field\nis optional and unset by default -- a `DesignDocument` with no\nfurniture configured expands into nothing extra at all.",
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusFurniture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "branding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrandingFurniture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "page_number": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageNumberFurniture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Furniture",
+      "type": "object"
+    },
+    "Gradient": {
+      "additionalProperties": false,
+      "description": "A linear gradient fill, usable anywhere a plain color fill is\n(`SlideSize.background_gradient`, a `ShapeStyle.fill`). `angle`\nfollows `python-pptx`'s own `FillFormat.gradient_angle` convention:\n0 is left-to-right, increasing angles rotate clockwise, so 90 (the\ndefault) is top-to-bottom -- not the CSS `linear-gradient()`\nconvention some authors may expect from other tools.",
+      "properties": {
+        "stops": {
+          "items": {
+            "$ref": "#/$defs/GradientStop"
+          },
+          "title": "Stops",
+          "type": "array"
+        },
+        "angle": {
+          "default": 90,
+          "title": "Angle",
+          "type": "number"
+        }
+      },
+      "required": [
+        "stops"
+      ],
+      "title": "Gradient",
+      "type": "object"
+    },
+    "GradientStop": {
+      "additionalProperties": false,
+      "description": "One color/position pair along a `Gradient`'s path -- mirrors\n`python-pptx`'s own `a:gs` element, spec section 7.4's \"token or bare\nliteral\" convention for `color` included: `color` may name a\n`design.yaml` `colors:` token or a literal hex value, resolved the\nsame way `TextStyle.color`/`ShapeStyle.fill` already are.",
+      "properties": {
+        "color": {
+          "title": "Color",
+          "type": "string"
+        },
+        "position": {
+          "title": "Position",
+          "type": "number"
+        }
+      },
+      "required": [
+        "color",
+        "position"
+      ],
+      "title": "GradientStop",
+      "type": "object"
+    },
+    "PageNumberFurniture": {
+      "additionalProperties": false,
+      "description": "A running page number. `format` supports exactly two placeholders,\n`{page}` (1-indexed slide position) and `{total}` (slide count) --\na closed-form substitution the author cannot hand-write, not a\ngeneral templating mechanism (spec section 21's still-open decision\nabout broader variable/expression support is unrelated to this).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "format": {
+          "default": "{page} / {total}",
+          "title": "Format",
+          "type": "string"
+        },
+        "box": {
+          "$ref": "#/$defs/Box"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
+        }
+      },
+      "required": [
+        "box"
+      ],
+      "title": "PageNumberFurniture",
+      "type": "object"
+    },
+    "ShapeStyle": {
+      "additionalProperties": false,
+      "description": "A named fill/line style for `shape` elements, alongside `text_styles`\n(spec section 7.4's planned \"shape styles\" -- see the `design.yaml`\ntable in spec section 7.2). Every field is optional and falls back to\n`deckifyr.pptx.compose`'s own default (a thin black outline, no fill)\nwhen unset, the same \"token or bare literal\" convention `TextStyle`'s\n`font`/`color` fields use.",
+      "properties": {
+        "fill": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Gradient"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fill"
+        },
+        "line_color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Color"
+        },
+        "line_width": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Width"
+        }
+      },
+      "title": "ShapeStyle",
+      "type": "object"
+    },
+    "SlideSize": {
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "title": "Width",
+          "type": "string"
+        },
+        "height": {
+          "title": "Height",
+          "type": "string"
+        },
+        "background": {
+          "default": "#FFFFFF",
+          "title": "Background",
+          "type": "string"
+        },
+        "safe_area": {
+          "default": "0in",
+          "title": "Safe Area",
+          "type": "string"
+        },
+        "background_image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Background Image"
+        },
+        "background_gradient": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Gradient"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "title": "SlideSize",
+      "type": "object"
+    },
+    "StatusFurniture": {
+      "additionalProperties": false,
+      "description": "A draft/final/status marker (spec section 7.8) -- off by default\n(every field below is independently optional, and\n`PresentationDocument.status_indicator` defaults to `None`/`\"none\"`),\nflipped on for a specific build via `presentation.yaml` rather than\nbaked into `design.yaml` as always-on.\n\nEach field is one placement `presentation.yaml`'s own\n`status_indicator` may select -- a full, diagonal, page-spanning\nwatermark, or a small label in one of the slide's four corners --\nwith its own box/style/rotation/z_index (`StatusIndicatorStyle`).\n`design.yaml` only has to configure the placements a project\nactually intends to use; selecting one `status_indicator` has no\ndesign-level style for it is a build-time\n`ContentValidationError` (`deckifyr.plan._furniture_layout`), not a\nsilent no-op -- spec section 20 warning 7's \"do not silently drop\ncontent\" applies here as much as anywhere else. Field names are\nunderscored (`corner_tr`, not `corner-tr`) to stay valid Python\nidentifiers; `StatusIndicatorMode`'s own literal values (what\n`presentation.yaml` actually types) keep the hyphenated spelling,\nsince a YAML string has no such restriction.",
+      "properties": {
+        "watermark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusIndicatorStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_tr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusIndicatorStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_tl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusIndicatorStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_bl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusIndicatorStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_br": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusIndicatorStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "StatusFurniture",
+      "type": "object"
+    },
+    "StatusIndicatorStyle": {
+      "additionalProperties": false,
+      "description": "One `status_indicator` placement's own appearance -- a status/\nwatermark mark has no content of its own (spec section 7.8's\n`furniture.status` never carries a default word the way, say,\n`branding.text` does): `presentation.yaml`'s own\n`PresentationDocument.watermark` supplies the actual text, any build\nmay choose, and this only says where/how it's drawn once chosen.\n\n`z_index` (unset by default) is what actually chooses which of the\ntwo conventional \"status mark\" designs this is: left unset, it keeps\nevery other furniture item's own default\n(`_FURNITURE_OVERLAY_Z_INDEX`, well behind ordinary content) -- the\nright choice for a small, simple corner label (a `corner_*` field\nbelow). Set to a large positive value, it paints on top of every\nordinary element instead -- a real diagonal watermark (Word/Google\nDocs style) needs to read on top of whatever content it crosses, not\nhide behind it, which is also why that use case should pair\n`rotation` with a low `opacity` on its `style` (`TextStyle.opacity`)\nrather than relying on placement alone.",
+      "properties": {
+        "box": {
+          "$ref": "#/$defs/Box"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
+        },
+        "rotation": {
+          "default": 0,
+          "title": "Rotation",
+          "type": "number"
+        },
+        "z_index": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Z Index"
+        }
+      },
+      "required": [
+        "box"
+      ],
+      "title": "StatusIndicatorStyle",
+      "type": "object"
+    },
+    "TableStyle": {
+      "additionalProperties": false,
+      "description": "A named fill/border style for `table` elements, alongside\n`shape_styles`. Every field is optional and, when unset, leaves\n`python-pptx`'s own default table-template look (banding, header\nfill, no explicit border) untouched for that aspect -- the same\n\"no style token = compositor's own built-in default\" convention\n`ShapeStyle` uses. Font/size/bold/italic and the body text color\nremain governed by `text_styles` via a table element's ordinary\n`style` field (unchanged); `TableStyle` only controls the fill/\nborder chrome `text_styles` has no vocabulary for. `header_fill`\noverrides the default template's own header band; pair it with\n`header_text_color` when the new fill would leave the template's\nown (unshown, theme-inherited) header text color illegible --\n`deckifyr.pptx.compose` does not infer one from the other.",
+      "properties": {
+        "header_fill": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header Fill"
+        },
+        "header_text_color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header Text Color"
+        },
+        "body_fill": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Fill"
+        },
+        "band_fill": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Fill"
+        },
+        "border_color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Border Color"
+        },
+        "border_width": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Border Width"
+        }
+      },
+      "title": "TableStyle",
+      "type": "object"
+    },
+    "TextStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "title": "Font",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "string"
+        },
+        "bold": {
+          "default": false,
+          "title": "Bold",
+          "type": "boolean"
+        },
+        "italic": {
+          "default": false,
+          "title": "Italic",
+          "type": "boolean"
+        },
+        "color": {
+          "title": "Color",
+          "type": "string"
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Opacity"
+        },
+        "text_transform": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "uppercase",
+                "lowercase",
+                "capitalize"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text Transform"
+        }
+      },
+      "required": [
+        "font",
+        "size",
+        "color"
+      ],
+      "title": "TextStyle",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "deckifyr": {
+      "title": "Deckifyr",
+      "type": "string"
+    },
+    "slide": {
+      "$ref": "#/$defs/SlideSize"
+    },
+    "fonts": {
+      "$ref": "#/$defs/Fonts"
+    },
+    "colors": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/ColorDerivation"
+          }
+        ]
+      },
+      "default": {},
+      "title": "Colors",
+      "type": "object"
+    },
+    "text_styles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/TextStyle"
+      },
+      "default": {},
+      "title": "Text Styles",
+      "type": "object"
+    },
+    "shape_styles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ShapeStyle"
+      },
+      "default": {},
+      "title": "Shape Styles",
+      "type": "object"
+    },
+    "table_styles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/TableStyle"
+      },
+      "default": {},
+      "title": "Table Styles",
+      "type": "object"
+    },
+    "defaults": {
+      "$ref": "#/$defs/Defaults",
+      "default": {
+        "overflow": "error",
+        "image_fit": "contain",
+        "rotation": 0.0,
+        "footer_height": "0.4in",
+        "footer_style": null,
+        "table_style": null
+      }
+    },
+    "furniture": {
+      "$ref": "#/$defs/Furniture",
+      "default": {
+        "status": null,
+        "branding": null,
+        "page_number": null
+      }
+    }
+  },
+  "required": [
+    "deckifyr",
+    "slide",
+    "fonts"
+  ],
+  "title": "DesignDocument",
+  "type": "object"
+}

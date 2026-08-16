@@ -43,6 +43,20 @@ export interface AppState {
    * furniture placement, is the actual day-to-day editing complaint
    * this exists for. */
   showFurniture: boolean;
+  /** Furniture element ids hidden from view *while on the furniture
+   * pseudo-slide itself* (issue #21 follow-up) -- a separate concern
+   * from `showFurniture` above, which only affects furniture rendered
+   * on top of *real* slides. A large diagonal watermark can visually
+   * bury the much smaller branding/page-number boxes on the furniture
+   * pseudo-slide; this lets a user hide it there without touching
+   * `design.yaml` at all -- purely client-side, never sent to the
+   * server, and intentionally distinct from `FurnitureControls`'
+   * "Remove" (which deletes the configured style) or `DeckOptions`'
+   * `status_indicator` (which changes what the *built* deck shows).
+   * Reset takes care of itself: it's plain in-memory state, gone on
+   * reload, and a hidden id that no longer exists (e.g. after Remove)
+   * is simply inert. */
+  hiddenFurnitureIds: string[];
 }
 
 export const initialAppState: AppState = {
@@ -52,6 +66,7 @@ export const initialAppState: AppState = {
   past: [],
   future: [],
   showFurniture: false,
+  hiddenFurnitureIds: [],
 };
 
 export type AppAction =
@@ -61,7 +76,8 @@ export type AppAction =
   | { type: "PUSH_HISTORY"; entry: HistoryEntry }
   | { type: "UNDO" }
   | { type: "REDO" }
-  | { type: "SET_SHOW_FURNITURE"; show: boolean };
+  | { type: "SET_SHOW_FURNITURE"; show: boolean }
+  | { type: "TOGGLE_FURNITURE_HIDDEN"; elementId: string };
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -105,6 +121,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "SET_SHOW_FURNITURE":
       return { ...state, showFurniture: action.show };
+
+    case "TOGGLE_FURNITURE_HIDDEN":
+      return {
+        ...state,
+        hiddenFurnitureIds: state.hiddenFurnitureIds.includes(action.elementId)
+          ? state.hiddenFurnitureIds.filter((id) => id !== action.elementId)
+          : [...state.hiddenFurnitureIds, action.elementId],
+      };
 
     default:
       return state;

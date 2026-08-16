@@ -29,22 +29,32 @@ import { Stage, Layer, Rect, Text as KonvaText, Transformer, Group } from "react
 import type Konva from "konva";
 import { useAppContext } from "../state/AppContext";
 import { findElement, inverseForBoxPatch, type UsePlanResult } from "../state/usePlan";
-import { boxToInches, inchesToPixels, pixelsToInches, resolveKonvaTransformToInches } from "../geometry";
+import {
+  boxPixelsToInches,
+  boxToInches,
+  inchesToPixels,
+  pixelsToInches,
+  resolveKonvaTransform,
+} from "../geometry";
 import type { ElementPatchBody, ResolvedElement } from "../types";
 
 const DRAGGABLE_TYPES = new Set(["text", "markdown", "image"]);
 
 // `__furniture_background`/`__furniture_status`/`__furniture_branding`/
 // `__furniture_page_number` (`inst/python/deckifyr/plan.py`'s own
-// `_FURNITURE_*_ID` constants) are synthesized once per slide at
+// `FURNITURE_*_ID` constants) are synthesized once per slide at
 // plan-time from `design.yaml`'s `furniture` block + `presentation.yaml`'s
-// top-level `status_indicator` -- they don't exist in any slide's own
-// `elements` in the raw `presentation.yaml`, so `PATCH
-// /api/slides/{id}/elements/{id}` has nothing to find for one (a real
-// 404, confirmed against the API) and dragging one is a dead end no
-// matter its `type`. They render fixed (like the other non-draggable
-// placeholder types below) instead -- deck-wide options belong in
-// `DeckOptions`/the Config tab, not as a draggable per-slide element.
+// top-level `status_indicator`. On an ordinary real slide they don't
+// exist in that slide's own `elements` in `presentation.yaml`, so `PATCH
+// /api/slides/{id}/elements/{id}` has nothing to find for one and
+// dragging one there is a dead end no matter its `type` -- they render
+// fixed there, like the other non-draggable placeholder types below.
+// On the furniture *pseudo*-slide (`plan.furnitureSlide`, id
+// `FURNITURE_SLIDE_ID`, issue #21) the opposite is true: these are the
+// only elements present, and they're exactly what that pseudo-slide
+// exists to let you drag/resize/rotate -- see `isDraggableFurnitureElement`
+// below, and `usePlan.ts`'s `sendPatch` for where the resulting PATCH
+// actually goes (`design.yaml`, not `presentation.yaml`).
 const FURNITURE_PREFIX = "__furniture_";
 
 // Exported for direct unit testing (`SlideCanvas.logic.test.ts`) --
@@ -55,6 +65,47 @@ export function isFurnitureElement(element: ResolvedElement): boolean {
 
 export function isDraggableElement(element: ResolvedElement): boolean {
   return DRAGGABLE_TYPES.has(element.type) && !isFurnitureElement(element);
+}
+
+// `__furniture_background` has no `box` field at all in `design.yaml`'s
+// schema (`SlideSize.background_image` is just a path -- it always fills
+// the slide), so it stays a fixed placeholder even on the furniture
+// pseudo-slide; the other three furniture kinds each have a real `box`
+// (`StatusIndicatorStyle`/`BrandingFurniture`/`PageNumberFurniture`) and
+// become draggable there.
+export function isDraggableFurnitureElement(element: ResolvedElement): boolean {
+  return DRAGGABLE_TYPES.has(element.type) && element.id !== "__furniture_background";
+}
+
+// Only `StatusIndicatorStyle` (the `__furniture_status` element) has a
+// `rotation`/`z_index` field in `design.yaml`'s schema -- branding/
+// page-number don't, and the backend hard-rejects (422) a patch that
+// tries to set either there rather than silently dropping it (spec
+// section 20 warning 7's "no silent magic"), so the frontend must not
+// send those fields for anything but status while on the furniture
+// pseudo-slide.
+export function furnitureElementSupportsRotation(elementId: string): boolean {
+  return elementId === "__furniture_status";
+}
+
+export function furnitureElementSupportsZIndex(elementId: string): boolean {
+  return elementId === "__furniture_status";
+}
+
+// `__furniture_branding` is the only furniture kind with a plain
+// editable string in the schema (`BrandingFurniture.text`) -- the
+// backend maps its PATCH `value` straight onto that field.
+// `__furniture_status`'s displayed text is *not* a `design.yaml` field
+// at all: it's `presentation.yaml`'s own `watermark`/`metadata.status`
+// (`deckifyr.plan.resolve_watermark_text`), so there's nothing here to
+// PATCH even though the element's `value` looks like ordinary text --
+// double-clicking to edit it must not even be offered.
+// `__furniture_page_number`'s displayed text is `format.format(page=,
+// total=)`, a computed string, not a literal one -- also not
+// value-editable here (`format` itself stays Config-tab-only, since a
+// placeholder-aware textarea is a bigger feature than this slice needs).
+export function furnitureElementSupportsValue(elementId: string): boolean {
+  return elementId === "__furniture_branding";
 }
 
 export function elementLabel(element: ResolvedElement): string {
@@ -75,13 +126,85 @@ function plainText(element: ResolvedElement): string {
   return raw.replace(/^#+\s*/gm, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/[*_]/g, "");
 }
 
+// Mirrors `deckifyr.pptx.compose._apply_text_transform` (a plain
+// `str.upper()`/`.lower()`/`.title()`), applied after markdown's own
+// formatting markers are already stripped -- same order the real
+// compositor applies it in. A preview-quality approximation of Python's
+// `.title()` for "capitalize" (doesn't handle every apostrophe/hyphen
+// edge case the same way) -- good enough for what this canvas is for:
+// seeing roughly what a status/watermark word will look like, not
+// byte-exact output (that's what the real build/preview render).
+export function applyTextTransform(text: string, transform: string | null | undefined): string {
+  switch (transform) {
+    case "uppercase":
+      return text.toUpperCase();
+    case "lowercase":
+      return text.toLowerCase();
+    case "capitalize":
+      return text.replace(
+        /\S+/g,
+        (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+      );
+    default:
+      return text;
+  }
+}
+
+export function displayText(element: ResolvedElement): string {
+  return applyTextTransform(plainText(element), element.style?.text_transform);
+}
+
+// Mirrors `deckifyr.pptx.compose._add_text_shape`'s own alignment
+// resolution: `center` alone means "center both axes" (the watermark's
+// own default, spec section 7.8), `align` overrides the horizontal axis
+// independently (issue #13's corner placements: right/left-flush while
+// still vertically centered) -- see `Element.align`'s own docstring for
+// why the two fields are independent rather than one bool.
+export function konvaTextAlign(element: ResolvedElement): "left" | "center" | "right" {
+  if (element.align === "left" || element.align === "center" || element.align === "right") {
+    return element.align;
+  }
+  return element.center ? "center" : "left";
+}
+
+export function konvaVerticalAlign(element: ResolvedElement): "top" | "middle" {
+  return element.center ? "middle" : "top";
+}
+
+// Every draggable (and fixed-placeholder) Group below is positioned/
+// rotated around its own *center* (`x + width/2, y + height/2` with a
+// matching `offsetX`/`offsetY`), not its top-left corner -- matching
+// how `python-pptx`/OOXML's `<a:xfrm rot="...">` actually rotates a
+// shape (around its own center), confirmed against
+// `deckifyr.pptx.compose` (every `shape.rotation = element.rotation`
+// there sets that same OOXML attribute). Konva's *default* rotation
+// pivot is the node's `(x,y)` itself (no offset), which would rotate
+// around the top-left corner instead -- a real, confirmed mismatch: a
+// rotated corner placement (`furniture.status.corner_tr`,
+// `rotation: -90`) swung to a completely different, often off-canvas
+// position under Konva's default versus PowerPoint's actual
+// center-pivot behavior (the actual bug a user hit -- a configured
+// corner placement's text was nowhere to be found on the furniture
+// pseudo-slide). `handleDragEnd`/`handleTransformEnd` read `node.x()`/
+// `node.y()` as this center and must convert back to top-left before
+// building a box patch, since the schema (and every other box field in
+// this app) stores top-left `x`/`y`.
+export function centerToTopLeftPx(
+  centerXPx: number,
+  centerYPx: number,
+  widthPx: number,
+  heightPx: number
+): { x: number; y: number } {
+  return { x: centerXPx - widthPx / 2, y: centerYPx - heightPx / 2 };
+}
+
 interface Props {
   plan: UsePlanResult;
 }
 
 export default function SlideCanvas({ plan }: Props) {
   const { state, dispatch } = useAppContext();
-  const { slides, slideSize } = plan;
+  const { slides, furnitureSlide, slideSize } = plan;
   const [editingElementId, setEditingElementId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -89,19 +212,29 @@ export default function SlideCanvas({ plan }: Props) {
   const shapeRefs = useRef<Record<string, Konva.Node>>({});
   const transformerRef = useRef<Konva.Transformer>(null);
 
-  const slide = slides?.find((s) => s.id === state.selectedSlideId) ?? slides?.[0];
+  const isFurnitureSlideSelected =
+    furnitureSlide !== null && state.selectedSlideId === furnitureSlide.id;
+  const slide = isFurnitureSlideSelected
+    ? furnitureSlide
+    : (slides?.find((s) => s.id === state.selectedSlideId) ?? slides?.[0]);
   const selectedElement = findElement(slide, state.selectedElementId);
+
+  // On the furniture pseudo-slide, `background` stays a fixed
+  // placeholder (no `box` field to drag) but `status`/`branding`/
+  // `page_number` all become draggable -- the opposite of an ordinary
+  // real slide, where every `__furniture_*` element is fixed.
+  const isDraggable = isFurnitureSlideSelected ? isDraggableFurnitureElement : isDraggableElement;
 
   useEffect(() => {
     const transformer = transformerRef.current;
     if (!transformer) return;
     const node =
-      state.selectedElementId && selectedElement && isDraggableElement(selectedElement)
+      state.selectedElementId && selectedElement && isDraggable(selectedElement)
         ? shapeRefs.current[state.selectedElementId]
         : undefined;
     transformer.nodes(node ? [node] : []);
     transformer.getLayer()?.batchDraw();
-  }, [state.selectedElementId, selectedElement?.type, slide]);
+  }, [state.selectedElementId, selectedElement?.type, slide, isDraggable]);
 
   // `plan.error` must be checked before the loading fallback below --
   // once a fetch fails, `plan.loading` settles to `false` but `slides`/
@@ -109,14 +242,26 @@ export default function SlideCanvas({ plan }: Props) {
   // was stuck showing "Loading plan…" indefinitely instead of the real
   // error (caught by screenshotting a failed fetch, not by reasoning
   // about the state machine in the abstract).
-  if (plan.error) {
+  //
+  // On the furniture pseudo-slide specifically, a `plan.error` (almost
+  // always `GET /api/plan` failing because `status_indicator` points at
+  // a placement design.yaml hasn't styled yet -- `usePlan.ts`'s
+  // `Promise.allSettled` note) must NOT block this screen: it's the one
+  // place that error is actually fixable (`FurnitureControls`' "Add"),
+  // and `GET /api/furniture` is deliberately lenient about that exact
+  // case, so `furnitureSlide`/`slideSize` are still real, current data
+  // even while `plan.error` is set. A real error banner still shows
+  // below instead, so the reason the real slides are broken stays
+  // visible.
+  const furnitureSlideUsable = isFurnitureSlideSelected && furnitureSlide && slideSize;
+  if (plan.error && !furnitureSlideUsable) {
     return (
       <div className="slide-canvas slide-canvas--empty" role="alert">
         {plan.error}
       </div>
     );
   }
-  if (!slides || !slideSize) {
+  if (!slideSize || (!isFurnitureSlideSelected && !slides)) {
     return <div className="slide-canvas slide-canvas--loading">Loading plan…</div>;
   }
   if (!slide) {
@@ -134,12 +279,26 @@ export default function SlideCanvas({ plan }: Props) {
   // `showFurniture` never leaves the browser and exists specifically so
   // the always-on-top watermark/status furniture (z_index 9999) doesn't
   // sit in the way while dragging/selecting real slide content.
-  const visibleElements = state.showFurniture
-    ? slide.elements
-    : slide.elements.filter((element) => !isFurnitureElement(element));
+  const visibleElements = isFurnitureSlideSelected
+    ? // `hiddenFurnitureIds` (issue #21 follow-up): a per-item, client-
+      // only visibility toggle scoped to this pseudo-slide, so a large
+      // watermark can be tucked out of the way while positioning
+      // branding/page-number without deleting its configured style
+      // (that's `FurnitureControls`' separate "Remove" action).
+      slide.elements.filter((element) => !state.hiddenFurnitureIds.includes(element.id))
+    : state.showFurniture
+      ? slide.elements
+      : slide.elements.filter((element) => !isFurnitureElement(element));
 
   function selectOrEdit(element: ResolvedElement) {
-    if (state.selectedElementId === element.id && isDraggableElement(element) && element.type !== "image") {
+    const canEditValue =
+      !isFurnitureSlideSelected || furnitureElementSupportsValue(element.id);
+    if (
+      state.selectedElementId === element.id &&
+      isDraggable(element) &&
+      element.type !== "image" &&
+      canEditValue
+    ) {
       setEditingElementId(element.id);
       setEditingValue(typeof element.value === "string" ? element.value : "");
     } else {
@@ -162,32 +321,43 @@ export default function SlideCanvas({ plan }: Props) {
   }
 
   async function handleDragEnd(element: ResolvedElement, node: Konva.Node) {
-    const xIn = pixelsToInches(node.x(), 1);
-    const yIn = pixelsToInches(node.y(), 1);
+    const topLeftPx = centerToTopLeftPx(node.x(), node.y(), node.width(), node.height());
+    const xIn = pixelsToInches(topLeftPx.x, 1);
+    const yIn = pixelsToInches(topLeftPx.y, 1);
     await commitPatch(element, { box: { x: xIn, y: yIn } }, "move");
   }
 
   async function handleTransformEnd(element: ResolvedElement, node: Konva.Node) {
-    const resolved = resolveKonvaTransformToInches(
-      {
-        x: node.x(),
-        y: node.y(),
-        width: node.width(),
-        height: node.height(),
-        scaleX: node.scaleX(),
-        scaleY: node.scaleY(),
-        rotation: node.rotation(),
-      },
-      1
-    );
-    await commitPatch(
-      element,
-      {
-        box: { x: resolved.x, y: resolved.y, width: resolved.width, height: resolved.height },
-        rotation: resolved.rotation,
-      },
-      "resize/rotate"
-    );
+    const resolvedPx = resolveKonvaTransform({
+      x: node.x(),
+      y: node.y(),
+      width: node.width(),
+      height: node.height(),
+      scaleX: node.scaleX(),
+      scaleY: node.scaleY(),
+      rotation: node.rotation(),
+    });
+    const topLeftPx = centerToTopLeftPx(resolvedPx.x, resolvedPx.y, resolvedPx.width, resolvedPx.height);
+    const resolved = {
+      ...boxPixelsToInches(
+        { x: topLeftPx.x, y: topLeftPx.y, width: resolvedPx.width, height: resolvedPx.height },
+        1
+      ),
+      rotation: resolvedPx.rotation,
+    };
+    const patch: ElementPatchBody = {
+      box: { x: resolved.x, y: resolved.y, width: resolved.width, height: resolved.height },
+    };
+    // Only `__furniture_status` has a `rotation` field in design.yaml's
+    // schema (branding/page-number don't) -- the backend hard-rejects
+    // any other furniture kind's rotation patch, so this must not send
+    // one. Konva's Transformer already keeps `rotateEnabled` off for
+    // those (see below), so `node.rotation()` would be 0 anyway; this
+    // is the belt to that suspenders.
+    if (!isFurnitureSlideSelected || furnitureElementSupportsRotation(element.id)) {
+      patch.rotation = resolved.rotation;
+    }
+    await commitPatch(element, patch, "resize/rotate");
   }
 
   async function commitTextEdit() {
@@ -204,6 +374,11 @@ export default function SlideCanvas({ plan }: Props) {
 
   return (
     <div className="slide-canvas">
+      {isFurnitureSlideSelected && plan.error && (
+        <div className="slide-canvas__warning" role="alert">
+          Real slides currently fail to render: {plan.error}
+        </div>
+      )}
       {mutationError && (
         <div className="slide-canvas__error" role="alert">
           {mutationError}
@@ -245,12 +420,19 @@ export default function SlideCanvas({ plan }: Props) {
               const width = inchesToPixels(box.width, 1);
               const height = inchesToPixels(box.height, 1);
               const isSelected = state.selectedElementId === element.id;
-              const isDraggable = isDraggableElement(element);
+              const draggable = isDraggable(element);
               const isFurniture = isFurnitureElement(element);
 
-              if (!isDraggable) {
+              if (!draggable) {
                 return (
-                  <Group key={element.id} x={x} y={y} rotation={element.rotation}>
+                  <Group
+                    key={element.id}
+                    x={x + width / 2}
+                    y={y + height / 2}
+                    offsetX={width / 2}
+                    offsetY={height / 2}
+                    rotation={element.rotation}
+                  >
                     <Rect
                       width={width}
                       height={height}
@@ -281,8 +463,10 @@ export default function SlideCanvas({ plan }: Props) {
                     if (node) shapeRefs.current[element.id] = node;
                     else delete shapeRefs.current[element.id];
                   }}
-                  x={x}
-                  y={y}
+                  x={x + width / 2}
+                  y={y + height / 2}
+                  offsetX={width / 2}
+                  offsetY={height / 2}
                   width={width}
                   height={height}
                   rotation={element.rotation}
@@ -302,13 +486,16 @@ export default function SlideCanvas({ plan }: Props) {
                     strokeWidth={isSelected ? 2 : 1}
                   />
                   <KonvaText
-                    text={element.type === "image" ? elementLabel(element) : plainText(element)}
+                    text={element.type === "image" ? elementLabel(element) : displayText(element)}
                     width={width}
                     height={height}
                     padding={4}
                     fontSize={element.style?.size_pt ?? 14}
                     fontStyle={element.style?.bold ? "bold" : "normal"}
                     fill={element.style?.color ?? "#202124"}
+                    opacity={element.style?.opacity ?? 1}
+                    align={element.type === "image" ? "left" : konvaTextAlign(element)}
+                    verticalAlign={element.type === "image" ? "top" : konvaVerticalAlign(element)}
                     wrap="word"
                     listening={false}
                   />
@@ -317,7 +504,11 @@ export default function SlideCanvas({ plan }: Props) {
             })}
             <Transformer
               ref={transformerRef}
-              rotateEnabled
+              rotateEnabled={
+                !isFurnitureSlideSelected ||
+                !selectedElement ||
+                furnitureElementSupportsRotation(selectedElement.id)
+              }
               boundBoxFunc={(oldBox, newBox) =>
                 newBox.width < 5 || newBox.height < 5 ? oldBox : newBox
               }

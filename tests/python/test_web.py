@@ -192,6 +192,179 @@ def test_patch_element_invalid_value_is_422_and_file_unchanged(client, project_d
     assert presentation_path.read_text() == original
 
 
+# --- furniture pseudo-slide (issue #21) ---------------------------------
+
+
+def test_get_furniture_empty_when_nothing_configured(client):
+    response = client.get("/api/furniture")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "__furniture__"
+    assert body["elements"] == []
+
+
+def test_patch_furniture_element_not_configured_is_422(client):
+    response = client.patch(
+        "/api/furniture/elements/__furniture_branding",
+        json={"box": {"x": 1, "y": 1, "width": 2, "height": 0.5}},
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "E_PATH_NOT_FOUND"
+
+
+def test_patch_furniture_element_background_is_422(client):
+    response = client.patch(
+        "/api/furniture/elements/__furniture_background",
+        json={"box": {"x": 0, "y": 0, "width": 1, "height": 1}},
+    )
+    assert response.status_code == 422
+
+
+def test_add_patch_and_remove_branding_furniture(client, project_dir):
+    design_path = project_dir / "design.yaml"
+
+    add_response = client.post("/api/furniture/elements/__furniture_branding")
+    assert add_response.status_code == 200
+    on_disk = yaml.safe_load(design_path.read_text())
+    assert on_disk["furniture"]["branding"] is not None
+
+    # A second add is a conflict, not a silent overwrite.
+    conflict_response = client.post("/api/furniture/elements/__furniture_branding")
+    assert conflict_response.status_code == 422
+
+    plan_response = client.get("/api/furniture")
+    elements = plan_response.json()["elements"]
+    assert any(el["id"] == "__furniture_branding" for el in elements)
+
+    patch_response = client.patch(
+        "/api/furniture/elements/__furniture_branding",
+        json={"box": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 0.5}, "value": "Acme Corp"},
+    )
+    assert patch_response.status_code == 200
+    on_disk = yaml.safe_load(design_path.read_text())
+    branding = on_disk["furniture"]["branding"]
+    assert branding["box"]["x"] == "1.0in"
+    assert branding["text"] == "Acme Corp"
+
+    # branding has no rotation/z_index field in the schema -- either is a
+    # hard reject, not a silent no-op.
+    rotation_response = client.patch(
+        "/api/furniture/elements/__furniture_branding", json={"rotation": 10}
+    )
+    assert rotation_response.status_code == 422
+    z_index_response = client.patch(
+        "/api/furniture/elements/__furniture_branding", json={"z_index": 5}
+    )
+    assert z_index_response.status_code == 422
+
+    remove_response = client.delete("/api/furniture/elements/__furniture_branding")
+    assert remove_response.status_code == 200
+    on_disk = yaml.safe_load(design_path.read_text())
+    assert on_disk["furniture"]["branding"] is None
+
+    plan_response = client.get("/api/furniture")
+    assert plan_response.json()["elements"] == []
+
+
+def test_add_and_patch_page_number_furniture(client, project_dir):
+    design_path = project_dir / "design.yaml"
+
+    add_response = client.post("/api/furniture/elements/__furniture_page_number")
+    assert add_response.status_code == 200
+
+    patch_response = client.patch(
+        "/api/furniture/elements/__furniture_page_number",
+        json={"box": {"x": 0.5, "y": 0.5, "width": 1.0, "height": 0.3}},
+    )
+    assert patch_response.status_code == 200
+    on_disk = yaml.safe_load(design_path.read_text())
+    assert on_disk["furniture"]["page_number"]["box"]["x"] == "0.5in"
+
+    # page_number.format isn't editable through `value` -- Config-tab only.
+    value_response = client.patch(
+        "/api/furniture/elements/__furniture_page_number", json={"value": "p. {page}"}
+    )
+    assert value_response.status_code == 422
+
+
+def test_status_furniture_requires_status_indicator_selected(client, project_dir):
+    add_response = client.post("/api/furniture/elements/__furniture_status")
+    assert add_response.status_code == 422
+
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["status_indicator"] = "corner-br"
+    data["watermark"] = "DRAFT"
+    put_response = client.put("/api/config/presentation", json=data)
+    assert put_response.status_code == 200
+
+    add_response = client.post("/api/furniture/elements/__furniture_status")
+    assert add_response.status_code == 200
+
+    plan_response = client.get("/api/furniture")
+    status_element = next(
+        el for el in plan_response.json()["elements"] if el["id"] == "__furniture_status"
+    )
+    assert status_element["value"] == "DRAFT"
+
+    patch_response = client.patch(
+        "/api/furniture/elements/__furniture_status",
+        json={"rotation": 12, "z_index": 250},
+    )
+    assert patch_response.status_code == 200
+    design_path = project_dir / "design.yaml"
+    on_disk = yaml.safe_load(design_path.read_text())
+    corner_br = on_disk["furniture"]["status"]["corner_br"]
+    assert corner_br["rotation"] == 12
+    assert corner_br["z_index"] == 250
+
+    remove_response = client.delete("/api/furniture/elements/__furniture_status")
+    assert remove_response.status_code == 200
+    on_disk = yaml.safe_load(design_path.read_text())
+    assert on_disk["furniture"]["status"]["corner_br"] is None
+
+
+def test_get_furniture_is_lenient_when_status_indicator_points_at_an_unconfigured_placement(
+    client, project_dir
+):
+    # Regression: a real user hit this exact scenario -- picking a new
+    # status_indicator placement in Deck Options before design.yaml has
+    # a style for it. Before this fix, GET /api/furniture raised the
+    # same ContentValidationError GET /api/plan does, which left
+    # FurnitureControls with nothing to render and no way to reach its
+    # own "Add" fix -- the one screen meant to recover from this got
+    # stuck too. `furniture.branding` is configured first specifically
+    # to confirm a failing status placement doesn't take unrelated,
+    # already-configured furniture down with it.
+    add_response = client.post("/api/furniture/elements/__furniture_branding")
+    assert add_response.status_code == 200
+
+    presentation_path = project_dir / "presentation.yaml"
+    data = yaml.safe_load(presentation_path.read_text())
+    data["status_indicator"] = "corner-tl"
+    data["watermark"] = "DRAFT"
+    put_response = client.put("/api/config/presentation", json=data)
+    assert put_response.status_code == 200
+
+    # GET /api/plan (real-slide rendering) stays strict -- unchanged.
+    plan_response = client.get("/api/plan")
+    assert plan_response.status_code == 422
+
+    # GET /api/furniture degrades gracefully: 200, __furniture_status is
+    # simply absent, and __furniture_branding still comes through.
+    furniture_response = client.get("/api/furniture")
+    assert furniture_response.status_code == 200
+    element_ids = {el["id"] for el in furniture_response.json()["elements"]}
+    assert "__furniture_status" not in element_ids
+    assert "__furniture_branding" in element_ids
+
+
+def test_furniture_element_unknown_id_is_404(client):
+    assert client.patch("/api/furniture/elements/nope", json={}).status_code == 404
+    assert client.post("/api/furniture/elements/nope").status_code == 404
+    assert client.delete("/api/furniture/elements/nope").status_code == 404
+
+
 # --- build job lifecycle ----------------------------------------------
 
 

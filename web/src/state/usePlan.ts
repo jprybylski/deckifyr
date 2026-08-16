@@ -11,11 +11,25 @@
  * its own `/api/plan` request.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, getConfig, getPlan, patchElement } from "../api/client";
+import {
+  ApiError,
+  getConfig,
+  getFurniture,
+  getPlan,
+  patchElement,
+  patchFurnitureElement,
+} from "../api/client";
 import { boxToInches, parseInchesString } from "../geometry";
 import type { ElementPatchBody, ResolvedElement, ResolvedSlide } from "../types";
 import { useAppContext } from "./AppContext";
 import type { HistoryEntry } from "./reducer";
+
+/** The synthetic slide id `GET /api/furniture` returns (issue #21) --
+ * matches `deckifyr.web.app`'s own `FURNITURE_SLIDE_ID` constant. Not a
+ * real `presentation.yaml` slide, so every consumer that keys off
+ * `selectedSlideId` needs to special-case it rather than looking it up
+ * in `slides`. */
+export const FURNITURE_SLIDE_ID = "__furniture__";
 
 export interface DesignSlideSize {
   widthIn: number;
@@ -33,6 +47,18 @@ function readSlideSize(designDoc: Record<string, unknown>): DesignSlideSize {
   return { widthIn: parseInchesString(width), heightIn: parseInchesString(height) };
 }
 
+/** Routes an element patch to the right endpoint -- `FURNITURE_SLIDE_ID`
+ * goes to the furniture routes (`design.yaml`), anything else to the
+ * ordinary per-slide element route (`presentation.yaml`) -- so
+ * `applyElementPatch`/`undo`/`redo` all work identically for both
+ * without the caller (`SlideCanvas`/`ElementInspector`) needing to know
+ * which backend a given slide id actually maps to. */
+function sendPatch(slideId: string, elementId: string, patch: ElementPatchBody) {
+  return slideId === FURNITURE_SLIDE_ID
+    ? patchFurnitureElement(elementId, patch)
+    : patchElement(slideId, elementId, patch);
+}
+
 export function findElement(
   slide: ResolvedSlide | undefined,
   elementId: string | null
@@ -43,6 +69,12 @@ export function findElement(
 
 export interface UsePlanResult {
   slides: ResolvedSlide[] | null;
+  /** `design.yaml`'s `furniture` block, resolved the same way a real
+   * slide's elements are (issue #21) -- kept separate from `slides`
+   * rather than prepended into it, so every existing `slides.length`/
+   * `slides.map` consumer (slide numbering, Toolbar, ...) is unaffected.
+   * `null` while loading, same as `slides`/`slideSize`. */
+  furnitureSlide: ResolvedSlide | null;
   slideSize: DesignSlideSize | null;
   loading: boolean;
   error: string | null;
@@ -68,21 +100,45 @@ export interface UsePlanResult {
 export function usePlan(): UsePlanResult {
   const { state, dispatch } = useAppContext();
   const [slides, setSlides] = useState<ResolvedSlide[] | null>(null);
+  const [furnitureSlide, setFurnitureSlide] = useState<ResolvedSlide | null>(null);
   const [slideSize, setSlideSize] = useState<DesignSlideSize | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    try {
-      const [plan, design] = await Promise.all([getPlan(), getConfig("design")]);
-      setSlides(plan.slides);
-      setSlideSize(readSlideSize(design));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
+    // `Promise.allSettled`, not `Promise.all` -- these three are
+    // independently useful and must not take each other down. Real
+    // scenario this fixes: `presentation.yaml`'s `status_indicator`
+    // pointing at a placement `design.yaml` hasn't configured a style
+    // for yet makes `GET /api/plan` (real-slide rendering, deliberately
+    // strict) fail -- but `GET /api/furniture` is deliberately lenient
+    // about exactly that case (`furniture_lenient=True`, `plan.py`'s own
+    // docstring) specifically so the furniture pseudo-slide's own "Add"
+    // fix stays reachable. A single `Promise.all` would still fail the
+    // whole refetch even though `getFurniture()` itself succeeded,
+    // leaving `furnitureSlide` stuck on stale data and the fix
+    // unreachable -- exactly the trap this replaces.
+    const [planResult, designResult, furnitureResult] = await Promise.allSettled([
+      getPlan(),
+      getConfig("design"),
+      getFurniture(),
+    ]);
+
+    if (planResult.status === "fulfilled") setSlides(planResult.value.slides);
+    if (designResult.status === "fulfilled") setSlideSize(readSlideSize(designResult.value));
+    if (furnitureResult.status === "fulfilled") setFurnitureSlide(furnitureResult.value);
+
+    const rejected = [planResult, designResult, furnitureResult].find(
+      (r): r is PromiseRejectedResult => r.status === "rejected"
+    );
+    setError(
+      rejected
+        ? rejected.reason instanceof ApiError
+          ? rejected.reason.message
+          : String(rejected.reason)
+        : null
+    );
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -104,7 +160,7 @@ export function usePlan(): UsePlanResult {
       inverse: ElementPatchBody,
       label: string
     ) => {
-      await patchElement(slideId, elementId, patch);
+      await sendPatch(slideId, elementId, patch);
       const entry: HistoryEntry = { slideId, elementId, patch, inverse, label };
       dispatch({ type: "PUSH_HISTORY", entry });
       await refetch();
@@ -115,7 +171,7 @@ export function usePlan(): UsePlanResult {
   const undo = useCallback(async () => {
     const entry = state.past[state.past.length - 1];
     if (!entry) return;
-    await patchElement(entry.slideId, entry.elementId, entry.inverse);
+    await sendPatch(entry.slideId, entry.elementId, entry.inverse);
     dispatch({ type: "UNDO" });
     await refetch();
   }, [state.past, dispatch, refetch]);
@@ -123,13 +179,14 @@ export function usePlan(): UsePlanResult {
   const redo = useCallback(async () => {
     const entry = state.future[0];
     if (!entry) return;
-    await patchElement(entry.slideId, entry.elementId, entry.patch);
+    await sendPatch(entry.slideId, entry.elementId, entry.patch);
     dispatch({ type: "REDO" });
     await refetch();
   }, [state.future, dispatch, refetch]);
 
   return {
     slides,
+    furnitureSlide,
     slideSize,
     loading,
     error,

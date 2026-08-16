@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AppProvider } from "./state/AppContext";
+import { AppProvider, useAppContext } from "./state/AppContext";
 import { usePlan } from "./state/usePlan";
 import { ApiError, getHealth, getProject } from "./api/client";
 import type { Launcher } from "./types";
@@ -8,6 +8,7 @@ import SlideList from "./components/SlideList";
 import ElementInspector from "./components/ElementInspector";
 import Toolbar from "./components/Toolbar";
 import DeckOptions from "./components/DeckOptions";
+import FurnitureControls from "./components/FurnitureControls";
 import ConfigEditor from "./components/ConfigEditor";
 import BuildPanel from "./components/BuildPanel";
 import "./App.css";
@@ -21,10 +22,14 @@ function EditorTab() {
   // each firing its own `/api/plan` request -- see `state/usePlan.ts`'s
   // own module docstring for the fuller rationale.
   const plan = usePlan();
+  const { state } = useAppContext();
+  const isFurnitureSlideSelected =
+    plan.furnitureSlide !== null && state.selectedSlideId === plan.furnitureSlide.id;
   return (
     <div className="editor-layout">
       <Toolbar plan={plan} />
-      <DeckOptions />
+      <DeckOptions onSaved={plan.refetch} />
+      {isFurnitureSlideSelected && <FurnitureControls plan={plan} />}
       <div className="editor-layout__body">
         <SlideList plan={plan} />
         <SlideCanvas plan={plan} />
