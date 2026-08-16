@@ -57,6 +57,17 @@ export interface AppState {
    * reload, and a hidden id that no longer exists (e.g. after Remove)
    * is simply inert. */
   hiddenFurnitureIds: string[];
+  /** Whether the server's in-memory working copy (issue #24's deferred-
+   * save editor) currently differs from what's on disk. Lives here, not
+   * in `usePlan`'s own local state, specifically because it must survive
+   * switching away from the Editor tab -- `EditorTab`/`usePlan()` unmount
+   * on every tab change (`App.tsx`), but config edits made from the
+   * Config tab need to keep the header's Save button/close-warning live
+   * too. Every mutating fetch (`usePlan`'s `applyElementPatch`/`undo`/
+   * `redo`, `ConfigEditor`'s Apply, `DeckOptions`, `FurnitureControls`)
+   * dispatches `SET_DIRTY` with the `dirty` field its own response
+   * already carries -- no separate polling loop. */
+  dirty: boolean;
 }
 
 export const initialAppState: AppState = {
@@ -67,6 +78,7 @@ export const initialAppState: AppState = {
   future: [],
   showFurniture: false,
   hiddenFurnitureIds: [],
+  dirty: false,
 };
 
 export type AppAction =
@@ -77,7 +89,8 @@ export type AppAction =
   | { type: "UNDO" }
   | { type: "REDO" }
   | { type: "SET_SHOW_FURNITURE"; show: boolean }
-  | { type: "TOGGLE_FURNITURE_HIDDEN"; elementId: string };
+  | { type: "TOGGLE_FURNITURE_HIDDEN"; elementId: string }
+  | { type: "SET_DIRTY"; dirty: boolean };
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -121,6 +134,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "SET_SHOW_FURNITURE":
       return { ...state, showFurniture: action.show };
+
+    case "SET_DIRTY":
+      return { ...state, dirty: action.dirty };
 
     case "TOGGLE_FURNITURE_HIDDEN":
       return {

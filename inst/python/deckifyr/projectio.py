@@ -68,7 +68,12 @@ def _check_boxes(
 
 
 def load_project(
-    presentation_path: Path, *, strict: bool
+    presentation_path: Path,
+    *,
+    strict: bool,
+    presentation_data: dict[str, Any] | None = None,
+    design_data: dict[str, Any] | None = None,
+    layouts_data: dict[str, Any] | None = None,
 ) -> tuple[PresentationDocument, DesignDocument, LayoutsDocument]:
     """Load and validate design.yaml + layouts.yaml + presentation.yaml.
 
@@ -77,34 +82,48 @@ def load_project(
     validation") -- it does not merge layouts onto slides, resolve
     content, or expand a build plan (spec section 6's pass 1/2); that's
     `deckifyr.plan.expand_presentation`.
-    """
-    if not presentation_path.is_file():
-        raise DeckifyrError(
-            f"presentation file not found: {presentation_path}", code=ErrorCode.IO
-        )
 
-    try:
-        presentation_data = yaml.safe_load(presentation_path.read_text())
-        presentation = PresentationDocument.model_validate(presentation_data)
-    except PydanticValidationError as exc:
-        raise DeckifyrError(
-            format_pydantic_error(exc, str(presentation_path)),
-            code=ErrorCode.SCHEMA_VALIDATION,
-        ) from exc
+    `presentation_data`/`design_data`/`layouts_data` are optional raw-dict
+    overrides: when given, that document is validated directly instead of
+    being re-read from disk (its on-disk `is_file()`/`read_text()` step is
+    skipped entirely). This is what lets `deckifyr.web.app` resolve its
+    in-memory working copy through this same function -- the sole plan/
+    validation engine -- instead of duplicating any of this logic against
+    already-parsed dicts.
+    """
+    if presentation_data is not None:
+        try:
+            presentation = PresentationDocument.model_validate(presentation_data)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                format_pydantic_error(exc, str(presentation_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+    else:
+        if not presentation_path.is_file():
+            raise DeckifyrError(
+                f"presentation file not found: {presentation_path}", code=ErrorCode.IO
+            )
+        try:
+            presentation_data = yaml.safe_load(presentation_path.read_text())
+            presentation = PresentationDocument.model_validate(presentation_data)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                format_pydantic_error(exc, str(presentation_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
 
     base_dir = presentation_path.parent
     design_path = base_dir / presentation.design.base
     layouts_path = base_dir / presentation.layouts
 
-    if not design_path.is_file():
-        raise DeckifyrError(f"design file not found: {design_path}", code=ErrorCode.IO)
-    if not layouts_path.is_file():
-        raise DeckifyrError(
-            f"layouts file not found: {layouts_path}", code=ErrorCode.IO
-        )
+    if design_data is None:
+        if not design_path.is_file():
+            raise DeckifyrError(f"design file not found: {design_path}", code=ErrorCode.IO)
+        design_data = yaml.safe_load(design_path.read_text())
 
     try:
-        design = DesignDocument.model_validate(yaml.safe_load(design_path.read_text()))
+        design = DesignDocument.model_validate(design_data)
     except PydanticValidationError as exc:
         raise DeckifyrError(
             format_pydantic_error(exc, str(design_path)),
@@ -126,10 +145,15 @@ def load_project(
         update={"colors": resolve_color_tokens(design.colors)}
     )
 
+    if layouts_data is None:
+        if not layouts_path.is_file():
+            raise DeckifyrError(
+                f"layouts file not found: {layouts_path}", code=ErrorCode.IO
+            )
+        layouts_data = yaml.safe_load(layouts_path.read_text())
+
     try:
-        layouts = LayoutsDocument.model_validate(
-            yaml.safe_load(layouts_path.read_text())
-        )
+        layouts = LayoutsDocument.model_validate(layouts_data)
     except PydanticValidationError as exc:
         raise DeckifyrError(
             format_pydantic_error(exc, str(layouts_path)),
@@ -197,14 +221,16 @@ def load_presentation_raw(path: Path) -> dict[str, Any]:
     return data
 
 
-def validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
-    """Shared tail of every `slide` mutation and a `set` targeting a
-    presentation.yaml: validate the edited dict against
-    `PresentationDocument`, best-effort cross-check any `slide.layout`
-    against a readable sibling `layouts.yaml` (mirroring `load_project`'s
-    own check, so an edit can't silently introduce a dangling layout
-    reference), and only then write -- never on a document that would
-    fail its own schema.
+def validate_presentation_data(path: Path, data: dict) -> PresentationDocument:
+    """Pure validation, no I/O beyond a best-effort read of a sibling
+    `layouts.yaml`: validate `data` against `PresentationDocument`, then
+    best-effort cross-check any `slide.layout` against that sibling
+    (mirroring `load_project`'s own check, so an edit can't silently
+    introduce a dangling layout reference). Shared by
+    `validate_and_write_presentation` (the disk-writing CLI path) and
+    `deckifyr.web.app`'s in-memory working-copy mutation path, which
+    validates the same way but assigns into memory instead of writing --
+    neither path should silently diverge on what counts as valid.
     """
     try:
         presentation = PresentationDocument.model_validate(data)
@@ -229,6 +255,15 @@ def validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
                         code=ErrorCode.REFERENCE_NOT_FOUND,
                     )
 
+    return presentation
+
+
+def validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
+    """Shared tail of every `slide` mutation and a `set` targeting a
+    presentation.yaml: validate (`validate_presentation_data`) and only
+    then write -- never on a document that would fail its own schema.
+    """
+    presentation = validate_presentation_data(path, data)
     write_yaml(path, data)
     return {"presentation": str(path), "slide_count": len(presentation.slides)}
 

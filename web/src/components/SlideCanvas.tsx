@@ -376,7 +376,9 @@ export default function SlideCanvas({ plan }: Props) {
     <div className="slide-canvas">
       {isFurnitureSlideSelected && plan.error && (
         <div className="slide-canvas__warning" role="alert">
-          Real slides currently fail to render: {plan.error}
+          Real slides currently fail to render: {plan.error} -- use the
+          Furniture panel above to Add the missing placement, or change
+          Status indicator in Deck Options.
         </div>
       )}
       {mutationError && (

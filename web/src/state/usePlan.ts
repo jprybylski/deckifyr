@@ -124,7 +124,15 @@ export function usePlan(): UsePlanResult {
       getFurniture(),
     ]);
 
-    if (planResult.status === "fulfilled") setSlides(planResult.value.slides);
+    if (planResult.status === "fulfilled") {
+      setSlides(planResult.value.slides);
+      // Seeds the shared dirty indicator from the working copy's own
+      // state -- important on a mid-session browser refresh, where a
+      // freshly-mounted `AppContext` would otherwise default back to
+      // "clean" even though unsaved edits are still sitting in the
+      // server's memory (`reducer.ts`'s own `dirty` field docstring).
+      dispatch({ type: "SET_DIRTY", dirty: planResult.value.dirty });
+    }
     if (designResult.status === "fulfilled") setSlideSize(readSlideSize(designResult.value));
     if (furnitureResult.status === "fulfilled") setFurnitureSlide(furnitureResult.value);
 
@@ -139,7 +147,7 @@ export function usePlan(): UsePlanResult {
         : null
     );
     setLoading(false);
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     refetch();

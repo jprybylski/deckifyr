@@ -11,6 +11,7 @@ import DeckOptions from "./components/DeckOptions";
 import FurnitureControls from "./components/FurnitureControls";
 import ConfigEditor from "./components/ConfigEditor";
 import BuildPanel from "./components/BuildPanel";
+import SessionControls from "./components/SessionControls";
 import "./App.css";
 
 type Tab = "editor" | "config" | "build";
@@ -65,15 +66,27 @@ type ProjectStatus =
  * back to `null`, which `NoProjectScreen` treats as "show both" rather
  * than guessing wrong.
  */
-function useProjectStatus(): ProjectStatus {
+/** `frontendWarning` rides on the same `/api/health` fetch this hook
+ * already does for `launcher` -- `deckifyr.web.app._frontend_build_
+ * warning`'s own docstring has the full "why": a real incident where a
+ * genuine source fix sat uncompiled while a live `deckifyr serve`
+ * session kept serving the old, pre-fix JS, and a browser hard-refresh
+ * alone didn't help (confusing, since `StaticFiles` really was serving
+ * fresh bytes -- just still the stale ones). Surfacing it here, in the
+ * one place every tab's header renders, means it's visible no matter
+ * which tab is open, not just on first load. */
+function useProjectStatus(): { status: ProjectStatus; frontendWarning: string | null } {
   const [status, setStatus] = useState<ProjectStatus>({ state: "checking" });
+  const [frontendWarning, setFrontendWarning] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       let launcher: Launcher | null = null;
       try {
-        launcher = (await getHealth()).launcher;
+        const health = await getHealth();
+        launcher = health.launcher;
+        if (!cancelled) setFrontendWarning(health.frontend_warning);
       } catch {
         // Handled by the /api/project try/catch below either way -- a
         // health-fetch failure just means NoProjectScreen falls back to
@@ -93,7 +106,7 @@ function useProjectStatus(): ProjectStatus {
     };
   }, []);
 
-  return status;
+  return { status, frontendWarning };
 }
 
 function NoProjectScreen({ message, launcher }: { message: string; launcher: Launcher | null }) {
@@ -148,7 +161,7 @@ function NoProjectScreen({ message, launcher }: { message: string; launcher: Lau
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("editor");
-  const projectStatus = useProjectStatus();
+  const { status: projectStatus, frontendWarning } = useProjectStatus();
 
   if (projectStatus.state === "checking") {
     return <div className="no-project no-project--checking">Loading&hellip;</div>;
@@ -160,12 +173,18 @@ export default function App() {
   return (
     <AppProvider>
       <div className="app">
+        {frontendWarning && (
+          <div className="app__frontend-warning" role="alert">
+            {frontendWarning}
+          </div>
+        )}
         <header className="app__header">
           <img src="/logo.png" alt="" className="app__logo" />
           <h1>deckifyr</h1>
           <span className="app__project-path" title={projectStatus.root}>
             {projectStatus.root}
           </span>
+          <SessionControls />
           <nav className="app__tabs">
             <button className={tab === "editor" ? "active" : ""} onClick={() => setTab("editor")}>
               Editor
