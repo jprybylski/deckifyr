@@ -1,0 +1,15 @@
+version: 2
+
+updates:
+  # pyproject.toml and uv.lock live at the repository root. The Python
+  # package source is under inst/python, but Dependabot follows manifests.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # The frontend is a separate npm project within the R package repository.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
