@@ -65,7 +65,7 @@ jobs:
           covr::to_cobertura(cov)
         shell: Rscript {0}
 
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           # Fail the job if not on a PR (i.e. a push to main), or if on a
           # PR and a token is actually configured -- on a PR with no token,
