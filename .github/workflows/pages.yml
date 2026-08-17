@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Explicit, not the workflow_run default: we want main's
           # current tip (release.yaml's own chore commit included, if it
