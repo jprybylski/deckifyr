@@ -8,8 +8,16 @@ updates:
     schedule:
       interval: "weekly"
 
-  # The frontend is a separate npm project within the R package repository.
+  # The frontend is a local-only interface whose built assets are committed.
+  # Keep vulnerability alerts, but do not open routine version-update PRs.
   - package-ecosystem: "npm"
     directory: "/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+
+  # Workflow action updates are exercised directly by the repository's CI.
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
       interval: "weekly"
