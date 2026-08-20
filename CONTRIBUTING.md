@@ -65,7 +65,8 @@ excludes).
 
 `man/figures/web-app-editor.png`/`web-app-no-project.png`/
 `web-app-furniture.png`/`web-app-layout-tab.png`/`web-app-add-slide.png`/
-`web-app-build-preview.png`/`web-app-color-swatch.png` (real screenshots
+`web-app-add-element.png`/`web-app-build-preview.png`/
+`web-app-color-swatch.png` (real screenshots
 of a running editor, used in `vignettes/articles/web-app.Rmd`) are a
 second, separate rendered-doc-asset group from the `demo-deck-*` one
 above -- the pre-commit hook flags a `web/src/` change that doesn't also
