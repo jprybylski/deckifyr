@@ -219,17 +219,26 @@ plan and lets you:
   an ordinary Build also renders a PNG per slide and keeps the PDF
   LibreOffice produces along the way, right alongside the `.pptx`.
   Trigger a full build and watch it run as a background job, or trigger
-  a **Preview** -- one, several (`e.g. 1,3`), or every slide. Preview
-  needs LibreOffice; whether it's actually installed is checked up
-  front, with an install link shown right there if it isn't, rather than
-  only surfacing as a failed-job error after you click. Both Build and
-  Preview show an animated progress bar while queued/running (the
-  backend doesn't report a real percentage, so this is honest about that
-  rather than faking one). A finished Build or Preview shows a thumbnail
-  per rendered slide -- click one to expand it (only one expands at a
-  time; click again, or click a different thumbnail, to collapse it) --
-  plus a **"Show PDF preview"** disclosure, collapsed by default so a
-  large PDF is never even fetched unless you actually ask for it:
+  a **Preview** -- one, several (`e.g. 1,3`), or every slide. Both the
+  previews checkbox and Preview need LibreOffice; whether it's actually
+  installed is checked up front, disabling whichever of the two you'd
+  otherwise click and showing an install link right there, rather than
+  only surfacing as a failed-job error after you try. If LibreOffice
+  goes missing in some other way it isn't caught up front (a mid-session
+  environment change, or a direct `deckifyr build`/`deck_build()` call
+  with `build.previews: true` outside the web editor entirely), the two
+  differ on purpose: an ordinary **Build** still succeeds -- previews
+  are skipped with a build warning instead of losing the `.pptx` you
+  actually asked for -- while an explicit **Preview** still fails
+  outright, since rendering previews is the entire point of that
+  request. Both Build and Preview show an animated progress bar while
+  queued/running (the backend doesn't report a real percentage, so this
+  is honest about that rather than faking one). A finished Build or
+  Preview shows a thumbnail per rendered slide -- click one to expand it
+  (only one expands at a time; click again, or click a different
+  thumbnail, to collapse it) -- plus a **"Show PDF preview"**
+  disclosure, collapsed by default so a large PDF is never even fetched
+  unless you actually ask for it:
 
   <div style="margin: 1rem 0;">
   <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful build with previews enabled: an editable Output path field with a Browse button, a checked 'Render slide previews' checkbox, manifest/pptx download links, five rendered slide thumbnails, and a collapsed 'Show PDF preview' disclosure below them" width="700" loading="lazy">
