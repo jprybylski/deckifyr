@@ -6,6 +6,13 @@ title: "Using the Web Editor"
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
 ```
 
+Requires the optional `web` extra (`fastapi`/`uvicorn`) to be installed
+in the Python environment `deck_serve()` calls into -- provision it with
+`uv sync --extra web` (or, against a plain Python install,
+`pip install deckifyr[web]`). `deck_serve()` reports a missing extra
+immediately, with the exact command to fix it, rather than failing
+partway into starting the server.
+
 `deck_serve()` starts a local FastAPI server backed by the same Python
 engine `deck_build()`/`deck_validate()` already call, and opens a
 React/Konva web editor against one project at a time -- the same
@@ -222,9 +229,11 @@ plan and lets you:
   a **Preview** -- one, several (`e.g. 1,3`), or every slide. Both the
   previews checkbox and Preview need LibreOffice; whether it's actually
   installed is checked up front, disabling whichever of the two you'd
-  otherwise click and showing an install link right there, rather than
-  only surfacing as a failed-job error after you try. If LibreOffice
-  goes missing in some other way it isn't caught up front (a mid-session
+  otherwise click and showing an install link right there --
+  LibreOffice's own download page,
+  https://www.libreoffice.org/download/download/ -- rather than only
+  surfacing as a failed-job error after you try. If LibreOffice goes
+  missing in some other way it isn't caught up front (a mid-session
   environment change, or a direct `deckifyr build`/`deck_build()` call
   with `build.previews: true` outside the web editor entirely), the two
   differ on purpose: an ordinary **Build** still succeeds -- previews

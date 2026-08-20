@@ -4,11 +4,12 @@
 # to match VERSION.
 #
 # Ported from ../quartifyr's own release.yaml (itself ported from
-# ../xpose.xtras). main here isn't a protected branch either (no ruleset, no
-# repo secrets configured as of this port), so this workflow just commits
-# and pushes with the default GITHUB_TOKEN, same as quartifyr's. If main is
-# ever branch-protected, quartifyr's own comment documents the
-# deploy-key/SSH mechanism to reintroduce.
+# ../xpose.xtras). main is now a protected branch (a "basic" ruleset
+# requiring changes via PR, added 2026-08-16), so the default GITHUB_TOKEN
+# can't push the metadata-sync commit/tag directly -- the deploy-key/SSH
+# push steps below go over SSH using a deploy key (`RELEASE_DEPLOY_KEY`)
+# that's on the ruleset's bypass list, same mechanism as quartifyr's and
+# xpose.xtras's own protected-branch releases.
 on:
   push:
     branches: [main]
@@ -39,6 +40,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # main is protected (requires a PR); the default GITHUB_TOKEN can't
+      # push to it directly, so the metadata commit and tag moves below go
+      # over SSH using a deploy key that's on the ruleset's bypass list.
+      - name: Load deploy key
+        if: env.DRY_RUN != 'true'
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - name: Push over SSH via the deploy key
+        if: env.DRY_RUN != 'true'
+        run: |
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+          git remote set-url origin "git@github.com:${{ github.repository }}.git"
 
       - name: Configure git identity
         run: |

@@ -23,7 +23,7 @@ plan). Everything below assumes you've skimmed it; this file covers
 what's actually built versus still spec, and the non-obvious things
 learned while building the scaffold.
 
-### Current status: early scaffold, not the compiler yet
+### Current status: every piece below is real, not a scaffold
 
 | Piece | Status |
 | --- | --- |
@@ -32,7 +32,7 @@ learned while building the scaffold.
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
 | `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
 | CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema`/`skills` (spec §11.1) | Real, tested |
-| CLI `serve` | Argument parsing is real; raises `NotImplementedFeatureError` (exit code 4) -- Phase 3 |
+| CLI `serve` | Real -- runs the FastAPI backend + React/Konva web editor, requires the optional `web` extra |
 | `deckifyr.editor` + CLI `get`/`set`/`slide` (config/slide editing, spec §11.1/§11.2, issue #10) | Real, tested |
 | `deckifyr.renderers.preview` (slide preview rendering, spec §12/§18 Phase 3) | Real, tested against a live `soffice`/PyMuPDF install -- see this file's own "Preview rendering" section below |
 | R facade (`R/*.R`) | Real, tested against a live pyro install |
