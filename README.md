@@ -89,6 +89,7 @@ uv run deckifyr preview my-deck/presentation.yaml   # + a PNG per slide (needs L
 uv run deckifyr inspect my-deck/presentation.yaml   # resolved slide plan, as JSON
 uv run deckifyr set my-deck/design.yaml colors.primary "#123456"
 uv run deckifyr slide list my-deck/presentation.yaml
+uv run deckifyr skills .claude/skills               # export coding-agent skills for authoring the YAML above
 ```
 
 ```r
@@ -98,6 +99,7 @@ deck_validate("my-deck/presentation.yaml")
 deck_build("my-deck/presentation.yaml")    # writes my-deck/build/my-deck.pptx
 deck_preview("my-deck/presentation.yaml")  # + a PNG per slide (needs LibreOffice)
 deck_set_config("my-deck/design.yaml", "colors.primary", "#123456")
+deck_export_skills(".claude/skills")       # export coding-agent skills for authoring the YAML above
 ```
 
 For a richer working example than `init`'s minimal scaffold, see

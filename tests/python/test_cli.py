@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pptx import Presentation
 
-from deckifyr.cli import EXIT_OK, EXIT_VALIDATION_ERROR, main
+from deckifyr.cli import EXIT_OK, EXIT_VALIDATION_ERROR, _SKILL_NAMES, main
 
 requires_soffice = pytest.mark.skipif(
     shutil.which("soffice") is None, reason="soffice binary not found on PATH"
@@ -169,6 +169,47 @@ def test_init_refuses_nonempty_directory_without_force(tmp_path):
     (target / "stray.txt").write_text("hi")
     exit_code = main(["--json", "init", str(target)])
     assert exit_code != EXIT_OK
+
+
+def test_skills_exports_bundled_skill_files(tmp_path, capsys):
+    target = tmp_path / "skills-target"
+    exit_code = main(["--json", "skills", str(target)])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    for name in _SKILL_NAMES:
+        assert (target / name / "SKILL.md").is_file()
+    assert len(output["created"]) == len(_SKILL_NAMES)
+
+
+def test_skills_refuses_existing_file_without_force(tmp_path):
+    target = tmp_path / "skills-target"
+    conflicting = target / _SKILL_NAMES[0] / "SKILL.md"
+    conflicting.parent.mkdir(parents=True)
+    conflicting.write_text("sentinel content")
+
+    exit_code = main(["--json", "skills", str(target)])
+    assert exit_code != EXIT_OK
+    assert conflicting.read_text() == "sentinel content"
+
+
+def test_skills_force_overwrites_existing_file(tmp_path):
+    target = tmp_path / "skills-target"
+    conflicting = target / _SKILL_NAMES[0] / "SKILL.md"
+    conflicting.parent.mkdir(parents=True)
+    conflicting.write_text("sentinel content")
+
+    exit_code = main(["--json", "skills", str(target), "--force"])
+    assert exit_code == EXIT_OK
+    assert conflicting.read_text() != "sentinel content"
+    assert "name: " + _SKILL_NAMES[0] in conflicting.read_text()
+
+
+def test_skills_defaults_to_the_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    exit_code = main(["--json", "skills"])
+    assert exit_code == EXIT_OK
+    for name in _SKILL_NAMES:
+        assert (tmp_path / name / "SKILL.md").is_file()
 
 
 def test_inspect_presentation_reports_the_resolved_plan(minimal_deck_dir, capsys):

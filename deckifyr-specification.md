@@ -786,6 +786,7 @@ deckifyr build PRESENTATION_YAML
 deckifyr preview PRESENTATION_YAML
 deckifyr inspect PRESENTATION_OR_PPTX
 deckifyr schema [design|layouts|presentation]
+deckifyr skills [DIRECTORY] [--force]
 deckifyr serve [--host HOST] [--port PORT]
 deckifyr get FILE PATH
 deckifyr set FILE PATH VALUE [--string] [--type auto|design|layouts|presentation]
@@ -817,6 +818,13 @@ Requirements:
 - Stable error codes independent of message wording.
 - No implicit network access during a build unless explicitly enabled.
 
+`skills` exports deckifyr's own bundled coding-agent skill files (issue
+#50) -- one for authoring `design.yaml`/`layouts.yaml`, one for
+authoring `presentation.yaml` -- into `<DIRECTORY>/<skill-name>/
+SKILL.md`. It doesn't assume any particular coding agent or a
+`.claude/skills/` layout; `DIRECTORY` (default: current directory) is
+entirely the caller's choice.
+
 ### 11.2 R API
 
 ```r
@@ -826,6 +834,7 @@ deck_build("presentation.yaml")
 deck_preview("presentation.yaml")
 deck_inspect("build/deck.pptx")
 deck_schema("presentation")
+deck_export_skills(directory = ".", force = FALSE)
 deck_serve()
 deck_get_config("design.yaml", "colors.primary")
 deck_set_config("design.yaml", "colors.primary", "#123456")

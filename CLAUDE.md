@@ -31,7 +31,7 @@ learned while building the scaffold.
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
 | `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
-| CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema` (spec §11.1) | Real, tested |
+| CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema`/`skills` (spec §11.1) | Real, tested |
 | CLI `serve` | Argument parsing is real; raises `NotImplementedFeatureError` (exit code 4) -- Phase 3 |
 | `deckifyr.editor` + CLI `get`/`set`/`slide` (config/slide editing, spec §11.1/§11.2, issue #10) | Real, tested |
 | `deckifyr.renderers.preview` (slide preview rendering, spec §12/§18 Phase 3) | Real, tested against a live `soffice`/PyMuPDF install -- see this file's own "Preview rendering" section below |
@@ -1335,6 +1335,44 @@ DESCRIPTION currently says). To actually bump the release version, edit
 version)" section into a new dated heading) -- never edit
 `DESCRIPTION`'s `Version:` directly, even when asked to "bump the
 patch version"; that request means `VERSION`, not `DESCRIPTION`.
+
+**Bundled coding-agent skills (CLI `skills`, R `deck_export_skills()`,
+issue #50) are real: hand-authored Claude Skills-format `SKILL.md` files
+shipped inside the package, exported to a caller-chosen directory rather
+than assumed to live under `.claude/skills/`.** Two skills ship this
+pass, matching the issue's own grouping -- `deckifyr-org-config`
+(authoring `design.yaml`/`layouts.yaml`, the org-level Style/Layout) and
+`deckifyr-presentation` (authoring `presentation.yaml`, a deck's own
+slide content) -- under `inst/python/deckifyr/skills/<skill-name>/
+SKILL.md`, shipped as package data (`pyproject.toml`'s
+`[tool.setuptools.package-data]`, the same "bundled inside the package"
+precedent `schemas/*.schema.json` (issue #49) already established) and
+therefore bundled into the R package automatically too (`inst/python` is
+bundled wholesale, no separate R-side wiring needed). `deckifyr skills
+[DIRECTORY] [--force]`/`_cmd_skills` in `cli.py` follow `_cmd_init`'s
+exact shape (`directory` positional default `.`, `--force` flag, same
+`{"directory", "created": [...]}` return) with one deliberate
+difference: it refuses only on the *exact destination files* that
+already exist (`<directory>/<skill-name>/SKILL.md`), not on the whole
+target directory being non-empty the way `_cmd_init` does -- the target
+is commonly `.claude/skills`, which may legitimately already hold other,
+unrelated skills, so treating any pre-existing sibling as a blocking
+conflict would be wrong. `R/skills.R`'s `deck_export_skills(directory =
+".", force = FALSE)` mirrors `initialize_deck_project()`'s CLI-arg-
+assembly shape, minus that function's pyro-provisioning calls (not
+applicable here -- this command touches no `pyproject.toml`/Python env).
+The skill content itself is written to stay evergreen without being
+mechanically regenerated (unlike the JSON Schema files, which really are
+derived 1:1 from a pydantic model): each `SKILL.md` points the agent at
+the *live* `deckifyr schema {design,layouts,presentation}` command and
+the bundled `inst/examples/minimal-deck/` files as the authoritative
+field reference and worked example, rather than duplicating an
+exhaustive field list that would silently drift as the schema evolves --
+`tests/python/test_skills_content.py` (mirroring
+`test_json_schema_files.py`'s framing) enforces what *is* mechanically
+checkable instead: the Skills format contract (frontmatter `name`
+matches the containing directory, non-empty `description`, non-empty
+body) for both bundled files.
 
 ## Testing strategy
 

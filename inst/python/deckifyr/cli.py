@@ -20,7 +20,13 @@ blocking until interrupted -- it requires the `web` extra
 install guidance if `fastapi`/`uvicorn` aren't importable, the same
 "tell the caller what to install, don't crash on ImportError" posture
 `deckifyr.renderers.preview`/`deckifyr.renderers.quarto` already take
-for their own external dependencies.
+for their own external dependencies. `skills` (issue #50) exports the
+package's own bundled coding-agent skill files (Claude Skills-format
+`SKILL.md`s under `deckifyr/skills/`, one for `design.yaml`/
+`layouts.yaml` authoring and one for `presentation.yaml` authoring) into
+`--directory <target>/<skill-name>/SKILL.md` (default: cwd) -- it never
+assumes a `.claude/skills/` layout; the caller picks the target
+directory, same `directory` positional + `--force` shape as `init`.
 
 `get`/`set` and the `slide` subcommand group (issue #10) round-trip a
 design/layouts/presentation YAML file through `deckifyr.editor`'s pure
@@ -91,6 +97,47 @@ def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
     for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
         source = _examples_dir() / name
         destination = target / name
+        shutil.copyfile(source, destination)
+        created.append(str(destination))
+
+    return {"directory": str(target), "created": created}
+
+
+# Bundled Claude Skills-format (SKILL.md) content (issue #50), one
+# directory per skill under inst/python/deckifyr/skills/ -- shipped as
+# package data (pyproject.toml's package-data), the same "bundled inside
+# the package" precedent inst/python/deckifyr/schemas/*.schema.json
+# already established for issue #49.
+_SKILL_NAMES = ("deckifyr-org-config", "deckifyr-presentation")
+
+
+def _skills_dir() -> Path:
+    return Path(__file__).resolve().parent / "skills"
+
+
+def _cmd_skills(args: argparse.Namespace) -> dict[str, Any]:
+    target = Path(args.directory)
+
+    # Only refuse on the exact destination files, not the whole target
+    # directory's non-emptiness (unlike _cmd_init) -- the target may be
+    # e.g. `.claude/skills`, which can legitimately already hold other,
+    # unrelated skills.
+    conflicts = [
+        str(target / name / "SKILL.md")
+        for name in _SKILL_NAMES
+        if (target / name / "SKILL.md").exists()
+    ]
+    if conflicts and not args.force:
+        raise DeckifyrError(
+            f"{', '.join(conflicts)} already exist (use --force to overwrite)",
+            code=ErrorCode.IO,
+        )
+
+    created = []
+    for name in _SKILL_NAMES:
+        source = _skills_dir() / name / "SKILL.md"
+        destination = target / name / "SKILL.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         created.append(str(destination))
 
@@ -495,6 +542,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("directory", nargs="?", default=".")
     init_parser.add_argument("--force", action="store_true")
     init_parser.set_defaults(handler=_cmd_init)
+
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help="export bundled coding-agent skill files (SKILL.md) for authoring "
+        "design/layouts/presentation YAML",
+    )
+    skills_parser.add_argument("directory", nargs="?", default=".")
+    skills_parser.add_argument("--force", action="store_true")
+    skills_parser.set_defaults(handler=_cmd_skills)
 
     def add_strict_flag(p: argparse.ArgumentParser) -> None:
         group = p.add_mutually_exclusive_group()

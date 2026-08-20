@@ -3,6 +3,7 @@
 S3method(print,deckifyr_server)
 export(deck_add_slide)
 export(deck_build)
+export(deck_export_skills)
 export(deck_get_config)
 export(deck_inspect)
 export(deck_list_slides)
