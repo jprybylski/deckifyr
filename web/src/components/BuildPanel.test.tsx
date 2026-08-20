@@ -235,11 +235,11 @@ describe("BuildPanel preview availability (issue #27)", () => {
     stubBuildPanelFetch(UNAVAILABLE);
     renderBuildPanel(false);
 
-    await screen.findByText(/isn.t installed/);
-    expect(screen.getByRole("link", { name: /Install LibreOffice/ })).toHaveAttribute(
-      "href",
-      "https://www.libreoffice.org/download/download/"
-    );
+    const warnings = await screen.findAllByText(/isn.t installed/);
+    expect(warnings.length).toBeGreaterThan(0);
+    for (const link of screen.getAllByRole("link", { name: /Install LibreOffice/ })) {
+      expect(link).toHaveAttribute("href", "https://www.libreoffice.org/download/download/");
+    }
     expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
   });
 
@@ -250,6 +250,35 @@ describe("BuildPanel preview availability (issue #27)", () => {
     await screen.findByDisplayValue("build/deck.pptx");
     expect(screen.queryByText(/isn.t installed/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Preview" })).not.toBeDisabled();
+  });
+});
+
+describe("BuildPanel previews checkbox availability (issue #32 follow-up)", () => {
+  it("disables the checkbox and shows an install warning when LibreOffice isn't available", async () => {
+    stubBuildPanelFetch(UNAVAILABLE);
+    renderBuildPanel(false);
+
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Render slide previews (PNG + PDF) with this build",
+    });
+    expect(checkbox).toBeDisabled();
+    // Two independent warnings now legitimately coexist -- one next to
+    // this checkbox, one in the standalone Preview section below.
+    const warnings = screen.getAllByRole("alert");
+    expect(warnings.some((w) => w.textContent?.startsWith("Rendering previews requires"))).toBe(
+      true
+    );
+    expect(warnings.some((w) => w.textContent?.startsWith("Preview requires"))).toBe(true);
+  });
+
+  it("leaves the checkbox enabled when LibreOffice is available", async () => {
+    stubBuildPanelFetch(AVAILABLE);
+    renderBuildPanel(false);
+
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Render slide previews (PNG + PDF) with this build",
+    });
+    expect(checkbox).not.toBeDisabled();
   });
 });
 

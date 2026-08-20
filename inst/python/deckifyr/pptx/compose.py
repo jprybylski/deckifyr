@@ -65,7 +65,7 @@ from deckifyr.resolvers import (
 )
 from deckifyr.resolvers.reportifyr import MAGIC_PREFIX
 from deckifyr.schema.design import DesignDocument
-from deckifyr.schema.errors import ContentValidationError
+from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 from deckifyr.schema.presentation import PresentationDocument
 from deckifyr.schema.units import parse_length
 
@@ -1154,15 +1154,40 @@ def compose_and_write(
     preview_paths: list[Path] = []
     preview_pdf_path: Path | None = None
     if presentation.build.previews or force_previews:
-        preview_result = render_slide_previews(
-            output_path,
-            output_path.parent / "previews",
-            config=_build_preview_config(presentation),
-            slides=preview_slides,
-            keep_pdf=keep_preview_pdf,
-        )
-        preview_paths = preview_result.image_paths
-        preview_pdf_path = preview_result.pdf_path
+        try:
+            preview_result = render_slide_previews(
+                output_path,
+                output_path.parent / "previews",
+                config=_build_preview_config(presentation),
+                slides=preview_slides,
+                keep_pdf=keep_preview_pdf,
+            )
+            preview_paths = preview_result.image_paths
+            preview_pdf_path = preview_result.pdf_path
+        except MissingDependencyError as exc:
+            # `force_previews` (`deckifyr preview`, or the web editor's
+            # own Preview button) is an explicit ask to render previews
+            # -- a missing LibreOffice there is the whole request
+            # failing, so it still propagates as a hard error, same as
+            # before. `build.previews: true` is opportunistic: it rides
+            # along on an ordinary `deckifyr build`/`POST /api/build`
+            # whose actual deliverable is the `.pptx` `prs.save(...)`
+            # above already wrote to disk successfully by this point --
+            # losing that (and the manifest, which is written further
+            # below and would otherwise never happen either) over a
+            # missing *optional* rendering dependency is a worse outcome
+            # than a build that succeeds with a warning. Confirmed this
+            # was a real gap, not hypothetical: the web editor's own
+            # "Render slide previews" checkbox (issue #32) made this
+            # exact case trivially reachable -- previously reaching it
+            # meant hand-editing `build.previews: true` into
+            # presentation.yaml.
+            if force_previews:
+                raise
+            warnings.append(
+                "build.previews is enabled but rendering slide previews was "
+                f"skipped: {exc}"
+            )
 
     manifest = {
         "deckifyr_version": DECKIFYR_VERSION,

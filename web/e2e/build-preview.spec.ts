@@ -55,11 +55,16 @@ test("shows an install link and disables Preview when LibreOffice isn't availabl
   await page.getByRole("button", { name: "Build" }).click();
 
   const panel = page.locator(".build-panel");
-  await expect(panel.getByText(/isn.t installed/)).toBeVisible();
-  await expect(panel.getByRole("link", { name: /Install LibreOffice/ })).toHaveAttribute(
-    "href",
-    "https://www.libreoffice.org/download/download/"
-  );
+  // Two independent warnings now legitimately coexist (issue #32
+  // follow-up): one next to the "Render slide previews" checkbox, one
+  // in the standalone Preview section below.
+  await expect(panel.getByText(/isn.t installed/)).toHaveCount(2);
+  for (const link of await panel.getByRole("link", { name: /Install LibreOffice/ }).all()) {
+    await expect(link).toHaveAttribute("href", "https://www.libreoffice.org/download/download/");
+  }
+  await expect(
+    panel.getByRole("checkbox", { name: "Render slide previews (PNG + PDF) with this build" })
+  ).toBeDisabled();
   await expect(panel.getByRole("button", { name: "Preview" })).toBeDisabled();
 });
 

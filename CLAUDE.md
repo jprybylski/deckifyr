@@ -1023,6 +1023,46 @@ confirmed against a real test failure that the HTML spec fires
 would make the very next render (in real usage, not just tests) lag one
 tick behind the visible native open/close for no benefit here.
 
+**The "Render slide previews" checkbox shipped without the same
+missing-LibreOffice guard the Preview button already had -- a real gap,
+caught by a user question right after issue #32 landed, not by any test
+in the suite that shipped with it.** `build.previews` existed in the
+schema well before the checkbox did, but only this checkbox made
+"enable it with no LibreOffice installed" reachable in one click instead
+of requiring a hand-edit of `presentation.yaml`. Two independent fixes,
+both confirmed against a real `deckifyr serve`/`deckifyr build` with
+`soffice` genuinely hidden from `PATH` (not just mocked): first,
+`BuildPanel.tsx`'s checkbox now shares the same `availability`/
+`previewUnavailable` state (`GET /api/preview/availability`) the Preview
+button already used, disabling itself and showing the same
+`AvailabilityWarning` component (extracted from what was previously the
+Preview section's own inline warning, now used in both places with a
+different `subject` string) rather than only failing after a real Build
+attempt. Second, as defense in depth for whatever that proactive check
+doesn't cover (a stale fetch, or a direct `deckifyr build` with
+`build.previews: true` and no web UI in front of it at all) --
+`deckifyr.pptx.compose.compose_and_write` now catches a
+`MissingDependencyError` from `render_slide_previews` and downgrades it
+to a plain string appended to the build's own `warnings` list *only*
+when triggered by `build.previews` (opportunistic); `force_previews`
+(`deckifyr preview`, and the web editor's own Preview button under the
+hood) still re-raises it as a hard failure, since that command's entire
+purpose is rendering previews -- there's no sensible "succeeded anyway"
+outcome for an explicit ask. This mattered because `prs.save(...)`
+(the `.pptx` itself) and the manifest write both happen around the
+preview-render call in `compose_and_write` -- before this fix, a build
+with `build.previews: true` and no LibreOffice lost the `.pptx` file
+outright from the job's own artifact list (the file was actually
+written to disk, `compose_and_write` just never returned a `BuildResult`
+naming it, since the `MissingDependencyError` propagated past the
+`prs.save(...)` that had already happened), reporting the whole job
+"failed" over what should be, at most, a warning. Confirmed the fix
+doesn't regress `deckifyr preview`'s own hard-failure contract via
+`test_preview_command_missing_libreoffice_still_raises`
+(`tests/python/test_pptx.py`), alongside
+`test_build_previews_missing_libreoffice_downgrades_to_a_warning` for
+the opportunistic case.
+
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found
 via a live user report, not caught by this repo's own mocked test

@@ -29,6 +29,19 @@
  * `_cmd_build`), and `PreviewGallery` -- shared by both the Build
  * section's own results and the Preview section below -- replacing the
  * inline images-grid/iframe blocks that used to live only in the latter.
+ * The checkbox is disabled (with the same `AvailabilityWarning` the
+ * Preview button already showed) whenever `GET /api/preview/availability`
+ * reports LibreOffice is missing -- a real, initially-shipped gap this
+ * fixes: `build.previews` existed in the schema long before this
+ * checkbox did, but only this checkbox made "check it with no LibreOffice
+ * installed" a one-click mistake instead of something only reachable by
+ * hand-editing YAML. As defense in depth for whatever this proactive
+ * check doesn't catch (a stale `availability` fetch, a direct CLI build
+ * with `build.previews: true` and no web UI in front of it at all),
+ * `deckifyr.pptx.compose.compose_and_write` itself now downgrades a
+ * missing-LibreOffice failure to a build warning rather than losing the
+ * whole build over an opportunistic feature -- see that function's own
+ * comment.
  */
 import { useEffect, useState } from "react";
 import {
@@ -58,6 +71,31 @@ function ProgressBar({ status }: { status: JobStatus | "idle" }) {
     <div className="build-panel__progress" role="progressbar" aria-label={`${status}…`}>
       <div className="build-panel__progress-bar" />
     </div>
+  );
+}
+
+/** Shown wherever a LibreOffice-dependent action is offered while
+ * `GET /api/preview/availability` reports it's missing -- issue #27's
+ * Preview button originally had the only copy of this message; issue
+ * #32's own "Render slide previews" checkbox reuses it verbatim rather
+ * than a second, differently-worded warning, since it's the same
+ * proactive-disable pattern for the same underlying dependency. */
+function AvailabilityWarning({
+  availability,
+  subject,
+}: {
+  availability: PreviewAvailability;
+  subject: string;
+}) {
+  return (
+    <p className="build-panel__availability-warning" role="alert">
+      {subject} requires {availability.display_name}, which isn&rsquo;t installed.{" "}
+      {availability.install_url && (
+        <a href={availability.install_url} target="_blank" rel="noreferrer">
+          Install {availability.display_name}
+        </a>
+      )}
+    </p>
   );
 }
 
@@ -265,11 +303,14 @@ export default function BuildPanel() {
         <input
           type="checkbox"
           checked={previewsEnabled}
-          disabled={outputSaving || !outputDoc}
+          disabled={outputSaving || !outputDoc || previewUnavailable}
           onChange={(e) => void handlePreviewsChange(e.target.checked)}
         />
         Render slide previews (PNG + PDF) with this build
       </label>
+      {availability && previewUnavailable && (
+        <AvailabilityWarning availability={availability} subject="Rendering previews" />
+      )}
 
       <button
         type="button"
@@ -329,14 +370,7 @@ export default function BuildPanel() {
       <div className="build-panel__preview">
         <h3>Preview</h3>
         {availability && previewUnavailable && (
-          <p className="build-panel__availability-warning" role="alert">
-            Preview requires {availability.display_name}, which isn&rsquo;t installed.{" "}
-            {availability.install_url && (
-              <a href={availability.install_url} target="_blank" rel="noreferrer">
-                Install {availability.display_name}
-              </a>
-            )}
-          </p>
+          <AvailabilityWarning availability={availability} subject="Preview" />
         )}
         <label>
           Slides to preview
