@@ -91,7 +91,24 @@ staged=$(git diff --cached --name-only --diff-filter=ACMR)
 # contradicted that block's own comment claiming it "always blocks" --
 # never actually true whenever a developer had SKIP_DOCS_ASSET_CHECK set
 # for an unrelated demo-deck edit.
+#
+# The demo-deck/screenshot reminder *detection* runs here, early, so it
+# doesn't depend on anything the web test-and-rebuild block below might
+# stage -- but the actual echo/exit for it is deferred to the very end
+# of the script (see "found" below), printed *after* that block's own
+# vitest/Playwright/build output instead of before it. Tried printing it
+# here first (the obvious order) and confirmed by hand that it's a real
+# usability trap: vitest alone runs ~150 tests and Playwright's `uv run
+# deckifyr serve` webServer logs every request, so an early reminder
+# scrolls off well before the commit actually gets rejected, and it's
+# easy to misread the final failure as coming from the test/build step
+# that happened to run last instead of this one -- the exact "stale
+# screenshots keep landing anyway" pattern issue #33 was filed over,
+# now compounded by issue #41's own fix adding a wall of test output in
+# between. Printing this reminder last -- as the actual final thing on
+# screen before the hook exits -- is the fix, not a bigger detector.
 found=0
+screenshot_reminder=""
 
 if [ -z "$SKIP_DOCS_ASSET_CHECK" ]; then
   assets_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/demo-deck(-[a-z-]+\.png|\.pptx)$')
@@ -101,8 +118,9 @@ if [ -z "$SKIP_DOCS_ASSET_CHECK" ]; then
     pattern="$2"
     [ "$assets_touched" -gt 0 ] && return
     if printf '%s\n' "$staged" | grep -qE "$pattern"; then
-      echo "pre-commit reminder: staged changes touch a source for $label" >&2
-      echo "  (man/figures/demo-deck-*.png and demo-deck.pptx may now be stale -- see this hook's own header for the regeneration recipe)" >&2
+      screenshot_reminder="${screenshot_reminder}pre-commit reminder: staged changes touch a source for $label
+  (man/figures/demo-deck-*.png and demo-deck.pptx may now be stale -- see this hook's own header for the regeneration recipe)
+"
       found=1
     fi
   }
@@ -119,8 +137,9 @@ if [ -z "$SKIP_DOCS_ASSET_CHECK" ]; then
   # reminder about this unrelated pair of web-editor screenshots).
   web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture|layout-tab|add-slide|build-preview|color-swatch)\.png$')
   if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^web/src/'; then
-    echo "pre-commit reminder: staged changes touch the web editor's frontend source" >&2
-    echo "  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png/web-app-layout-tab.png/web-app-add-slide.png/web-app-build-preview.png/web-app-color-swatch.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)" >&2
+    screenshot_reminder="${screenshot_reminder}pre-commit reminder: staged changes touch the web editor's frontend source
+  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png/web-app-layout-tab.png/web-app-add-slide.png/web-app-build-preview.png/web-app-color-swatch.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)
+"
     found=1
   fi
 fi
@@ -188,9 +207,12 @@ fi
 
 if [ "$found" = "1" ]; then
   echo "" >&2
+  echo "==================================================================" >&2
+  printf '%s' "$screenshot_reminder" >&2
   echo "If the change is purely cosmetic (comments, refactors with identical" >&2
   echo "composed output), commit anyway with SKIP_DOCS_ASSET_CHECK=1 git commit ..." >&2
   echo "or git commit --no-verify." >&2
+  echo "==================================================================" >&2
   exit 1
 fi
 
