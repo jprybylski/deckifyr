@@ -79,13 +79,92 @@ Prints the pydantic model's `model_json_schema()` for the given
 document type -- useful for editor autocomplete/validation on the YAML
 files themselves.
 
-### Not implemented yet
+### `preview`: render slide PNGs
 
-`preview`, `inspect`, and `serve` all parse their arguments fully but
-raise `NotImplementedFeatureError` (exit code `4`) rather than silently
-doing nothing -- the slide-preview renderer, the `.pptx`/presentation
-inspector, and the local web application are later-phase work (see
-`deckifyr-specification.md` section 18).
+```bash
+uv run deckifyr preview my-deck/presentation.yaml [--slides 1,3]
+```
+
+Renders each slide to a standalone PNG via LibreOffice
+(`soffice --headless --convert-to pdf`) + PyMuPDF rasterization --
+requires `soffice` on `PATH`; fails with a structured
+`E_MISSING_DEPENDENCY` error naming where to get it
+(https://www.libreoffice.org/download/download/) if it isn't found.
+`--slides` restricts rendering to specific 1-indexed slide numbers
+(default: every slide). `presentation.yaml`'s `build.previews: true`
+also renders previews as part of an ordinary `build`.
+
+### `inspect`: look inside a presentation or a built `.pptx`
+
+```bash
+uv run deckifyr inspect my-deck/presentation.yaml
+uv run deckifyr inspect my-deck/build/my-deck.pptx
+```
+
+Detects the target by file extension. Given a `presentation.yaml`, it
+plans the deck (the same Pass 1 `build`/`validate` already use) and
+reports the resolved slide list -- element counts/types, notes presence
+-- without composing or writing anything. Given a `.pptx`, it opens the
+file for real with `python-pptx` and reports what actually landed in it
+(slide/shape counts, shape names, rotation, notes presence), plus a
+summary of a sibling `<stem>.manifest.json` if one exists.
+
+### `get`/`set`: read and write a single config value
+
+```bash
+uv run deckifyr get my-deck/design.yaml colors.primary
+uv run deckifyr set my-deck/design.yaml colors.primary "#123456"
+```
+
+Dotted-path (`.`/`[N]`) access into any of the three document types,
+e.g. `colors.primary` or `slides[0].notes`. `set`'s `value` is parsed
+as JSON (numbers/bools/null/arrays/objects) when it's valid JSON,
+otherwise used as a literal string -- so a bare hex color or font name
+needs no quoting, while `--string` forces the literal-string branch for
+a value that would otherwise parse as JSON (e.g. the literal text
+`"true"`). Every edit is schema-validated (and, for a changed
+`slide.layout`, cross-checked against `layouts.yaml`) *before* it's
+written -- a rejected edit never touches the file.
+
+### `slide`: manage `presentation.yaml`'s slide list
+
+```bash
+uv run deckifyr slide list my-deck/presentation.yaml
+uv run deckifyr slide add my-deck/presentation.yaml --id new-slide --layout title-slide
+uv run deckifyr slide update my-deck/presentation.yaml new-slide --notes "..."
+uv run deckifyr slide move my-deck/presentation.yaml new-slide --after intro
+uv run deckifyr slide remove my-deck/presentation.yaml new-slide
+```
+
+`list`/`add`/`update`/`move`/`remove`, id-keyed throughout -- array
+indices are never the primary way to address a slide. `add`/`move`
+accept at most one of `--index`/`--after`/`--before`.
+
+### `skills`: export bundled coding-agent skill files
+
+```bash
+uv run deckifyr skills .claude/skills
+```
+
+Exports two bundled Claude Skills-format `SKILL.md` files
+(`deckifyr-org-config` for `design.yaml`/`layouts.yaml`,
+`deckifyr-presentation` for `presentation.yaml`) to a directory of your
+choice -- works with Claude Code or any other coding agent that reads
+`SKILL.md` files.
+
+### `serve`: the local web editor
+
+```bash
+uv run deckifyr serve --project my-deck
+```
+
+Requires the optional `web` extra (`uv sync --extra web`, or
+`pip install deckifyr[web]`) for `fastapi`/`uvicorn`. Runs a local
+FastAPI backend plus a React/Konva editor over one project directory
+for the life of the process -- drag/resize/rotate elements on a slide
+canvas, edit `design`/`layouts`/`presentation.yaml` through a
+schema-driven form (or raw JSON), trigger builds, and download
+artifacts. See `vignette("web-app")` for the full walkthrough.
 
 ## Architecture: two decoupled passes
 
@@ -93,7 +172,7 @@ inspector, and the local web application are later-phase work (see
 flowchart LR
     Y["design.yaml / layouts.yaml / presentation.yaml"] --> S["deckifyr.schema\n(units, merge, pydantic models)"]
     S --> P["deckifyr.plan\nPass 1: shell expansion"]
-    P --> R["deckifyr.resolvers\nlocal / inline / table / reportifyr"]
+    P --> R["deckifyr.resolvers\nlocal / inline / table / reportifyr / quarto"]
     R --> C["deckifyr.pptx.compose\nPass 2: python-pptx composition"]
     C --> O[".pptx + manifest.json"]
 ```
@@ -111,15 +190,23 @@ just using it, this split is the first thing to understand -- a new
 element type's zone/required semantics belong in `plan.py`; only actual
 shape construction belongs in `pptx/compose.py`.
 
-`deckifyr.renderers` (Quarto integration) and `deckifyr.web` (the local
-web app) are intentionally empty packages today -- later phases, not
-gaps in the pipeline above.
+`deckifyr.renderers.quarto` executes a `type: quarto` element's `.qmd`
+fragment (via a real `quarto` binary) and turns it into either
+normalized text or a rasterized PNG, resolved into the plan by
+`deckifyr.resolvers.quarto.QuartoResolver` like any other element
+source -- never through Quarto's own PPTX writer.
+`deckifyr.renderers.preview` shells out to LibreOffice + PyMuPDF to
+render slide PNGs (the `preview` command above). `deckifyr.web` is the
+FastAPI backend + React/Konva frontend behind `serve` above -- it calls
+straight into the same `deckifyr.plan`/`deckifyr.pptx.compose`/
+`deckifyr.editor` pipeline this section describes, not a second
+implementation of it.
 
 ## Optional extras
 
 ```bash
 uv pip install 'deckifyr[tables]'   # Parquet table sources (pyarrow)
-uv pip install 'deckifyr[web]'      # reserved for the Phase 3 web app
+uv pip install 'deckifyr[web]'      # the `serve` command's web editor
 uv pip install 'deckifyr[dev]'      # test suite (pytest, pyarrow)
 ```
 
