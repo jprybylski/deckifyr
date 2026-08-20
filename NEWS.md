@@ -1,6 +1,6 @@
 # deckifyr
 
-# deckifyr (development version)
+# deckifyr 0.3.0
 
 ## Added
 
