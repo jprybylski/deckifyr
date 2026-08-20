@@ -1,7 +1,7 @@
 Type: Package
 Package: deckifyr
 Title: Declarative, Code-First PowerPoint Compiler
-Version: 0.3.0
+Version: 0.3.1
 Authors@R: person("John", "Prybylski", email = "jprybylski@gmail.com", role = c("aut", "cre", "cph"), comment = c(ORCID = "0000-0001-5802-0539"))
 URL: https://github.com/jprybylski/deckifyr, https://jprybylski.github.io/deckifyr/
 BugReports: https://github.com/jprybylski/deckifyr/issues
