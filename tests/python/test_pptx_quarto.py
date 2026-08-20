@@ -28,7 +28,7 @@ from deckifyr.pptx.compose import compose_and_write
 from deckifyr.resolvers import QuartoArtifact, ResolvedContent
 from deckifyr.schema.design import DesignDocument, Fonts, SlideSize, TextStyle
 from deckifyr.schema.errors import ContentValidationError
-from deckifyr.schema.layouts import Box, Element, LayoutsDocument
+from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.presentation import (
     BuildConfig,
     DesignRef,
@@ -81,7 +81,7 @@ def project(tmp_path):
 
 
 def _build(project, presentation, design=None):
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     resolved = expand_presentation(presentation, design or _design(), layouts, strict=True)
     return compose_and_write(
         presentation,

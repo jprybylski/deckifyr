@@ -56,7 +56,7 @@ def test_validate_rejects_unknown_layout_reference(tmp_path, capsys):
         "slide: {width: 1in, height: 1in}\n"
         "fonts: {body: Arial, heading: Arial}\n"
     )
-    (tmp_path / "layouts.yaml").write_text("deckifyr: '0.1'\nlayouts: {}\n")
+    (tmp_path / "layouts.yaml").write_text("deckifyr: '0.1'\nlayouts: {blank: {}}\n")
     (tmp_path / "presentation.yaml").write_text(
         "deckifyr: '0.1'\n"
         "design: {base: design.yaml}\n"
@@ -92,7 +92,7 @@ def test_build_composes_a_color_derived_from_another_token(tmp_path, capsys):
         "    size: 12pt\n"
         "    color: secondary\n"
     )
-    (tmp_path / "layouts.yaml").write_text("deckifyr: '0.1'\nlayouts: {}\n")
+    (tmp_path / "layouts.yaml").write_text("deckifyr: '0.1'\nlayouts: {blank: {}}\n")
     (tmp_path / "presentation.yaml").write_text(
         "deckifyr: '0.1'\n"
         "design: {base: design.yaml}\n"

@@ -105,7 +105,7 @@ def project(tmp_path):
 
 
 def _build(project, presentation, design):
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     resolved = expand_presentation(presentation, design, layouts, strict=True)
     return compose_and_write(
         presentation,

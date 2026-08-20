@@ -221,16 +221,24 @@ def load_presentation_raw(path: Path) -> dict[str, Any]:
     return data
 
 
-def validate_presentation_data(path: Path, data: dict) -> PresentationDocument:
-    """Pure validation, no I/O beyond a best-effort read of a sibling
-    `layouts.yaml`: validate `data` against `PresentationDocument`, then
-    best-effort cross-check any `slide.layout` against that sibling
-    (mirroring `load_project`'s own check, so an edit can't silently
-    introduce a dangling layout reference). Shared by
-    `validate_and_write_presentation` (the disk-writing CLI path) and
-    `deckifyr.web.app`'s in-memory working-copy mutation path, which
-    validates the same way but assigns into memory instead of writing --
-    neither path should silently diverge on what counts as valid.
+def validate_presentation_data(
+    path: Path, data: dict, *, layouts_data: Any | None = None
+) -> PresentationDocument:
+    """Validate `data` against `PresentationDocument`, then best-effort
+    cross-check any `slide.layout` against `layouts.yaml` (mirroring
+    `load_project`'s own check, so an edit can't silently introduce a
+    dangling layout reference). Shared by `validate_and_write_presentation`
+    (the disk-writing CLI path, no `layouts_data` -- reads the sibling
+    file) and `deckifyr.web.app`'s in-memory working-copy mutation path
+    (`layouts_data=working_copy.get("layouts")`), which validates the
+    same way but against whatever `layouts.yaml` looks like in the
+    current unsaved session, not what's on disk -- issue #30's new
+    layout add/remove routes are the first thing that can make those two
+    diverge within one `deckifyr serve` session (a layout added but not
+    yet Saved must already be a valid `slide.layout` target), so a plain
+    disk read here would incorrectly reject it. `layouts_data=None`
+    (every pre-existing caller) keeps the original disk-read behavior
+    exactly.
     """
     try:
         presentation = PresentationDocument.model_validate(data)
@@ -239,13 +247,18 @@ def validate_presentation_data(path: Path, data: dict) -> PresentationDocument:
             format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
         ) from exc
 
-    layouts_path = path.parent / presentation.layouts
-    if layouts_path.is_file():
+    if layouts_data is None:
+        layouts_path = path.parent / presentation.layouts
+        if layouts_path.is_file():
+            try:
+                layouts_data = yaml.safe_load(layouts_path.read_text())
+            except yaml.YAMLError:
+                layouts_data = None
+
+    if layouts_data is not None:
         try:
-            layouts = LayoutsDocument.model_validate(
-                yaml.safe_load(layouts_path.read_text())
-            )
-        except (PydanticValidationError, yaml.YAMLError):
+            layouts = LayoutsDocument.model_validate(layouts_data)
+        except PydanticValidationError:
             layouts = None
         if layouts is not None:
             for slide in presentation.slides:

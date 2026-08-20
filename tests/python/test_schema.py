@@ -33,6 +33,16 @@ def test_minimal_deck_layouts_validates(minimal_deck_dir):
     assert layouts.layouts["title-content"].elements["title"].required is True
 
 
+def test_layouts_without_a_blank_layout_is_rejected():
+    with pytest.raises(ValidationError, match="must define a 'blank' layout"):
+        LayoutsDocument(deckifyr="0.1", layouts={"title-content": {}})
+
+
+def test_layouts_with_a_blank_layout_is_accepted():
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": {}})
+    assert "blank" in layouts.layouts
+
+
 def test_minimal_deck_presentation_validates(minimal_deck_dir):
     presentation = PresentationDocument.model_validate(
         _load(minimal_deck_dir / "presentation.yaml")

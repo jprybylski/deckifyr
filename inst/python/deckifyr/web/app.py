@@ -50,9 +50,10 @@ from deckifyr.plan import (
     resolve_watermark_text,
 )
 from deckifyr.renderers.preview import LIBREOFFICE_INSTALL_URL
+from deckifyr.resolvers.discovery import list_quarto_fragments, list_reportifyr_artifacts
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
-from deckifyr.schema.layouts import Element, LayoutsDocument
+from deckifyr.schema.layouts import BLANK_LAYOUT_ID, Element, Layout, LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_INCH, format_length, parse_length
 from deckifyr.web.jobs import JobManager
@@ -241,6 +242,60 @@ def _resolve_layout_zone(
         "align": element.align,
         "children": [],
     }
+
+
+def _resolved_layout(layout_name: str, layout: Layout, design_data: dict[str, Any]) -> dict[str, Any]:
+    """A whole layout as `_serialize_slide`-shaped JSON -- every zone via
+    `_resolve_layout_zone`, sorted the same way `get_layout_zones`
+    already sorts a single layout's zones. Shared by `GET
+    /api/layouts/{name}` (one layout) and `GET /api/layouts` (issue #30:
+    every layout, eagerly, for the web editor's Layouts mode) so the two
+    routes can't drift on how a zone resolves.
+    """
+    elements = [
+        _resolve_layout_zone(element_id, element, design_data, order)
+        for order, (element_id, element) in enumerate(layout.elements.items())
+    ]
+    elements.sort(key=lambda e: (e["z_index"], e["order"]))
+    return {"id": f"__layout__{layout_name}", "notes": None, "elements": elements}
+
+
+# Fields an "Add element" request body (issue #31) may carry beyond
+# `id`/`type`/`box` -- everything else on `Element` (spec section 7.7)
+# either has a sensible schema default (`fit`/`overflow`/`render_mode`)
+# or is meaningless on a freshly-created element (`required`, only
+# meaningful on a layout zone a slide might not fill). Kept as an
+# explicit allowlist, not `body.keys()` verbatim, so an unrecognized
+# body field is silently ignored rather than smuggled into the document
+# as an unknown key `Element`'s own `extra="forbid"` would then reject
+# with a confusing error far from where the mistake actually was.
+_NEW_ELEMENT_FIELDS = (
+    "value",
+    "source",
+    "shape_kind",
+    "table_style",
+    "footer_placement",
+    "render_mode",
+    "alt_text",
+)
+
+
+def _new_element_fields(body: dict[str, Any], design_data: dict[str, Any]) -> dict[str, Any]:
+    """Build a new element's field dict from an "Add element" request
+    body: a default box centered on the slide (`design.yaml`'s own
+    dimensions, via the same `_default_box`/`_slide_size_in` helpers
+    `_default_furniture_value` already uses) plus whichever
+    type-specific fields the request actually supplied.
+    """
+    width_in, height_in = _slide_size_in(design_data)
+    box_w, box_h = min(4.0, width_in * 0.4), min(2.0, height_in * 0.3)
+    fields: dict[str, Any] = {
+        "box": _default_box((width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h),
+    }
+    for field_name in _NEW_ELEMENT_FIELDS:
+        if body.get(field_name) is not None:
+            fields[field_name] = body[field_name]
+    return fields
 
 
 class _WorkingCopy:
@@ -546,7 +601,9 @@ def create_app(
     def put_config(doc: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         path = _doc_path(doc)
         if doc == "presentation":
-            presentation = projectio.validate_presentation_data(path, body)
+            presentation = projectio.validate_presentation_data(
+                path, body, layouts_data=working_copy.get("layouts")
+            )
             working_copy.set(doc, body)
             return {
                 "path": str(path),
@@ -667,7 +724,9 @@ def create_app(
         if "value" in body:
             _set_element_field(edited, f"{prefix}.value", body["value"])
 
-        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
         working_copy.set("presentation", edited)
         return {
             "slide": slide_id,
@@ -708,7 +767,9 @@ def create_app(
             raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
         except editor.AmbiguousPlacementError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
         working_copy.set("presentation", edited)
         return {
             "id": body["id"],
@@ -723,7 +784,9 @@ def create_app(
             editor.remove_slide(edited, slide_id)
         except editor.SlideNotFoundError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-        presentation = projectio.validate_presentation_data(presentation_path, edited)
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
         working_copy.set("presentation", edited)
         return {
             "id": slide_id,
@@ -742,20 +805,31 @@ def create_app(
     # be dict- or list-keyed, spec section 7.6), `Layout.elements` is
     # always dict-keyed, so there's no list-form branch to handle here.
 
+    @app.get("/api/layouts")
+    def list_layouts() -> dict[str, Any]:
+        """Every layout, resolved the same way `GET /api/layouts/{name}`
+        resolves one -- the eager list issue #30's Layouts editor mode
+        reads (`web/src/state/usePlan.ts`'s `layouts`), replacing that
+        feature's original on-demand single-layout fetch (issue #23) the
+        same way `GET /api/furniture` is already eager relative to
+        `GET /api/plan`.
+        """
+        _presentation, _design, layouts = _load_working_project()
+        design_data = working_copy.get("design") or {}
+        return {
+            "layouts": [
+                _resolved_layout(name, layout, design_data)
+                for name, layout in layouts.layouts.items()
+            ]
+        }
+
     @app.get("/api/layouts/{layout_name}")
     def get_layout_zones(layout_name: str) -> dict[str, Any]:
         _presentation, _design, layouts = _load_working_project()
         if layout_name not in layouts.layouts:
             raise HTTPException(status_code=404, detail=f"unknown layout {layout_name!r}")
         design_data = working_copy.get("design") or {}
-        elements = [
-            _resolve_layout_zone(element_id, element, design_data, order)
-            for order, (element_id, element) in enumerate(
-                layouts.layouts[layout_name].elements.items()
-            )
-        ]
-        elements.sort(key=lambda e: (e["z_index"], e["order"]))
-        return {"id": f"__layout__{layout_name}", "notes": None, "elements": elements}
+        return _resolved_layout(layout_name, layouts.layouts[layout_name], design_data)
 
     @app.patch("/api/layouts/{layout_name}/elements/{element_id}")
     def patch_layout_element(
@@ -798,6 +872,285 @@ def create_app(
             "path": str(layouts_path),
             "dirty": _after_mutation(),
         }
+
+    # --- layout add/remove (issue #30) -----------------------------------
+    #
+    # Thin wrappers over `deckifyr.editor.add_layout`/`remove_layout`,
+    # the same "validate-then-`working_copy.set`" shape the slide
+    # add/remove routes above already use. `remove_layout` is the one
+    # route in this file that mutates *two* documents in one request --
+    # `layouts.yaml` (deleting the entry) and `presentation.yaml`
+    # (reassigning any slide that used it to `blank`) -- because that's
+    # genuinely one user-facing operation ("remove this layout"), not two
+    # separate edits a caller would make independently.
+
+    @app.post("/api/layouts")
+    def add_layout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        layouts_path = working_copy.path_for("layouts")
+        edited = copy.deepcopy(working_copy.get("layouts"))
+        try:
+            editor.add_layout(edited, id=body["id"])
+        except editor.DuplicateLayoutIdError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        try:
+            LayoutsDocument.model_validate(edited)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                projectio.format_pydantic_error(exc, str(layouts_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+        working_copy.set("layouts", edited)
+        return {"id": body["id"], "path": str(layouts_path), "dirty": _after_mutation()}
+
+    @app.delete("/api/layouts/{layout_name}")
+    def remove_layout(layout_name: str) -> dict[str, Any]:
+        layouts_path = working_copy.path_for("layouts")
+        layouts_edited = copy.deepcopy(working_copy.get("layouts"))
+        try:
+            editor.remove_layout(layouts_edited, layout_name)
+        except editor.UnremovableLayoutError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        except editor.LayoutNotFoundError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
+        try:
+            LayoutsDocument.model_validate(layouts_edited)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                projectio.format_pydantic_error(exc, str(layouts_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+
+        presentation_edited = copy.deepcopy(working_copy.get("presentation"))
+        reassigned = editor.layouts_using(presentation_edited, layout_name)
+        editor.reassign_layout(presentation_edited, layout_name, BLANK_LAYOUT_ID)
+        presentation = projectio.validate_presentation_data(
+            presentation_path, presentation_edited, layouts_data=working_copy.get("layouts")
+        )
+
+        if reassigned:
+            # A slide's override often relies on its old layout zone for
+            # fields it never sets itself (`type`, most commonly, spec
+            # section 7.2's whole override model) -- every `Element`
+            # field is optional, so schema validation alone can't catch
+            # a now-unbuildable slide, only a real plan resolution can
+            # (confirmed against a real removal, not assumed: `blank`
+            # has no zones, so an override that relied on its old
+            # layout's zone for `type` resolves to "no element type").
+            # Checked *before* committing either document, so a removal
+            # that would break a slide is rejected with one specific,
+            # actionable error instead of silently leaving the working
+            # copy in a state where `GET /api/plan` starts failing for a
+            # reason with no obvious connection to what was just done.
+            design = DesignDocument.model_validate(working_copy.get("design"))
+            try:
+                expand_presentation(
+                    presentation,
+                    design,
+                    LayoutsDocument.model_validate(layouts_edited),
+                    strict=True,
+                )
+            except DeckifyrError as exc:
+                raise DeckifyrError(
+                    f"removing layout {layout_name!r} would leave "
+                    f"{', '.join(reassigned)} unbuildable once reassigned to "
+                    f"{BLANK_LAYOUT_ID!r}: {exc}. Give the affected element(s) an "
+                    "explicit type/box before removing this layout.",
+                    code=ErrorCode.CONTENT_VALIDATION,
+                ) from exc
+
+        working_copy.set("layouts", layouts_edited)
+        working_copy.set("presentation", presentation_edited)
+        return {
+            "id": layout_name,
+            "reassigned_slides": reassigned,
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    # --- slide/layout element add/remove (issue #31) ---------------------
+    #
+    # `deckifyr.editor.add_element`/`remove_element` work against either
+    # document's `elements` block (both are the same dict-or-list shape,
+    # spec section 7.6) -- these four routes are the thin per-document
+    # wrapper around them, the same validate-then-`working_copy.set`
+    # shape every other mutating route here already uses. Deliberately
+    # separate from `patch_element`/`patch_layout_element` above (which
+    # only ever edit an *existing* element's fields) rather than folding
+    # add/remove into those same handlers.
+
+    @app.post("/api/slides/{slide_id}/elements")
+    def add_slide_element(slide_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        edited = copy.deepcopy(working_copy.get("presentation"))
+        slides = edited.get("slides") or []
+        slide_index = next(
+            (i for i, slide in enumerate(slides) if slide.get("id") == slide_id), None
+        )
+        if slide_index is None:
+            raise HTTPException(status_code=404, detail=f"no slide with id {slide_id!r}")
+        design_data = working_copy.get("design") or {}
+        try:
+            slides[slide_index]["elements"] = editor.add_element(
+                slides[slide_index].get("elements"),
+                id=body["id"],
+                type=body["type"],
+                **_new_element_fields(body, design_data),
+            )
+        except editor.DuplicateElementIdError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
+        working_copy.set("presentation", edited)
+        return {
+            "slide": slide_id,
+            "element": body["id"],
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    @app.delete("/api/slides/{slide_id}/elements/{element_id}")
+    def remove_slide_element(slide_id: str, element_id: str) -> dict[str, Any]:
+        edited = copy.deepcopy(working_copy.get("presentation"))
+        slides = edited.get("slides") or []
+        slide_index = next(
+            (i for i, slide in enumerate(slides) if slide.get("id") == slide_id), None
+        )
+        if slide_index is None:
+            raise HTTPException(status_code=404, detail=f"no slide with id {slide_id!r}")
+        try:
+            slides[slide_index]["elements"] = editor.remove_element(
+                slides[slide_index].get("elements") or {}, element_id
+            )
+        except editor.ElementNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
+        working_copy.set("presentation", edited)
+        return {
+            "slide": slide_id,
+            "element": element_id,
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    @app.post("/api/layouts/{layout_name}/elements")
+    def add_layout_element(layout_name: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        layouts_path = working_copy.path_for("layouts")
+        edited = copy.deepcopy(working_copy.get("layouts"))
+        entries = edited.get("layouts") or {}
+        if layout_name not in entries:
+            raise HTTPException(status_code=404, detail=f"unknown layout {layout_name!r}")
+        design_data = working_copy.get("design") or {}
+        try:
+            entries[layout_name]["elements"] = editor.add_element(
+                entries[layout_name].get("elements"),
+                id=body["id"],
+                type=body["type"],
+                **_new_element_fields(body, design_data),
+            )
+        except editor.DuplicateElementIdError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        try:
+            LayoutsDocument.model_validate(edited)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                projectio.format_pydantic_error(exc, str(layouts_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+        working_copy.set("layouts", edited)
+        return {
+            "layout": layout_name,
+            "element": body["id"],
+            "path": str(layouts_path),
+            "dirty": _after_mutation(),
+        }
+
+    @app.delete("/api/layouts/{layout_name}/elements/{element_id}")
+    def remove_layout_element(layout_name: str, element_id: str) -> dict[str, Any]:
+        layouts_path = working_copy.path_for("layouts")
+        edited = copy.deepcopy(working_copy.get("layouts"))
+        entries = edited.get("layouts") or {}
+        if layout_name not in entries:
+            raise HTTPException(status_code=404, detail=f"unknown layout {layout_name!r}")
+        try:
+            entries[layout_name]["elements"] = editor.remove_element(
+                entries[layout_name].get("elements") or {}, element_id
+            )
+        except editor.ElementNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            LayoutsDocument.model_validate(edited)
+        except PydanticValidationError as exc:
+            raise DeckifyrError(
+                projectio.format_pydantic_error(exc, str(layouts_path)),
+                code=ErrorCode.SCHEMA_VALIDATION,
+            ) from exc
+        working_copy.set("layouts", edited)
+        return {
+            "layout": layout_name,
+            "element": element_id,
+            "path": str(layouts_path),
+            "dirty": _after_mutation(),
+        }
+
+    # --- slide duplicate (issue #31 follow-up) ----------------------------
+
+    @app.post("/api/slides/{slide_id}/duplicate")
+    def duplicate_slide(slide_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Copies an existing slide's `layout`/`elements`/`notes` into a
+        new slide placed immediately after it -- a thin wrapper over
+        `editor.add_slide`, which already accepts `elements`/`notes`
+        verbatim, so no new `editor.py` function was needed for this.
+        """
+        edited = copy.deepcopy(working_copy.get("presentation"))
+        slides = edited.get("slides") or []
+        source = next((slide for slide in slides if slide.get("id") == slide_id), None)
+        if source is None:
+            raise HTTPException(status_code=404, detail=f"no slide with id {slide_id!r}")
+        new_id = body["id"]
+        try:
+            editor.add_slide(
+                edited,
+                id=new_id,
+                layout=source.get("layout"),
+                elements=copy.deepcopy(source.get("elements")),
+                notes=source.get("notes"),
+                after=slide_id,
+            )
+        except editor.DuplicateSlideIdError as exc:
+            raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+        presentation = projectio.validate_presentation_data(
+            presentation_path, edited, layouts_data=working_copy.get("layouts")
+        )
+        working_copy.set("presentation", edited)
+        return {
+            "id": new_id,
+            "slide_count": len(presentation.slides),
+            "dirty": _after_mutation(),
+        }
+
+    # --- project file discovery (issue #31) -------------------------------
+
+    @app.get("/api/project/files")
+    def list_project_files(type: str) -> dict[str, Any]:
+        """Candidate sources for the "Add element" menu's `reportifyr`/
+        `quarto` types -- real files already on disk that would actually
+        resolve, not a free-text path a user has to get exactly right.
+        """
+        if type == "reportifyr":
+            presentation, _design, _layouts = _load_working_project()
+            outputs_dir = (
+                presentation.build.reportifyr.outputs_dir
+                if presentation.build.reportifyr is not None
+                else "OUTPUTS"
+            )
+            return {"files": list_reportifyr_artifacts(project_root, outputs_dir)}
+        if type == "quarto":
+            return {"files": list_quarto_fragments(project_root)}
+        raise HTTPException(
+            status_code=422, detail=f"unknown file type {type!r} (expected reportifyr or quarto)"
+        )
 
     # --- furniture pseudo-slide (issue #21) -----------------------------
 
@@ -958,7 +1311,9 @@ def create_app(
             # via the Deck Options dropdown.
             edited_presentation = copy.deepcopy(working_copy.get("presentation"))
             edited_presentation["status_indicator"] = new_status_indicator
-            projectio.validate_presentation_data(presentation_path, edited_presentation)
+            projectio.validate_presentation_data(
+                presentation_path, edited_presentation, layouts_data=working_copy.get("layouts")
+            )
             working_copy.set("presentation", edited_presentation)
         working_copy.set("design", edited)
         return {"element": element_id, "path": str(design_path), "dirty": _after_mutation()}

@@ -927,7 +927,7 @@ def test_expand_presentation_threads_status_indicator_and_watermark_through():
     design = _design(
         furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     presentation = PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
@@ -952,7 +952,7 @@ def test_expand_presentation_falls_back_to_metadata_status_when_watermark_unset(
     design = _design(
         furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     presentation = PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
@@ -977,7 +977,7 @@ def test_expand_presentation_explicit_watermark_overrides_metadata_status():
     design = _design(
         furniture=Furniture(status=StatusFurniture(watermark=StatusIndicatorStyle(box=_box())))
     )
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     presentation = PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
@@ -1009,7 +1009,7 @@ def test_expand_presentation_corner_placement_ignores_watermark_override():
     design = _design(
         furniture=Furniture(status=StatusFurniture(corner_tl=StatusIndicatorStyle(box=_box())))
     )
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     presentation = PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),
@@ -1044,7 +1044,7 @@ def test_status_indicator_is_a_strict_single_select():
             )
         )
     )
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     presentation = PresentationDocument(
         deckifyr="0.1",
         design=DesignRef(base="design.yaml"),

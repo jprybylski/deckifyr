@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from deckifyr.schema.version import check_schema_version
 
@@ -26,6 +26,13 @@ ElementType = Literal[
     "footnotes",
     "reportifyr",
 ]
+
+# The one layout name every `layouts.yaml` must define (issue #30) --
+# the fallback a slide is reassigned to when the layout it referenced is
+# removed, so it must always exist and can never itself be removed.
+# Public (no leading underscore) so `deckifyr.editor`/`deckifyr.web.app`
+# can check against it without duplicating the literal.
+BLANK_LAYOUT_ID = "blank"
 
 FitMode = Literal["contain", "cover", "stretch", "none"]
 OverflowMode = Literal["error", "shrink", "clip", "continue"]
@@ -161,3 +168,18 @@ class LayoutsDocument(BaseModel):
     layouts: dict[str, Layout]
 
     _check_version = field_validator("deckifyr")(check_schema_version)
+
+    @model_validator(mode="after")
+    def _check_has_blank_layout(self) -> "LayoutsDocument":
+        # A named, empty layout a slide can always fall back to -- both
+        # bundled example projects already define one by convention
+        # (`deckifyr.plan`'s own docstring used to note this), but
+        # nothing enforced its presence until issue #30 made the web
+        # editor's layout-removal flow depend on it always existing.
+        if BLANK_LAYOUT_ID not in self.layouts:
+            raise ValueError(
+                f"layouts.yaml must define a {BLANK_LAYOUT_ID!r} layout -- it's the "
+                "required fallback slides are reassigned to when the layout they "
+                "used is removed"
+            )
+        return self
