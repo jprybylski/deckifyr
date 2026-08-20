@@ -186,9 +186,12 @@ plan and lets you:
 
   A new element gets a sensible centered default box, refined afterward
   by dragging/resizing like any other element; each row's own Remove
-  button deletes it, no confirm step. `shape`/`group`/`table`/
-  `reportifyr`/`quarto` elements can be added and removed this way, but
-  still render as static, labeled placeholder boxes on the canvas -- see
+  button deletes it, no confirm step. `shape`/`table`/`reportifyr`/
+  `quarto` elements can be added, removed, and dragged/resized/rotated
+  on the canvas exactly like `text`/`markdown`/`image` -- they still
+  render as labeled placeholder boxes rather than a live preview of
+  their actual content, but the position/size you set there is real,
+  same as everything else. `group` is the one exception -- see
   "Currently unsupported features" below.
 * Select the synthetic **"⚙ Furniture"** entry above the numbered
   slide list to edit `design.yaml`'s `furniture` block itself --
@@ -267,20 +270,20 @@ issue" link to request it.
   copy/paste, no group-move
   ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
   if you'd like this prioritized).
-* **`shape`/`group`/`table`/`reportifyr`/`quarto` elements can be added
-  and removed, but not dragged/resized on the canvas or have their
-  content edited there.** They render as static, labeled placeholder
-  boxes so you can see where they sit relative to everything else and
-  add/remove them from the Elements sidebar, but repositioning by
-  dragging or editing their actual content still means editing the YAML
-  (or using `deck_set_config()`)
-  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
-  if you'd like this prioritized).
-* **`image` elements are draggable, but you won't see the actual
-  picture.** The API that backs the canvas returns an image element's
-  source path, not its pixels, so an image is a placeholder box too --
-  one that participates in drag/resize/rotate like a real image would,
-  just without a preview inside it
+* **`group` elements can be added and removed, but not dragged/resized
+  on the canvas.** A group's actual position in the built deck comes
+  entirely from its own children's boxes, not a box of its own -- so
+  unlike the other placeholder types below, this isn't just a missing
+  canvas interaction, it's that the group's own `box` field doesn't do
+  anything yet. Reposition a group by editing its individual child
+  elements' geometry instead
+  ([tracking issue #55](https://github.com/jprybylski/deckifyr/issues/55)).
+* **`shape`/`table`/`reportifyr`/`quarto`/`image` elements are
+  draggable/resizable/rotatable, but you won't see their actual
+  content.** They render as labeled placeholder boxes, not a live
+  preview -- the API that backs the canvas returns an image element's
+  source path rather than its pixels, and the other four render their
+  real appearance only through the actual compositor, not this canvas
   ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
   if you'd like this prioritized).
 * **No image cropping or snapping guides.** Positioning is freehand;

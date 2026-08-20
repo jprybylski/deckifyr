@@ -79,7 +79,15 @@ export default function ElementInspector({ plan }: Props) {
   // these are exactly what's editable there, through `design.yaml`
   // instead of this slide's own elements (issue #21).
   const isFurniture = element.id.startsWith("__furniture_");
-  const isPlaceholder = !["text", "markdown", "image"].includes(element.type);
+  // `group` is the one element type whose `box`/`rotation` fields below
+  // don't actually affect the built deck (issue #55) -- `deckifyr.pptx
+  // .compose`'s `group` branch never reads a group element's own `box`
+  // at all, since a group's on-slide position comes entirely from its
+  // own children's independent boxes, reparented at build time. The
+  // fields still work (nothing here hard-blocks the PATCH, per that
+  // issue's own scope decision), so this only changes the note text
+  // below, not what's editable.
+  const isGroupWithIgnoredBox = element.type === "group";
   const rotationSupported = !isFurnitureSlideSelected || furnitureElementSupportsRotation(element.id);
   const zIndexSupported = !isFurnitureSlideSelected || furnitureElementSupportsZIndex(element.id);
   const valueSupported = !isFurnitureSlideSelected || furnitureElementSupportsValue(element.id);
@@ -157,10 +165,10 @@ export default function ElementInspector({ plan }: Props) {
           this layout.
         </p>
       ) : (
-        isPlaceholder && (
+        isGroupWithIgnoredBox && (
           <p className="element-inspector__note">
-            {element.type} elements aren't draggable on the canvas yet -- edit this element via
-            the config editor instead.
+            A group&rsquo;s position on the built deck comes entirely from its own children&rsquo;s
+            boxes, not this field -- edit a child element&rsquo;s geometry instead.
           </p>
         )
       )}

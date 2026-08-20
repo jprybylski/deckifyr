@@ -14,15 +14,25 @@
  * is plain HTML positioned on top of the canvas, not a Konva node, so
  * it has no built-in scale compensation of its own.
  *
- * `shape`/`group`/`table`/`reportifyr`/`quarto` elements render as a
- * static, labeled, dashed placeholder box (per this project's scope --
- * only `text`/`markdown`/`image` are draggable/resizable/rotatable).
- * `image` elements are draggable/resizable/rotatable like text, but
- * there is no endpoint in today's API contract to fetch a project
- * image's actual pixels (`GET /api/plan` only returns its `source`
- * path) -- so an `image` element renders as a labeled placeholder box
- * too, just one that participates in drag/resize/rotate like a real
- * image would once that endpoint exists.
+ * `shape`/`table`/`reportifyr`/`quarto` elements are draggable/
+ * resizable/rotatable exactly like `text`/`markdown`/`image` (issue
+ * #54) -- the backend already applies `box`/`rotation`/`z_index`
+ * uniformly regardless of `type` (`PATCH /api/slides/{id}/elements
+ * /{id}`, `deckifyr.schema.layouts.Element`), so this was purely a
+ * frontend gate (`DRAGGABLE_TYPES` below). Like `image`, none of these
+ * four render their real content -- there is no endpoint in today's API
+ * contract to fetch a project image's actual pixels (`GET /api/plan`
+ * only returns its `source` path), and a shape/table/reportifyr/quarto
+ * element's real appearance requires running the actual compositor --
+ * so all five render as a labeled placeholder box (`elementLabel`)
+ * while still fully participating in drag/resize/rotate.
+ *
+ * `group` is the one element type that stays a static, non-draggable
+ * placeholder -- not an oversight, see `isDraggableElement`'s own
+ * comment below and issue #55: a group's on-slide position is derived
+ * entirely from its own children's boxes at build time, not its own
+ * `box` field, so dragging it here would silently write a value the
+ * compositor ignores.
  */
 import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text as KonvaText, Transformer, Group } from "react-konva";
@@ -38,7 +48,11 @@ import {
 } from "../geometry";
 import type { ElementPatchBody, ResolvedElement } from "../types";
 
-const DRAGGABLE_TYPES = new Set(["text", "markdown", "image"]);
+// `group` is deliberately excluded -- see the module docstring above
+// and issue #55: its own `box` field is ignored by the compositor, so
+// dragging it would silently write a value that never affects the
+// built deck.
+const DRAGGABLE_TYPES = new Set(["text", "markdown", "image", "shape", "table", "reportifyr", "quarto"]);
 
 // `__furniture_background`/`__furniture_status`/`__furniture_branding`/
 // `__furniture_page_number` (`inst/python/deckifyr/plan.py`'s own
@@ -63,6 +77,12 @@ export function isFurnitureElement(element: ResolvedElement): boolean {
   return element.id.startsWith(FURNITURE_PREFIX);
 }
 
+// `group` is not in `DRAGGABLE_TYPES` (issue #55): `deckifyr.pptx
+// .compose`'s `group` branch never reads a group element's own `box` --
+// its on-slide position is the union of its own children's independent
+// boxes, reparented under a synthetic group shape at build time. So a
+// group element still renders through the static-placeholder branch
+// below, same as before.
 export function isDraggableElement(element: ResolvedElement): boolean {
   return DRAGGABLE_TYPES.has(element.type) && !isFurnitureElement(element);
 }
@@ -110,8 +130,8 @@ export function furnitureElementSupportsValue(elementId: string): boolean {
 
 // Layouts editor mode (issue #30, originally issue #23's since-
 // superseded per-slide Content/Layout tab): every zone is draggable
-// regardless of its `type` -- unlike `isDraggableElement`, which only
-// allows `text`/`markdown`/`image`. A layout zone is a pure position
+// regardless of its `type` -- unlike `isDraggableElement`, which
+// excludes `group` (issue #55). A layout zone is a pure position
 // slot (`layouts.yaml`'s own `slot`/`footnotes` types have no content of
 // their own at all, spec section 7.5), so gating on `DRAGGABLE_TYPES`
 // the way ordinary slide content is would make most of a typical
@@ -127,6 +147,29 @@ export function elementLabel(element: ResolvedElement): string {
   }
   if (element.type === "image") return `image: ${element.source ?? "?"}`;
   return `${element.type}: ${element.id}`;
+}
+
+// The five content types with no real preview available on this canvas
+// -- `image`'s `source` path, `shape`'s `shape_kind`, `table`'s `source`
+// path, `reportifyr`'s magic string, `quarto`'s `.qmd` path -- render as
+// a labeled placeholder box (`elementLabel`) in the draggable branch
+// below instead of real content, the same way `image` alone did before
+// issue #54. Deliberately keyed on this specific five-type set, not on
+// "not text/markdown": a layout zone's `slot`/`footnotes` types (issue
+// #30's Layouts mode, where every zone is draggable regardless of type)
+// have no `value` either, but must keep rendering exactly as before --
+// an empty box with no on-canvas label, matching
+// `man/figures/web-app-layout-tab.png`. Also gates double-click-to-edit
+// in `selectOrEdit` below -- none of these five types' `value` is plain
+// editable text.
+export function isContentPlaceholderElement(element: ResolvedElement): boolean {
+  return (
+    element.type === "image" ||
+    element.type === "shape" ||
+    element.type === "table" ||
+    element.type === "reportifyr" ||
+    element.type === "quarto"
+  );
 }
 
 function plainText(element: ResolvedElement): string {
@@ -338,7 +381,7 @@ export default function SlideCanvas({ plan }: Props) {
     if (
       state.selectedElementId === element.id &&
       isDraggable(element) &&
-      element.type !== "image" &&
+      !isContentPlaceholderElement(element) &&
       canEditValue
     ) {
       setEditingElementId(element.id);
@@ -525,12 +568,12 @@ export default function SlideCanvas({ plan }: Props) {
                   <Rect
                     width={width}
                     height={height}
-                    fill={element.type === "image" ? "#e8eef7" : "#ffffff"}
+                    fill={isContentPlaceholderElement(element) ? "#e8eef7" : "#ffffff"}
                     stroke={isSelected ? "#2457a6" : "#dddddd"}
                     strokeWidth={isSelected ? 2 : 1}
                   />
                   <KonvaText
-                    text={element.type === "image" ? elementLabel(element) : displayText(element)}
+                    text={isContentPlaceholderElement(element) ? elementLabel(element) : displayText(element)}
                     width={width}
                     height={height}
                     padding={4}
@@ -538,8 +581,8 @@ export default function SlideCanvas({ plan }: Props) {
                     fontStyle={element.style?.bold ? "bold" : "normal"}
                     fill={element.style?.color ?? "#202124"}
                     opacity={element.style?.opacity ?? 1}
-                    align={element.type === "image" ? "left" : konvaTextAlign(element)}
-                    verticalAlign={element.type === "image" ? "top" : konvaVerticalAlign(element)}
+                    align={isContentPlaceholderElement(element) ? "left" : konvaTextAlign(element)}
+                    verticalAlign={isContentPlaceholderElement(element) ? "top" : konvaVerticalAlign(element)}
                     wrap="word"
                     listening={false}
                   />
