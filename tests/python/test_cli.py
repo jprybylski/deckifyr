@@ -1,14 +1,19 @@
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from pptx import Presentation
 
 from deckifyr.cli import EXIT_OK, EXIT_VALIDATION_ERROR, _SKILL_NAMES, main
 
 requires_soffice = pytest.mark.skipif(
     shutil.which("soffice") is None, reason="soffice binary not found on PATH"
+)
+requires_git = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git binary not found on PATH"
 )
 
 
@@ -169,6 +174,205 @@ def test_init_refuses_nonempty_directory_without_force(tmp_path):
     (target / "stray.txt").write_text("hi")
     exit_code = main(["--json", "init", str(target)])
     assert exit_code != EXIT_OK
+
+
+def test_init_with_no_new_flags_matches_the_bundled_minimal_deck(
+    minimal_deck_dir, tmp_path
+):
+    # Regression guard for issue #34: plain `init` (none of the new
+    # --from-dir/--from-repo/--type flags) must stay byte-for-byte
+    # identical to the pre-existing bundled-example behavior.
+    target = tmp_path / "plain-init"
+    exit_code = main(["--json", "init", str(target)])
+    assert exit_code == EXIT_OK
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        assert (target / name).read_text() == (minimal_deck_dir / name).read_text()
+
+
+def _write_flat_template_source(
+    root: Path, *, design_name="styleguide.yaml", layouts_name="zones.yaml"
+) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / design_name).write_text(yaml.safe_dump({"deckifyr": "0.1", "colors": {}}))
+    (root / layouts_name).write_text(yaml.safe_dump({"deckifyr": "0.1", "layouts": {}}))
+    (root / "presentation.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "deckifyr": "0.1",
+                "design": {"base": design_name},
+                "layouts": layouts_name,
+                "metadata": {"title": "Source Deck"},
+                "build": {"output": "build/source.pptx"},
+                "slides": [],
+            }
+        )
+    )
+    return root
+
+
+def test_init_from_dir_flat_scaffolds_a_new_project(tmp_path, capsys):
+    source = _write_flat_template_source(tmp_path / "source")
+    target = tmp_path / "new-deck"
+    exit_code = main(["--json", "init", str(target), "--from-dir", str(source)])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert (target / "styleguide.yaml").is_file()
+    assert (target / "zones.yaml").is_file()
+    data = yaml.safe_load((target / "presentation.yaml").read_text())
+    assert data["slides"] == []
+    assert output["warnings"] == []
+
+
+def test_init_from_dir_typed_requires_type(tmp_path, capsys):
+    source = tmp_path / "source"
+    _write_flat_template_source(source / "templates" / "alpha")
+    exit_code = main(["--json", "init", str(tmp_path / "new-deck"), "--from-dir", str(source)])
+    assert exit_code != EXIT_OK
+    err = json.loads(capsys.readouterr().err)
+    assert "alpha" in err["message"]
+
+
+def test_init_from_dir_typed_with_type_copies_presentation_verbatim(tmp_path):
+    source = tmp_path / "source"
+    _write_flat_template_source(source / "templates" / "alpha")
+    target = tmp_path / "new-deck"
+    exit_code = main(
+        ["--json", "init", str(target), "--from-dir", str(source), "--type", "alpha"]
+    )
+    assert exit_code == EXIT_OK
+    data = yaml.safe_load((target / "presentation.yaml").read_text())
+    assert data["metadata"]["title"] == "Source Deck"
+
+
+def test_init_from_dir_unknown_type_lists_available_names(tmp_path, capsys):
+    source = tmp_path / "source"
+    _write_flat_template_source(source / "templates" / "alpha")
+    exit_code = main(
+        [
+            "--json",
+            "init",
+            str(tmp_path / "new-deck"),
+            "--from-dir",
+            str(source),
+            "--type",
+            "bogus",
+        ]
+    )
+    assert exit_code != EXIT_OK
+    err = json.loads(capsys.readouterr().err)
+    assert "alpha" in err["message"]
+
+
+def test_init_from_dir_and_from_repo_are_mutually_exclusive(tmp_path):
+    exit_code = main(
+        [
+            "--json",
+            "init",
+            str(tmp_path / "new-deck"),
+            "--from-dir",
+            str(tmp_path),
+            "--from-repo",
+            "acme/repo",
+        ]
+    )
+    assert exit_code != EXIT_OK
+
+
+def test_init_ref_without_from_repo_is_an_error(tmp_path):
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "new-deck"), "--ref", "v1"]
+    )
+    assert exit_code != EXIT_OK
+
+
+def test_init_type_without_from_dir_or_from_repo_is_an_error(tmp_path):
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "new-deck"), "--type", "alpha"]
+    )
+    assert exit_code != EXIT_OK
+
+
+def test_init_from_dir_not_a_template_source_is_an_error(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "new-deck"), "--from-dir", str(source)]
+    )
+    assert exit_code != EXIT_OK
+
+
+def test_init_from_dir_surfaces_asset_warnings(tmp_path, capsys):
+    source = _write_flat_template_source(tmp_path / "source")
+    (source / "styleguide.yaml").write_text(
+        yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": "bg.png"}})
+    )
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "new-deck"), "--from-dir", str(source)]
+    )
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert any("bg.png" in w for w in output["warnings"])
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _make_upstream_repo(root: Path) -> Path:
+    repo = root / "upstream"
+    repo.mkdir()
+    _git("init", cwd=repo)
+    _write_flat_template_source(repo)
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    _git("tag", "v1", cwd=repo)
+    return repo
+
+
+@requires_git
+def test_init_from_repo_end_to_end_with_ref_and_subdir(tmp_path):
+    repo = tmp_path / "upstream"
+    repo.mkdir()
+    _git("init", cwd=repo)
+    _write_flat_template_source(repo / "templates" / "alpha")
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    _git("tag", "v1", cwd=repo)
+
+    target = tmp_path / "new-deck"
+    exit_code = main(
+        [
+            "--json",
+            "init",
+            str(target),
+            "--from-repo",
+            repo.as_uri(),
+            "--ref",
+            "v1",
+            "--subdir",
+            "templates/alpha",
+        ]
+    )
+    assert exit_code == EXIT_OK
+    assert (target / "styleguide.yaml").is_file()
+    assert (target / "presentation.yaml").is_file()
+
+
+def test_init_from_repo_missing_git_reports_missing_dependency(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "new-deck"), "--from-repo", "acme/repo"]
+    )
+    assert exit_code != EXIT_OK
+    err = json.loads(capsys.readouterr().err)
+    assert err["code"] == "E_MISSING_DEPENDENCY"
+    assert err["dependency"]["name"] == "git"
 
 
 def test_skills_exports_bundled_skill_files(tmp_path, capsys):

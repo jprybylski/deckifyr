@@ -2,7 +2,16 @@
 
 Every subcommand from the spec is wired up with real argument parsing.
 `init`, `validate`, `build`, `preview`, `inspect`, and `schema` do real
-work today: `init` copies the bundled minimal example, `validate` loads
+work today: `init` copies the bundled minimal example by default, or
+scaffolds from `--from-dir PATH`/`--from-repo SPEC` instead (issue #34,
+`deckifyr.templates`) -- a local directory or a git repo (`git` must be
+on PATH; `SPEC` is `[host/]owner/repo[/subdir][@ref]` shorthand,
+defaulting to github.com, or a full URL) either duplicated as a "flat"
+source (its own `design.base`/`layouts` files copied under their
+original names, with a fresh minimal `presentation.yaml` generated) or,
+when it has a `templates/` subdirectory, a "typed" source selected via
+`--type NAME` (that type's `presentation.yaml` copied verbatim, as a
+real starter). `validate` loads
 and pydantic-validates a project (design + layouts + presentation,
 cross-checking layout references and box unit strings), `build` plans
 (`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest
@@ -60,7 +69,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from deckifyr import editor, projectio
+from deckifyr import editor, projectio, templates
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx import compose_and_write
 from deckifyr.schema.design import DesignDocument
@@ -85,7 +94,35 @@ def _examples_dir() -> Path:
 
 
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
+    # Template-based init (issue #34): --from-dir/--from-repo scaffold
+    # from a local directory or a git repo instead of the bundled
+    # minimal example -- deckifyr.templates owns the actual mechanism,
+    # this handler only validates flag combinations and dispatches.
+    if args.type is not None and not (args.from_dir or args.from_repo):
+        raise DeckifyrError(
+            "--type requires --from-dir or --from-repo", code=ErrorCode.IO
+        )
+    if (args.ref is not None or args.subdir is not None) and not args.from_repo:
+        raise DeckifyrError(
+            "--ref/--subdir require --from-repo", code=ErrorCode.IO
+        )
+    if args.from_dir and args.from_repo:
+        raise DeckifyrError(
+            "--from-dir and --from-repo are mutually exclusive", code=ErrorCode.IO
+        )
+
     target = Path(args.directory)
+    if args.from_dir or args.from_repo:
+        return templates.init_from_template(
+            target,
+            from_dir=args.from_dir,
+            from_repo=args.from_repo,
+            ref=args.ref,
+            subdir=args.subdir,
+            type_name=args.type,
+            force=args.force,
+        )
+
     target.mkdir(parents=True, exist_ok=True)
     existing = list(target.iterdir())
     if existing and not args.force:
@@ -541,6 +578,37 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument("directory", nargs="?", default=".")
     init_parser.add_argument("--force", action="store_true")
+    init_parser.add_argument(
+        "--from-dir",
+        default=None,
+        metavar="PATH",
+        help="use a local directory as the template source instead of the bundled minimal example",
+    )
+    init_parser.add_argument(
+        "--from-repo",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "fetch a git repo as the template source: '[host/]owner/repo[/subdir][@ref]' "
+            "(host defaults to github.com) or a full URL; requires git on PATH"
+        ),
+    )
+    init_parser.add_argument(
+        "--ref",
+        default=None,
+        help="branch/tag/SHA to check out (only with --from-repo; overrides an embedded @ref)",
+    )
+    init_parser.add_argument(
+        "--subdir",
+        default=None,
+        help="subdirectory of the resolved repo to use (only with --from-repo; overrides an embedded subdir)",
+    )
+    init_parser.add_argument(
+        "--type",
+        default=None,
+        metavar="NAME",
+        help="template name under a source's templates/<name>/ structure",
+    )
     init_parser.set_defaults(handler=_cmd_init)
 
     skills_parser = subparsers.add_parser(

@@ -10,6 +10,11 @@ from __future__ import annotations
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"0.1"})
 
+# The newest version in SUPPORTED_SCHEMA_VERSIONS -- update both together.
+# Used wherever a brand-new document is generated (e.g. deckifyr.templates'
+# template-init) rather than validated against an existing one.
+CURRENT_SCHEMA_VERSION = "0.1"
+
 
 def check_schema_version(value: str) -> str:
     if value not in SUPPORTED_SCHEMA_VERSIONS:

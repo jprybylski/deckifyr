@@ -1374,6 +1374,89 @@ checkable instead: the Skills format contract (frontmatter `name`
 matches the containing directory, non-empty `description`, non-empty
 body) for both bundled files.
 
+**Template-based `init` (CLI `init --from-dir`/`--from-repo`, R
+`initialize_deck_project()`, issue #34) is real: a new project can be
+scaffolded from a local directory or a git repo instead of only the
+bundled minimal example.** `deckifyr.templates` is the new mechanism
+module (orchestration stays in `cli.py`'s `_cmd_init`, the same split
+`plan.py`/`editor.py`/`projectio.py` already established). Git access
+shells out to a real `git` binary (`git clone` + `git checkout <ref>`,
+a full non-shallow clone -- template repos are small, and this
+sidesteps any shallow-clone limitation on checking out an arbitrary
+commit SHA) rather than adding a new HTTP client dependency -- the same
+"shell out to an already-trusted external tool, raise
+`MissingDependencyError` if it's not on PATH" posture
+`deckifyr.renderers.preview` (LibreOffice) and `deckifyr.renderers.quarto`
+(Quarto) already establish; unlike those two, `git` gets no Homebrew
+cask entry in `R/run-python.R`'s `.homebrew_cask_for_dependency()` (it's
+a formula, not a cask, and near-universally already present), so its
+missing-dependency guidance always falls back to the plain install-URL
+branch. `--from-repo`'s `[host/]owner/repo[/subdir][@ref]` shorthand
+(`deckifyr.templates.resolve_repo_spec`) is the first host-qualified,
+remotes/pak-style ref grammar anywhere in the fyr ecosystem -- confirmed
+no prior art exists in `../quartifyr` before building this, and it has
+its own real test coverage for host-qualified specs
+(`tests/python/test_templates.py`), not just a comment asserting GitHub
+Enterprise support works. Host detection is a plain heuristic (the
+first `/`-segment is a host only if it contains a `.` or is
+`localhost` -- real hostnames do, real GitHub owner names essentially
+never do), and explicit `--ref`/`--subdir` flags always win over a
+`@ref`/`/subdir` embedded in the shorthand string. A full URL
+(containing `"://"`) is accepted verbatim instead, for any git host
+this shorthand can't express -- a bare local filesystem path is
+deliberately *not* a third accepted form (it would be ambiguous with
+the shorthand grammar: an absolute path's segments look exactly like
+`owner/repo/subdir`), and `--from-dir` already exists for local
+directories; a local checkout can still reach `--from-repo` spelled as
+a `file://` URL, which correctly takes the full-URL branch --
+`tests/python/test_templates.py`'s own git-fixture tests do exactly
+this. Structure detection (`deckifyr.templates.detect_template`)
+distinguishes a "typed" source (a `templates/` subdirectory, each entry
+its own `design`/`layouts`/`presentation.yaml` trio selected via
+`--type`, copied verbatim -- its `presentation.yaml` is meant to be a
+real, usable starter, not emptied, per the issue's own "various designs,
+layouts and minimal presentation configs" framing) from a "flat" source
+(a root `presentation.yaml`, whose `design.base`/`layouts` filenames are
+read directly via a plain `yaml.safe_load` rather than assumed to be
+literally named `design.yaml`/`layouts.yaml` or schema-validated --
+mirroring `deckifyr.projectio.load_project`'s own `base_dir`/
+`design_path`/`layouts_path` resolution, and deliberately not running
+the source's own `presentation.yaml` through `PresentationDocument
+.model_validate` since it's someone else's real deck that may reference
+`{rpfy}:`/Quarto content with no reason to resolve just to read two
+filenames). Only design + layouts are copied for a flat source, with a
+fresh minimal `presentation.yaml` generated to point at them --
+`deckifyr: schema.version.CURRENT_SCHEMA_VERSION` (a new
+`schema/version.py` constant, imported into `templates.py`; only
+`SUPPORTED_SCHEMA_VERSIONS` existed before), `metadata.title` from the
+target directory's own name,
+`build.output`/`build.manifest` following `inst/examples/minimal-deck/
+presentation.yaml`'s own `build/<name>.pptx` naming convention, and
+`slides: []` (confirmed schema-valid -- `PresentationDocument.slides`
+has no min-length constraint, only unique-id/watermark-text
+validators, and this generated document is still defensively
+`model_validate`d before being written, matching
+`validate_and_write_presentation`'s "never write what would fail its
+own schema" discipline). `materialize_template`'s conflict check
+follows `skills`' precedent (`_cmd_skills`, refuse only on the exact
+destination files a call is about to write, not `target`'s whole
+non-emptiness) rather than plain `init`'s whole-directory check --
+pulling a template into a directory that already has other files
+(`.git/`, `README.md`, ...) is this feature's own normal use case; the
+original no-flags `init` code path is untouched, byte-for-byte, and has
+its own regression test guarding that. v1 deliberately copies only
+`design.yaml`+`layouts.yaml` (or a typed source's `presentation.yaml`
+too) -- never the local assets they reference (a background image,
+`standard_footnotes.yaml`, fonts): `deckifyr.templates
+._scan_asset_warnings` emits a warning per uncopied local-path
+reference it finds (`design.slide.background_image` -- the *only*
+local-path-bearing `design.yaml` field, there is no
+`furniture.background.source` -- and `presentation.build.reportifyr
+.standard_footnotes`) into the CLI result's `warnings`, rather than
+attempting to resolve or copy it, the same "well-scoped, documented
+gap" posture the Quarto SVG/native-equation limitations already
+established elsewhere in this codebase.
+
 ## Testing strategy
 
 Today's tests are unit-level plus two kinds of true integration test:
