@@ -57,17 +57,22 @@ export interface AppState {
    * reload, and a hidden id that no longer exists (e.g. after Remove)
    * is simply inert. */
   hiddenFurnitureIds: string[];
-  /** Content vs Layout view for the selected *real* slide (issue #23's
-   * Content/Layout tab) -- "layout" shows/edits the selected slide's own
-   * named layout's zones (`layouts.yaml`) instead of the slide's own
-   * content, using the same drag/resize/rotate canvas. Always resets to
-   * `"content"` on `SELECT_SLIDE` (same reasoning `selectedElementId`
-   * already resets there): a layout name from the previously-selected
-   * slide isn't meaningful for the new one, and the furniture
-   * pseudo-slide has no layout of its own to show. Purely a client-side
-   * view mode, like `showFurniture` -- never sent to the server on its
-   * own; it only decides which `GET`/`PATCH` target `usePlan` uses. */
-  slideViewMode: "content" | "layout";
+  /** Which collection `SlideList`/`SlideCanvas`/`ElementInspector` show
+   * and edit (issue #30) -- "slides" is `presentation.yaml`'s own
+   * slides (the everyday case), "layouts" swaps the entire list to
+   * `layouts.yaml`'s own layouts, each editable as its own zones the
+   * same drag/resize/rotate canvas already supports (via
+   * `plan.layouts`/the `__layout__<name>` id convention `usePlan.ts`
+   * already established for issue #23's now-superseded per-slide
+   * Content/Layout tab). Unlike that superseded toggle, this is
+   * deliberately *not* reset on `SELECT_SLIDE` -- "the toggle remains
+   * persistent across the slides being edited" is issue #30's own
+   * wording, since the whole point is picking which collection to
+   * browse, not a per-slide view of one. The furniture pseudo-slide
+   * stays selectable in both modes (`SlideList` always shows it above
+   * whichever list this picks). Purely a client-side mode, like
+   * `showFurniture` -- never sent to the server on its own. */
+  editorMode: "slides" | "layouts";
   /** Whether the server's in-memory working copy (issue #24's deferred-
    * save editor) currently differs from what's on disk. Lives here, not
    * in `usePlan`'s own local state, specifically because it must survive
@@ -89,7 +94,7 @@ export const initialAppState: AppState = {
   future: [],
   showFurniture: false,
   hiddenFurnitureIds: [],
-  slideViewMode: "content",
+  editorMode: "slides",
   dirty: false,
 };
 
@@ -102,7 +107,7 @@ export type AppAction =
   | { type: "REDO" }
   | { type: "SET_SHOW_FURNITURE"; show: boolean }
   | { type: "TOGGLE_FURNITURE_HIDDEN"; elementId: string }
-  | { type: "SET_SLIDE_VIEW_MODE"; mode: "content" | "layout" }
+  | { type: "SET_EDITOR_MODE"; mode: "slides" | "layouts" }
   | { type: "SET_DIRTY"; dirty: boolean };
 
 const MIN_ZOOM = 0.1;
@@ -113,14 +118,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SELECT_SLIDE":
       // Changing slides always clears element selection -- a selected
       // element id from the previous slide isn't meaningful on the new
-      // one (ids aren't guaranteed unique across slides) -- and always
-      // resets back to Content view (see `slideViewMode`'s own docstring
-      // above for why).
+      // one (ids aren't guaranteed unique across slides). `editorMode`
+      // itself is untouched (see its own docstring above for why).
       return {
         ...state,
         selectedSlideId: action.slideId,
         selectedElementId: null,
-        slideViewMode: "content",
       };
 
     case "SELECT_ELEMENT":
@@ -155,8 +158,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_SHOW_FURNITURE":
       return { ...state, showFurniture: action.show };
 
-    case "SET_SLIDE_VIEW_MODE":
-      return { ...state, slideViewMode: action.mode, selectedElementId: null };
+    case "SET_EDITOR_MODE":
+      // Switching collections clears both selections -- a slide id from
+      // "slides" mode isn't a valid `__layout__<name>` id in "layouts"
+      // mode (or vice versa), and `usePlan`'s "default to the first
+      // item" effect repopulates `selectedSlideId` for whichever list is
+      // now active.
+      return { ...state, editorMode: action.mode, selectedSlideId: null, selectedElementId: null };
 
     case "SET_DIRTY":
       return { ...state, dirty: action.dirty };

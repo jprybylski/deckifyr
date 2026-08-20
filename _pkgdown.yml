@@ -89,6 +89,7 @@ reference:
     contents:
       - initialize_deck_project
       - deck_schema
+      - deck_export_skills
   - title: Run the web editor
     desc: >-
       Start and stop the bundled Python engine's local web application as

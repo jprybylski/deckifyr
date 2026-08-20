@@ -76,7 +76,7 @@ one after switching terminals or `deck_stop_server()`-ing a few:
 <!-- pkgdown copies man/figures/ to docs/reference/figures/ (confirmed via
      a local pkgdown::build_site() run) and auto-rewrites <img> src paths
      accordingly -- see examples.Rmd's own identical comment. -->
-<img src="../man/figures/web-app-editor.png" alt="The deckifyr web editor open against examples/demo-deck, showing the bound project path in the header, a synthetic Furniture entry above the numbered slide list, a Deck-wide options bar with Deck status/Status-watermark/Watermark override fields, an unchecked Show furniture toolbar toggle, the title slide's real content unobstructed, and the slide list/inspector panels" width="700" loading="lazy">
+<img src="../man/figures/web-app-editor.png" alt="The deckifyr web editor open against examples/demo-deck, showing the bound project path in the header, a Slides/Layouts mode toggle and a synthetic Furniture entry above the numbered slide list, a Deck-wide options bar with Deck status/Status-watermark/Watermark override fields, an unchecked Show furniture toolbar toggle, the title slide's real content unobstructed, and an Elements sidebar listing that slide's own elements" width="700" loading="lazy">
 <p style="font-size:0.85em;">The editor open against <code>examples/demo-deck</code> -- furniture hidden (the default)</p>
 </div>
 
@@ -108,27 +108,40 @@ plan and lets you:
   <p style="font-size:0.85em;">Adding a slide -- pick a layout or leave it freeform</p>
   </div>
 
-  Remove a slide from its own row's "Remove" button -- a two-step
-  inline confirm, not a browser dialog, with a reminder that Discard
-  still undoes it right up until you Save.
-* Toggle a selected slide between its **Content** and its **Layout**
-  (the toolbar's own Content/Layout switch) -- Layout view shows and
-  lets you drag/resize/rotate that slide's own named layout's zones
-  (`layouts.yaml`) directly, on the same canvas:
+  Each row's own corner carries two small icon buttons: a duplicate
+  button (⧉, copies that slide's layout/elements/notes into a new
+  `<id>-copy` slide right after it, no confirmation needed) and a remove
+  button (×, a two-step inline confirm, not a browser dialog, with a
+  reminder that Discard still undoes it right up until you Save).
+* Toggle the slide list itself between **Slides** and **Layouts** --
+  Layouts mode swaps the entire list to `layouts.yaml`'s own layouts;
+  selecting one shows and lets you drag/resize/rotate its zones directly
+  on the same canvas used for ordinary slide content. Unlike editing an
+  individual slide, this toggle is a persistent, deck-wide mode: it
+  stays put as you select different layouts (or the furniture
+  pseudo-slide, still reachable above the list either way), rather than
+  resetting per slide.
 
   <div style="margin: 1rem 0;">
-  <img src="../man/figures/web-app-layout-tab.png" alt="A slide toggled to Layout view: the toolbar shows Content and Layout buttons with Layout active, a banner reads Editing shared layout plot-with-note -- changes apply to every slide using it, and the canvas shows two empty zone boxes from that layout" width="700" loading="lazy">
-  <p style="font-size:0.85em;">Layout view on a slide using the "plot-with-note" layout</p>
+  <img src="../man/figures/web-app-layout-tab.png" alt="The slide list toggled to Layouts mode: Slides/Layouts buttons with Layouts active, a plot-with-note layout selected, a banner reading Editing shared layout plot-with-note -- changes apply to every slide using it, the canvas showing that layout's two empty zone boxes, and an Elements sidebar listing its three zones (text: title, slot: figure, slot: note)" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Layouts mode, editing the "plot-with-note" layout's own zones</p>
   </div>
 
   The banner is a real warning, not decoration: a layout is shared, so
-  repositioning a zone here moves it for *every* slide using that
-  layout, not just the one you switched from. The toggle is disabled
-  (with an inline reason) on the furniture pseudo-slide and on a
-  freeform slide, since neither has a layout of its own to edit.
+  repositioning a zone here moves it for *every* slide using it. "+ Add
+  layout" (in place of "+ Add slide" while in this mode) creates a new,
+  empty layout ready for zones; a layout's own remove button is a
+  two-step confirm too, previewing which slides use it -- **except**
+  the required `blank` layout, whose remove control is disabled outright
+  (every project needs one to reassign slides to, spec's own fallback).
+  Removing a layout that's still in use reassigns those slides to
+  `blank`, but is rejected instead -- with a specific, actionable
+  message, and nothing written -- if that reassignment would actually
+  leave a slide unbuildable (e.g. an override that relies entirely on
+  the removed layout's own zone for its `type`).
 * Set the deck's own status (`metadata.status` -- "demo", "draft",
   "final", ...) and toggle the deck-wide status/watermark placement
-  (`presentation.yaml`'s `status_indicator`, spec section 7.8) on or
+  (`presentation.yaml`'s `status_indicator`) on or
   off, from a "Deck-wide" bar above the slide list -- without opening
   the config editor. Both are real, persisted edits: they write to
   `presentation.yaml` and change what the *built* deck looks like. A
@@ -147,16 +160,41 @@ plan and lets you:
   <img src="../man/figures/web-app-furniture.png" alt="The same slide with Show furniture checked: the diagonal watermark and the branding/page-number corner placeholders are now visible on top of and around the real content, each labeled furniture: status / furniture: branding / furniture: page_number" width="700" loading="lazy">
   <p style="font-size:0.85em;">Same slide, "Show furniture" checked</p>
   </div>
+* Add and remove elements from the right-hand **Elements** sidebar --
+  one collapsed row per element on the selected slide (or layout);
+  clicking a row (or the same element on the canvas) expands it into
+  the same numeric box/rotation/z-index form dragging already updates.
+  "+ Add element" opens a small form below the list: an id, an element
+  type, and whichever fields that type actually needs -- a text area
+  for `text`/`markdown`, a path field for `image`/`table`, a shape-kind
+  dropdown for `shape`, nothing extra for `group`, and for
+  `reportifyr`/`quarto` a dropdown of real candidate files already found
+  in the project (reportifyr artifacts with a matching metadata sidecar;
+  `.qmd` fragments), not a hand-typed path to get exactly right:
+
+  <div style="margin: 1rem 0;">
+  <img src="../man/figures/web-app-add-element.png" alt="The Elements sidebar's Add element form open on the title slide: a New element id field (callout), a Type dropdown (text), and a Value textarea containing sample text, with Add and Cancel buttons below the two existing markdown elements" width="700" loading="lazy">
+  <p style="font-size:0.85em;">Adding a new text element from the Elements sidebar</p>
+  </div>
+
+  A new element gets a sensible centered default box, refined afterward
+  by dragging/resizing like any other element; each row's own Remove
+  button deletes it, no confirm step. `shape`/`group`/`table`/
+  `reportifyr`/`quarto` elements can be added and removed this way, but
+  still render as static, labeled placeholder boxes on the canvas -- see
+  "Currently unsupported features" below.
 * Select the synthetic **"⚙ Furniture"** entry above the numbered
   slide list to edit `design.yaml`'s `furniture` block itself --
   background/status-watermark/branding/page-number -- on its own
   canvas, with the same drag/resize/rotate interactions as ordinary
-  slide content, plus add/remove buttons for materializing or clearing
-  a kind's style. Background has no draggable geometry of its own (it
-  always fills the slide); the status placement can only be added once
-  a placement is chosen in the "Deck-wide" bar above, and its "Hide"
-  toggle only appears for the full-page watermark (the one placement
-  large enough to bury everything else while you're positioning it).
+  slide content. The same Elements sidebar drives this: each furniture
+  kind is its own row with Add/Remove buttons for materializing or
+  clearing its style. Background has no draggable geometry of its own
+  (it always fills the slide, so its row has a status hint instead of
+  Add/Remove); the status placement can only be added once a placement
+  is chosen in the "Deck-wide" bar above, and its "Hide" toggle only
+  appears for the full-page watermark (the one placement large enough
+  to bury everything else while you're positioning it).
 * Edit `design.yaml`/`layouts.yaml`/`presentation.yaml` from the
   Config tab, either as a schema-driven form (the default view) or as
   syntax-highlighted, live-validated raw JSON -- toggle between the two
@@ -172,51 +210,74 @@ plan and lets you:
   </div>
 * On the Build tab, see and edit where the built `.pptx` will go
   (`presentation.yaml`'s `build.output`) right there, instead of only
-  through the Config tab. Trigger a full build and watch it run as a
-  background job, or trigger a **Preview** -- one, several
-  (`e.g. 1,3`), or every slide. Preview needs LibreOffice; whether it's
-  actually installed is checked up front, with an install link shown
-  right there if it isn't, rather than only surfacing as a failed-job
-  error after you click. Both Build and Preview show an animated
-  progress bar while queued/running (the
-  backend doesn't report a real percentage, so this is honest about
-  that rather than faking one). A finished Preview shows a PNG per
-  requested slide plus an embedded PDF viewer of the whole deck (your
-  browser's own built-in PDF viewer, reused as-is):
+  through the Config tab -- either type a project-relative path
+  directly, or click **Browse…** to navigate the project's real
+  directory tree (one level at a time; a large, unrelated directory like
+  a populated `renv/library` is never walked as a whole) and type a
+  filename in whichever folder you land in. A **"Render slide previews
+  (PNG + PDF) with this build"** checkbox controls `build.previews`: on,
+  an ordinary Build also renders a PNG per slide and keeps the PDF
+  LibreOffice produces along the way, right alongside the `.pptx`.
+  Trigger a full build and watch it run as a background job, or trigger
+  a **Preview** -- one, several (`e.g. 1,3`), or every slide. Both the
+  previews checkbox and Preview need LibreOffice; whether it's actually
+  installed is checked up front, disabling whichever of the two you'd
+  otherwise click and showing an install link right there, rather than
+  only surfacing as a failed-job error after you try. If LibreOffice
+  goes missing in some other way it isn't caught up front (a mid-session
+  environment change, or a direct `deckifyr build`/`deck_build()` call
+  with `build.previews: true` outside the web editor entirely), the two
+  differ on purpose: an ordinary **Build** still succeeds -- previews
+  are skipped with a build warning instead of losing the `.pptx` you
+  actually asked for -- while an explicit **Preview** still fails
+  outright, since rendering previews is the entire point of that
+  request. Both Build and Preview show an animated progress bar while
+  queued/running (the backend doesn't report a real percentage, so this
+  is honest about that rather than faking one). A finished Build or
+  Preview shows a thumbnail per rendered slide -- click one to expand it
+  (only one expands at a time; click again, or click a different
+  thumbnail, to collapse it) -- plus a **"Show PDF preview"**
+  disclosure, collapsed by default so a large PDF is never even fetched
+  unless you actually ask for it:
 
   <div style="margin: 1rem 0;">
-  <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful Preview: an editable Output path field, a Build button, a Preview section with five rendered slide thumbnails, and an embedded PDF viewer below showing the first slide with page thumbnails on the left" width="700" loading="lazy">
-  <p style="font-size:0.85em;">A finished Preview: per-slide images plus the embedded PDF viewer</p>
+  <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful build with previews enabled: an editable Output path field with a Browse button, a checked 'Render slide previews' checkbox, manifest/pptx download links, five rendered slide thumbnails, and a collapsed 'Show PDF preview' disclosure below them" width="700" loading="lazy">
+  <p style="font-size:0.85em;">A finished build with previews enabled: expandable per-slide thumbnails plus a collapsed PDF disclosure</p>
   </div>
 * Download the resulting `.pptx`, its manifest, and any rendered
   previews once a build finishes.
 
-## What it deliberately doesn't do yet
+## Currently unsupported features
 
-This is an early slice of the editor (spec's own Phase 3), not a
-finished PowerPoint replacement -- some gaps are worth knowing about
-before you reach for it instead of editing YAML directly:
+Some things aren't supported by the editor yet -- worth knowing before
+you reach for it instead of editing YAML directly. Each one links to
+its tracking issue if it has one; if it doesn't, use the "open an
+issue" link to request it.
 
 * **No multi-select or clipboard.** One element at a time; no
-  copy/paste, no group-move.
-* **No on-canvas editing for `shape`/`group`/`table`/`reportifyr`/
-  `quarto` elements.** They render as static, labeled placeholder
-  boxes so you can see where they sit relative to everything else, but
-  moving, resizing, or editing their content still means editing the
-  YAML (or using `deck_set_config()`).
+  copy/paste, no group-move
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
+* **`shape`/`group`/`table`/`reportifyr`/`quarto` elements can be added
+  and removed, but not dragged/resized on the canvas or have their
+  content edited there.** They render as static, labeled placeholder
+  boxes so you can see where they sit relative to everything else and
+  add/remove them from the Elements sidebar, but repositioning by
+  dragging or editing their actual content still means editing the YAML
+  (or using `deck_set_config()`)
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **`image` elements are draggable, but you won't see the actual
   picture.** The API that backs the canvas returns an image element's
   source path, not its pixels, so an image is a placeholder box too --
   one that participates in drag/resize/rotate like a real image would,
-  just without a preview inside it.
+  just without a preview inside it
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **No image cropping or snapping guides.** Positioning is freehand;
-  there's no ruler/grid snap or alignment assist yet.
-* **Layout view only edits a layout's existing zones' geometry --
-  there's no way to add or remove a zone from the canvas.** Reshaping
-  what a layout (`layouts.yaml`) offers at all -- a new zone, or
-  deleting one -- still means editing the YAML or using
-  `deck_set_config()`; Layout view just repositions what's already
-  there.
+  there's no ruler/grid snap or alignment assist yet
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **The furniture pseudo-slide only edits geometry (box/rotation),
   never the underlying text.** A status/watermark or page-number
   element's displayed word isn't a literal `design.yaml` field -- it's
@@ -224,7 +285,9 @@ before you reach for it instead of editing YAML directly:
   format string) -- so double-clicking it there doesn't open a text
   editor the way branding's own literal `text` field does. Set the
   deck status from the "Deck-wide" bar instead, or the page-number
-  format from the Config tab.
+  format from the Config tab
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **The schema-driven config form falls back to raw JSON for a few
   field shapes.** Most fields -- strings, numbers, booleans, enums,
   nested objects, open dictionaries like `colors`/`text_styles`, arrays
@@ -237,7 +300,9 @@ before you reach for it instead of editing YAML directly:
   toggle away) always covers the whole document either way. Comments
   and formatting in the on-disk YAML still aren't preserved through a
   save, in either view -- the same limitation
-  `deck_set_config()`/`deck_*_slide()` already have.
+  `deck_set_config()`/`deck_*_slide()` already have
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 
 None of this is hidden behind the scenes -- if you hit one of these
 edges, dropping back to `deck_get_config()`/`deck_set_config()`/

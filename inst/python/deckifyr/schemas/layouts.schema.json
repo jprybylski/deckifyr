@@ -1,0 +1,357 @@
+{
+  "$defs": {
+    "Box": {
+      "additionalProperties": false,
+      "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "string"
+        },
+        "y": {
+          "title": "Y",
+          "type": "string"
+        },
+        "width": {
+          "title": "Width",
+          "type": "string"
+        },
+        "height": {
+          "title": "Height",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Box",
+      "type": "object"
+    },
+    "Element": {
+      "additionalProperties": false,
+      "description": "One element, as it appears in either a layout or a slide override.\n\n`id` is optional here because layouts.yaml and presentation.yaml's\ndict-keyed slide forms (spec section 7.6's `elements: {title: ...}`)\nuse the mapping key as the id; only the list-keyed freeform form\n(`elements: [{id: ..., ...}]`) sets it inline. Every field besides\n`type` is optional so an override can touch only what it changes,\nper the merge precedence in spec section 7.2.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "text",
+                "markdown",
+                "quarto",
+                "image",
+                "table",
+                "shape",
+                "group",
+                "slot",
+                "footnotes",
+                "reportifyr"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "value": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rotation"
+        },
+        "z_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Z Index"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
+        },
+        "center": {
+          "default": false,
+          "title": "Center",
+          "type": "boolean"
+        },
+        "align": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Align"
+        },
+        "table_style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Style"
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "enum": [
+                "contain",
+                "cover",
+                "stretch",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fit"
+        },
+        "overflow": {
+          "anyOf": [
+            {
+              "enum": [
+                "error",
+                "shrink",
+                "clip",
+                "continue"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overflow"
+        },
+        "render_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "native",
+                "svg",
+                "png",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Render Mode"
+        },
+        "alt_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alt Text"
+        },
+        "remove": {
+          "default": false,
+          "title": "Remove",
+          "type": "boolean"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "footer_placement": {
+          "anyOf": [
+            {
+              "enum": [
+                "below",
+                "notes",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footer Placement"
+        },
+        "shape_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "rectangle",
+                "rounded_rectangle",
+                "oval",
+                "triangle",
+                "diamond",
+                "pentagon",
+                "hexagon",
+                "chevron",
+                "right_arrow",
+                "left_arrow",
+                "up_arrow",
+                "down_arrow",
+                "star_5"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shape Kind"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "object"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elements"
+        }
+      },
+      "title": "Element",
+      "type": "object"
+    },
+    "Layout": {
+      "additionalProperties": false,
+      "properties": {
+        "elements": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Element"
+          },
+          "default": {},
+          "title": "Elements",
+          "type": "object"
+        }
+      },
+      "title": "Layout",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "deckifyr": {
+      "title": "Deckifyr",
+      "type": "string"
+    },
+    "layouts": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Layout"
+      },
+      "title": "Layouts",
+      "type": "object"
+    }
+  },
+  "required": [
+    "deckifyr",
+    "layouts"
+  ],
+  "title": "LayoutsDocument",
+  "type": "object"
+}

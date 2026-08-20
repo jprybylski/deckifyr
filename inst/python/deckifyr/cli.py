@@ -2,7 +2,16 @@
 
 Every subcommand from the spec is wired up with real argument parsing.
 `init`, `validate`, `build`, `preview`, `inspect`, and `schema` do real
-work today: `init` copies the bundled minimal example, `validate` loads
+work today: `init` copies the bundled minimal example by default, or
+scaffolds from `--from-dir PATH`/`--from-repo SPEC` instead (issue #34,
+`deckifyr.templates`) -- a local directory or a git repo (`git` must be
+on PATH; `SPEC` is `[host/]owner/repo[/subdir][@ref]` shorthand,
+defaulting to github.com, or a full URL) either duplicated as a "flat"
+source (its own `design.base`/`layouts` files copied under their
+original names, with a fresh minimal `presentation.yaml` generated) or,
+when it has a `templates/` subdirectory, a "typed" source selected via
+`--type NAME` (that type's `presentation.yaml` copied verbatim, as a
+real starter). `validate` loads
 and pydantic-validates a project (design + layouts + presentation,
 cross-checking layout references and box unit strings), `build` plans
 (`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest
@@ -20,7 +29,13 @@ blocking until interrupted -- it requires the `web` extra
 install guidance if `fastapi`/`uvicorn` aren't importable, the same
 "tell the caller what to install, don't crash on ImportError" posture
 `deckifyr.renderers.preview`/`deckifyr.renderers.quarto` already take
-for their own external dependencies.
+for their own external dependencies. `skills` (issue #50) exports the
+package's own bundled coding-agent skill files (Claude Skills-format
+`SKILL.md`s under `deckifyr/skills/`, one for `design.yaml`/
+`layouts.yaml` authoring and one for `presentation.yaml` authoring) into
+`--directory <target>/<skill-name>/SKILL.md` (default: cwd) -- it never
+assumes a `.claude/skills/` layout; the caller picks the target
+directory, same `directory` positional + `--force` shape as `init`.
 
 `get`/`set` and the `slide` subcommand group (issue #10) round-trip a
 design/layouts/presentation YAML file through `deckifyr.editor`'s pure
@@ -54,7 +69,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from deckifyr import editor, projectio
+from deckifyr import editor, projectio, templates
 from deckifyr.plan import expand_presentation
 from deckifyr.pptx import compose_and_write
 from deckifyr.schema.design import DesignDocument
@@ -79,7 +94,35 @@ def _examples_dir() -> Path:
 
 
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
+    # Template-based init (issue #34): --from-dir/--from-repo scaffold
+    # from a local directory or a git repo instead of the bundled
+    # minimal example -- deckifyr.templates owns the actual mechanism,
+    # this handler only validates flag combinations and dispatches.
+    if args.type is not None and not (args.from_dir or args.from_repo):
+        raise DeckifyrError(
+            "--type requires --from-dir or --from-repo", code=ErrorCode.IO
+        )
+    if (args.ref is not None or args.subdir is not None) and not args.from_repo:
+        raise DeckifyrError(
+            "--ref/--subdir require --from-repo", code=ErrorCode.IO
+        )
+    if args.from_dir and args.from_repo:
+        raise DeckifyrError(
+            "--from-dir and --from-repo are mutually exclusive", code=ErrorCode.IO
+        )
+
     target = Path(args.directory)
+    if args.from_dir or args.from_repo:
+        return templates.init_from_template(
+            target,
+            from_dir=args.from_dir,
+            from_repo=args.from_repo,
+            ref=args.ref,
+            subdir=args.subdir,
+            type_name=args.type,
+            force=args.force,
+        )
+
     target.mkdir(parents=True, exist_ok=True)
     existing = list(target.iterdir())
     if existing and not args.force:
@@ -91,6 +134,47 @@ def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
     for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
         source = _examples_dir() / name
         destination = target / name
+        shutil.copyfile(source, destination)
+        created.append(str(destination))
+
+    return {"directory": str(target), "created": created}
+
+
+# Bundled Claude Skills-format (SKILL.md) content (issue #50), one
+# directory per skill under inst/python/deckifyr/skills/ -- shipped as
+# package data (pyproject.toml's package-data), the same "bundled inside
+# the package" precedent inst/python/deckifyr/schemas/*.schema.json
+# already established for issue #49.
+_SKILL_NAMES = ("deckifyr-org-config", "deckifyr-presentation")
+
+
+def _skills_dir() -> Path:
+    return Path(__file__).resolve().parent / "skills"
+
+
+def _cmd_skills(args: argparse.Namespace) -> dict[str, Any]:
+    target = Path(args.directory)
+
+    # Only refuse on the exact destination files, not the whole target
+    # directory's non-emptiness (unlike _cmd_init) -- the target may be
+    # e.g. `.claude/skills`, which can legitimately already hold other,
+    # unrelated skills.
+    conflicts = [
+        str(target / name / "SKILL.md")
+        for name in _SKILL_NAMES
+        if (target / name / "SKILL.md").exists()
+    ]
+    if conflicts and not args.force:
+        raise DeckifyrError(
+            f"{', '.join(conflicts)} already exist (use --force to overwrite)",
+            code=ErrorCode.IO,
+        )
+
+    created = []
+    for name in _SKILL_NAMES:
+        source = _skills_dir() / name / "SKILL.md"
+        destination = target / name / "SKILL.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         created.append(str(destination))
 
@@ -123,6 +207,13 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     resolved_slides = expand_presentation(
         presentation, design, layouts, strict=args.strict
     )
+    # `keep_preview_pdf=True`: harmless when `build.previews` is off (no
+    # preview render happens at all, so `result.preview_pdf_path` stays
+    # `None`), and when a preview render does happen this build is already
+    # paying LibreOffice's PDF-conversion cost to make the PNGs -- keeping
+    # that intermediate PDF alongside the built `.pptx` (issue #32) is
+    # free, the same reasoning `_cmd_preview` below already uses for its
+    # own `keep_preview_pdf=True`.
     result = compose_and_write(
         presentation,
         design,
@@ -131,6 +222,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         presentation_path=presentation_path,
         design_path=(project_root / presentation.design.base).resolve(),
         layouts_path=(project_root / presentation.layouts).resolve(),
+        keep_preview_pdf=True,
     )
 
     return {
@@ -139,6 +231,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
         "previews": [str(p) for p in result.preview_paths],
+        "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
     }
 
 
@@ -310,8 +403,9 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     # flag -- see `compose_and_write`'s own docstring note on this.
     # `keep_preview_pdf=True`: this command already pays the LibreOffice
     # PDF-conversion cost, so keeping the intermediate PDF around (issue
-    # #27's embedded-PDF-viewer support) is free -- unlike an ordinary
-    # `build.previews: true` build, which never keeps it.
+    # #27's embedded-PDF-viewer support) is free -- `_cmd_build` above
+    # does the same (issue #32) whenever `build.previews` actually
+    # triggers a render.
     result = compose_and_write(
         presentation,
         design,
@@ -484,7 +578,47 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument("directory", nargs="?", default=".")
     init_parser.add_argument("--force", action="store_true")
+    init_parser.add_argument(
+        "--from-dir",
+        default=None,
+        metavar="PATH",
+        help="use a local directory as the template source instead of the bundled minimal example",
+    )
+    init_parser.add_argument(
+        "--from-repo",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "fetch a git repo as the template source: '[host/]owner/repo[/subdir][@ref]' "
+            "(host defaults to github.com) or a full URL; requires git on PATH"
+        ),
+    )
+    init_parser.add_argument(
+        "--ref",
+        default=None,
+        help="branch/tag/SHA to check out (only with --from-repo; overrides an embedded @ref)",
+    )
+    init_parser.add_argument(
+        "--subdir",
+        default=None,
+        help="subdirectory of the resolved repo to use (only with --from-repo; overrides an embedded subdir)",
+    )
+    init_parser.add_argument(
+        "--type",
+        default=None,
+        metavar="NAME",
+        help="template name under a source's templates/<name>/ structure",
+    )
     init_parser.set_defaults(handler=_cmd_init)
+
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help="export bundled coding-agent skill files (SKILL.md) for authoring "
+        "design/layouts/presentation YAML",
+    )
+    skills_parser.add_argument("directory", nargs="?", default=".")
+    skills_parser.add_argument("--force", action="store_true")
+    skills_parser.set_defaults(handler=_cmd_skills)
 
     def add_strict_flag(p: argparse.ArgumentParser) -> None:
         group = p.add_mutually_exclusive_group()

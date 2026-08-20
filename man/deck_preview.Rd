@@ -10,15 +10,25 @@ deck_preview(presentation)
 \item{presentation}{Path to \code{presentation.yaml}.}
 }
 \value{
-A parsed list from the CLI's JSON output, including \code{output}
-(the built \code{.pptx} path) and \code{previews} (one PNG path per slide).
+A parsed list from the CLI's JSON output:
+\describe{
+\item{\code{output}}{The built \code{.pptx} path.}
+\item{\code{slide_count}}{Number of slides composed.}
+\item{\code{previews}}{One PNG path per rendered slide.}
+\item{\code{preview_pdf}}{The intermediate PDF LibreOffice produced
+alongside those PNGs.}
+}
 }
 \description{
 Delegates to \verb{deckifyr preview} in the bundled Python engine: builds
 the project (regardless of its own \code{build.previews} setting) and
 rasterizes each slide to a standalone PNG via LibreOffice + PyMuPDF,
 alongside the ordinary \code{.pptx}/manifest output. Requires the external
-\code{soffice} binary (LibreOffice) on \code{PATH}.
+\code{soffice} binary (LibreOffice) on \code{PATH} -- unlike \code{\link[=deck_build]{deck_build()}}'s
+own opportunistic \code{build.previews: true} (which just skips previews
+with a warning when LibreOffice is missing), rendering previews is
+this function's entire purpose, so a missing \code{soffice} is always a
+hard failure here.
 }
 \examples{
 \dontrun{

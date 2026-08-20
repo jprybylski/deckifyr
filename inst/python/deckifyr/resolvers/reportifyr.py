@@ -135,10 +135,15 @@ def _find_artifact(project_root: Path, outputs_dir: str, name: str) -> Path:
     return matches[0]
 
 
-def _metadata_sidecar_path(artifact_path: Path) -> Path:
+def metadata_sidecar_path(artifact_path: Path) -> Path:
     """Reportifyr's own sidecar naming convention, confirmed in
     `write_object_metadata.R` and `reportipyr/footnotes.py::load_metadata`:
-    `<name>_<ext>_metadata.json` alongside the artifact.
+    `<name>_<ext>_metadata.json` alongside the artifact. Public (no
+    leading underscore) because `deckifyr.resolvers.discovery`'s
+    `list_reportifyr_artifacts` (issue #31) needs to invert this same
+    naming convention to find candidate artifacts, the same
+    "public for one specific cross-module caller" precedent
+    `deckifyr.plan`'s `FURNITURE_*_ID` constants already set.
     """
     suffix = artifact_path.suffix.lstrip(".")
     return artifact_path.with_name(f"{artifact_path.stem}_{suffix}_metadata.json")
@@ -147,7 +152,7 @@ def _metadata_sidecar_path(artifact_path: Path) -> Path:
 def _load_metadata(
     artifact_path: Path, *, fail_on_missing: bool
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    sidecar = _metadata_sidecar_path(artifact_path)
+    sidecar = metadata_sidecar_path(artifact_path)
     if not sidecar.is_file():
         if fail_on_missing:
             raise ContentValidationError(

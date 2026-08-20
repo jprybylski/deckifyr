@@ -17,6 +17,13 @@ Delegates to \verb{deckifyr schema} in the bundled Python engine. This one
 is fully functional today: it dumps the pydantic-generated JSON
 Schema for \code{design}, \code{layouts}, or \code{presentation}.
 }
+\details{
+For IDE YAML tooling (e.g. VS Code's YAML extension, via a
+\verb{# yaml-language-server: $schema=...} comment or a \code{yaml.schemas}
+setting) that needs a real file rather than this function's return
+value, the same schemas also ship as static files at
+\code{system.file("python", "deckifyr", "schemas", paste0(document, ".schema.json"), package = "deckifyr")} (issue #49).
+}
 \examples{
 \dontrun{
 schema <- deck_schema("design")

@@ -31,7 +31,7 @@ learned while building the scaffold.
 | `deckifyr.schema.merge` (deep-merge precedence, spec §7.2) | Real, tested |
 | `deckifyr.schema.{design,layouts,presentation}` (pydantic models, spec §7.4-7.7) | Real, tested |
 | `deckifyr.plan` (Pass 1: plan and shell expansion, spec §6) | Real, tested -- `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, plus document furniture (spec §7.8) expansion and per-slide speaker notes |
-| CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema` (spec §11.1) | Real, tested |
+| CLI `init`/`validate`/`build`/`preview`/`inspect`/`schema`/`skills` (spec §11.1) | Real, tested |
 | CLI `serve` | Argument parsing is real; raises `NotImplementedFeatureError` (exit code 4) -- Phase 3 |
 | `deckifyr.editor` + CLI `get`/`set`/`slide` (config/slide editing, spec §11.1/§11.2, issue #10) | Real, tested |
 | `deckifyr.renderers.preview` (slide preview rendering, spec §12/§18 Phase 3) | Real, tested against a live `soffice`/PyMuPDF install -- see this file's own "Preview rendering" section below |
@@ -884,6 +884,185 @@ scrolled together via `onScroll`. Switching Raw -> Form is blocked
 (with an inline error) while the current raw text doesn't parse, so the
 form is never handed a value that doesn't match what's on screen.
 
+**The Layouts editor mode (issue #30) replaces issue #23's per-slide
+Content/Layout tab with a persistent, app-wide toggle: `SlideList.tsx`'s
+own "Slides / Layouts" buttons (`state.editorMode`, `reducer.ts`) swap
+the *entire* numbered list between `presentation.yaml`'s slides and
+`layouts.yaml`'s layouts, rather than re-targeting whichever slide
+happened to be selected.** Every `layouts.yaml` is now required to
+define a `blank` layout (`deckifyr.schema.layouts.BLANK_LAYOUT_ID`,
+`LayoutsDocument`'s new `_check_has_blank_layout` validator) -- it's the
+fallback `DELETE /api/layouts/{name}` reassigns affected slides to when
+their own layout is removed, and it can never itself be removed
+(`editor.remove_layout` raises `UnremovableLayoutError`). Backend layout
+CRUD (`editor.add_layout`/`remove_layout`/`layouts_using`/
+`reassign_layout`) and the `GET`/`POST`/`DELETE /api/layouts` routes
+follow the exact precedent furniture CRUD (issue #21) and slide CRUD
+(issue #23) already set: web-editor-only, no CLI subcommand or R
+wrapper. `GET /api/layouts` resolves every layout eagerly (the same
+`_resolve_layout_zone` `GET /api/layouts/{name}` already used), replacing
+issue #23's on-demand single-layout fetch and the staleness-guard
+complexity that came with it (`layoutSlideReady` in `SlideCanvas.tsx`/
+`ElementInspector.tsx` is gone -- `usePlan.ts`'s `layouts` is just
+another eagerly-fetched array, the same shape `furnitureSlide` already
+is). Removing an in-use layout previews which slides would be
+reassigned *before* the confirm even fires -- computed client-side from
+`plan.slideLayouts`, no extra request needed -- but the server still
+rejects the removal outright (422, nothing committed on either document)
+if that reassignment would actually leave a slide unbuildable. This
+was a real discovery, not a designed-in feature: a naive
+"reassign to blank" against the demo-deck fixture immediately broke
+`content-slide`, because its own `title` override only sets `value` and
+relies entirely on its old layout's zone for `type`/`box` -- `blank` has
+no zones, so the override resolved to "no element type" at
+`expand_presentation` time. `remove_layout`'s route now runs that same
+`expand_presentation` as a dry run (against the edited-but-not-yet-
+committed `layouts`/`presentation` data) before committing either
+document, surfacing the specific slide/element/reason in the 422 rather
+than silently leaving the working copy in a state where an unrelated
+later `GET /api/plan` call starts failing. Building this also surfaced a
+real, previously-latent bug in `projectio.validate_presentation_data`:
+its `slide.layout` cross-check read `layouts.yaml` from disk, which was
+harmless before this feature (nothing ever edited `layouts.yaml`
+in-memory-only) but silently rejected a brand-new, unsaved layout as
+"unknown" the moment #30 made that possible. Fixed with a new
+`layouts_data` parameter (`None` -- every pre-existing caller -- keeps
+the old disk-read behavior exactly); every mutating route in `app.py`
+that calls it now passes `layouts_data=working_copy.get("layouts")`.
+
+**Element add/remove (issue #31) is real:
+`deckifyr.editor.add_element`/`remove_element` work against either
+document's `elements` block (a slide's own, or a layout's own zones --
+both the same dict-or-list shape, spec section 7.6), backing new
+`POST`/`DELETE /api/slides/{id}/elements[/{element_id}]` and
+`/api/layouts/{name}/elements[/{element_id}]` routes.** A new element's
+geometry is always a server-computed default box (`app.py`'s
+`_new_element_fields`, reusing `_default_box`/`_slide_size_in` the same
+way `_default_furniture_value` already does) -- centered, sized relative
+to the project's own slide dimensions, refined afterward by the same
+drag/resize the canvas already supports. `reportifyr`/`quarto` element
+types get a real file picker instead of a hand-typed path: new
+`deckifyr.resolvers.discovery.list_reportifyr_artifacts`/
+`list_quarto_fragments`, backing `GET /api/project/files?type=...`.
+`list_reportifyr_artifacts` inverts `reportifyr.metadata_sidecar_path`'s
+own `<stem>_<ext>_metadata.json` naming convention (now public,
+following the same "public for one specific cross-module caller"
+precedent `deckifyr.plan`'s `FURNITURE_*_ID` constants set) to find
+candidate artifacts, deliberately only surfacing ones that would
+actually resolve (a real artifact file *and* a matching sidecar both
+present) -- not every file under `outputs_dir`. On the frontend, a new
+`web/src/components/ElementList.tsx` sidebar replaces both
+`ElementInspector`'s old always-visible fixed slot and the standalone
+`FurnitureControls` bar (deleted) that used to sit above the canvas:
+one collapsed row per element, selecting a row (or the same element on
+`SlideCanvas`) expands it via the one shared `state.selectedElementId`
+-- the expanded content is `ElementInspector`'s existing box/rotation/
+z-index form, rendered inline for whichever row is selected rather than
+in its own separate sidebar slot; `App.tsx` no longer renders
+`ElementInspector` directly. On the furniture pseudo-slide, the same
+four fixed-cardinality Add/Remove/Hide controls `FurnitureControls` had
+are now list rows instead of a horizontal strip -- still going through
+`addFurnitureElement`/`removeFurnitureElement`, not the new generic
+element-CRUD routes, since furniture is deliberately not generic element
+CRUD (`app.py`'s own routing comment). Per-slide element counts
+(`SlideList.tsx`) now exclude synthesized `__furniture_*` entries --
+`slide.elements` from `GET /api/plan` includes them (furniture merges in
+at plan time, spec section 7.8), so the raw `.length` `SlideList` used
+to show was counting furniture as the slide's own content; shown as
+`(N)*`, a `title` tooltip explaining the `*`. `SlideList.tsx` also picked
+up two small polish items from the same issue's follow-up comments: a
+subtle `×`/`⧉` icon pair in each row's own corner (replacing a full-width
+"Remove" text button) for remove/duplicate, and duplicate
+(`POST /api/slides/{id}/duplicate`, a thin wrapper over the existing
+`editor.add_slide`'s own `elements`/`notes` passthrough -- no new
+`editor.py` function needed) auto-names the copy `<id>-copy` (`-copy-2`,
+...) with no naming prompt, since it's non-destructive and needs no
+confirm step the way Remove still does.
+
+**Build-tab improvements (issue #32) -- a real output-path directory
+browser, a build-time PDF-keeping change, and a shared preview-gallery
+component -- landed together as one issue but are three independent
+pieces.** `deckifyr.resolvers.discovery.list_project_directory` backs a
+new `GET /api/project/browse?dir=...` route: **one single level**
+(`Path.iterdir()`, never `rglob`) of one project-relative directory,
+capped at 500 combined entries (`truncated: true` past that). This is
+deliberately not the same shape as that module's own
+`list_reportifyr_artifacts`/`list_quarto_fragments`, which eagerly walk
+the whole project tree -- a directory picker has to stay usable against
+a project with a deep, unrelated tree it has no business walking (a
+populated `renv/library`, `node_modules`, ...), so `web/src/components
+/OutputPathBrowser.tsx` calls this once per directory an author actually
+clicks into, never up front. Second, independent piece: `_cmd_build`
+now passes `keep_preview_pdf=True` to `compose_and_write` unconditionally
+(a no-op when `build.previews` is off, since no preview render happens
+at all) and surfaces `preview_pdf` in its own result dict the same shape
+`_cmd_preview` already had -- an ordinary `deckifyr build` with
+`build.previews: true` now keeps the intermediate PDF LibreOffice
+produces alongside the PNGs, not just `deckifyr preview`, mirroring that
+command's own "already paying the conversion cost" reasoning. The Build
+tab's new checkbox ("Render slide previews (PNG + PDF) with this
+build") is bound straight to that same existing `build.previews` field --
+no new schema field, since one flag now controls both outputs. Third
+piece: `web/src/components/PreviewGallery.tsx` is the shared
+presentation for a job's `preview-N`/`pdf` artifacts, used by both the
+Build section's own results and the pre-existing standalone Preview
+section (previously the latter's only consumer) -- PNG thumbnails are
+small by default, a click toggles a single `expandedKey` so at most one
+is ever enlarged at a time; the PDF sits behind a `<summary>Show PDF
+preview</summary>` disclosure whose `<iframe>` is only actually rendered
+(not just visually hidden) once opened, confirmed the hard way while
+writing this: a closed native `<details>`'s children stay attached to
+the DOM, so an `<iframe src=...>` inside one still loads its `src`
+regardless of the `display: none` a closed `<details>` gives it --
+"never fetched unless requested" needed a real React-state-gated
+conditional render, not just relying on the native collapsed state.
+Toggling that disclosure is handled by the `<summary>`'s own `onClick`
+(`preventDefault` + flip state), not the native `"toggle"` DOM event --
+confirmed against a real test failure that the HTML spec fires
+`"toggle"` from a queued task, not synchronously with the click, which
+would make the very next render (in real usage, not just tests) lag one
+tick behind the visible native open/close for no benefit here.
+
+**The "Render slide previews" checkbox shipped without the same
+missing-LibreOffice guard the Preview button already had -- a real gap,
+caught by a user question right after issue #32 landed, not by any test
+in the suite that shipped with it.** `build.previews` existed in the
+schema well before the checkbox did, but only this checkbox made
+"enable it with no LibreOffice installed" reachable in one click instead
+of requiring a hand-edit of `presentation.yaml`. Two independent fixes,
+both confirmed against a real `deckifyr serve`/`deckifyr build` with
+`soffice` genuinely hidden from `PATH` (not just mocked): first,
+`BuildPanel.tsx`'s checkbox now shares the same `availability`/
+`previewUnavailable` state (`GET /api/preview/availability`) the Preview
+button already used, disabling itself and showing the same
+`AvailabilityWarning` component (extracted from what was previously the
+Preview section's own inline warning, now used in both places with a
+different `subject` string) rather than only failing after a real Build
+attempt. Second, as defense in depth for whatever that proactive check
+doesn't cover (a stale fetch, or a direct `deckifyr build` with
+`build.previews: true` and no web UI in front of it at all) --
+`deckifyr.pptx.compose.compose_and_write` now catches a
+`MissingDependencyError` from `render_slide_previews` and downgrades it
+to a plain string appended to the build's own `warnings` list *only*
+when triggered by `build.previews` (opportunistic); `force_previews`
+(`deckifyr preview`, and the web editor's own Preview button under the
+hood) still re-raises it as a hard failure, since that command's entire
+purpose is rendering previews -- there's no sensible "succeeded anyway"
+outcome for an explicit ask. This mattered because `prs.save(...)`
+(the `.pptx` itself) and the manifest write both happen around the
+preview-render call in `compose_and_write` -- before this fix, a build
+with `build.previews: true` and no LibreOffice lost the `.pptx` file
+outright from the job's own artifact list (the file was actually
+written to disk, `compose_and_write` just never returned a `BuildResult`
+naming it, since the `MissingDependencyError` propagated past the
+`prs.save(...)` that had already happened), reporting the whole job
+"failed" over what should be, at most, a warning. Confirmed the fix
+doesn't regress `deckifyr preview`'s own hard-failure contract via
+`test_preview_command_missing_libreoffice_still_raises`
+(`tests/python/test_pptx.py`), alongside
+`test_build_previews_missing_libreoffice_downgrades_to_a_warning` for
+the opportunistic case.
+
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found
 via a live user report, not caught by this repo's own mocked test
@@ -1156,6 +1335,127 @@ DESCRIPTION currently says). To actually bump the release version, edit
 version)" section into a new dated heading) -- never edit
 `DESCRIPTION`'s `Version:` directly, even when asked to "bump the
 patch version"; that request means `VERSION`, not `DESCRIPTION`.
+
+**Bundled coding-agent skills (CLI `skills`, R `deck_export_skills()`,
+issue #50) are real: hand-authored Claude Skills-format `SKILL.md` files
+shipped inside the package, exported to a caller-chosen directory rather
+than assumed to live under `.claude/skills/`.** Two skills ship this
+pass, matching the issue's own grouping -- `deckifyr-org-config`
+(authoring `design.yaml`/`layouts.yaml`, the org-level Style/Layout) and
+`deckifyr-presentation` (authoring `presentation.yaml`, a deck's own
+slide content) -- under `inst/python/deckifyr/skills/<skill-name>/
+SKILL.md`, shipped as package data (`pyproject.toml`'s
+`[tool.setuptools.package-data]`, the same "bundled inside the package"
+precedent `schemas/*.schema.json` (issue #49) already established) and
+therefore bundled into the R package automatically too (`inst/python` is
+bundled wholesale, no separate R-side wiring needed). `deckifyr skills
+[DIRECTORY] [--force]`/`_cmd_skills` in `cli.py` follow `_cmd_init`'s
+exact shape (`directory` positional default `.`, `--force` flag, same
+`{"directory", "created": [...]}` return) with one deliberate
+difference: it refuses only on the *exact destination files* that
+already exist (`<directory>/<skill-name>/SKILL.md`), not on the whole
+target directory being non-empty the way `_cmd_init` does -- the target
+is commonly `.claude/skills`, which may legitimately already hold other,
+unrelated skills, so treating any pre-existing sibling as a blocking
+conflict would be wrong. `R/skills.R`'s `deck_export_skills(directory =
+".", force = FALSE)` mirrors `initialize_deck_project()`'s CLI-arg-
+assembly shape, minus that function's pyro-provisioning calls (not
+applicable here -- this command touches no `pyproject.toml`/Python env).
+The skill content itself is written to stay evergreen without being
+mechanically regenerated (unlike the JSON Schema files, which really are
+derived 1:1 from a pydantic model): each `SKILL.md` points the agent at
+the *live* `deckifyr schema {design,layouts,presentation}` command and
+the bundled `inst/examples/minimal-deck/` files as the authoritative
+field reference and worked example, rather than duplicating an
+exhaustive field list that would silently drift as the schema evolves --
+`tests/python/test_skills_content.py` (mirroring
+`test_json_schema_files.py`'s framing) enforces what *is* mechanically
+checkable instead: the Skills format contract (frontmatter `name`
+matches the containing directory, non-empty `description`, non-empty
+body) for both bundled files.
+
+**Template-based `init` (CLI `init --from-dir`/`--from-repo`, R
+`initialize_deck_project()`, issue #34) is real: a new project can be
+scaffolded from a local directory or a git repo instead of only the
+bundled minimal example.** `deckifyr.templates` is the new mechanism
+module (orchestration stays in `cli.py`'s `_cmd_init`, the same split
+`plan.py`/`editor.py`/`projectio.py` already established). Git access
+shells out to a real `git` binary (`git clone` + `git checkout <ref>`,
+a full non-shallow clone -- template repos are small, and this
+sidesteps any shallow-clone limitation on checking out an arbitrary
+commit SHA) rather than adding a new HTTP client dependency -- the same
+"shell out to an already-trusted external tool, raise
+`MissingDependencyError` if it's not on PATH" posture
+`deckifyr.renderers.preview` (LibreOffice) and `deckifyr.renderers.quarto`
+(Quarto) already establish; unlike those two, `git` gets no Homebrew
+cask entry in `R/run-python.R`'s `.homebrew_cask_for_dependency()` (it's
+a formula, not a cask, and near-universally already present), so its
+missing-dependency guidance always falls back to the plain install-URL
+branch. `--from-repo`'s `[host/]owner/repo[/subdir][@ref]` shorthand
+(`deckifyr.templates.resolve_repo_spec`) is the first host-qualified,
+remotes/pak-style ref grammar anywhere in the fyr ecosystem -- confirmed
+no prior art exists in `../quartifyr` before building this, and it has
+its own real test coverage for host-qualified specs
+(`tests/python/test_templates.py`), not just a comment asserting GitHub
+Enterprise support works. Host detection is a plain heuristic (the
+first `/`-segment is a host only if it contains a `.` or is
+`localhost` -- real hostnames do, real GitHub owner names essentially
+never do), and explicit `--ref`/`--subdir` flags always win over a
+`@ref`/`/subdir` embedded in the shorthand string. A full URL
+(containing `"://"`) is accepted verbatim instead, for any git host
+this shorthand can't express -- a bare local filesystem path is
+deliberately *not* a third accepted form (it would be ambiguous with
+the shorthand grammar: an absolute path's segments look exactly like
+`owner/repo/subdir`), and `--from-dir` already exists for local
+directories; a local checkout can still reach `--from-repo` spelled as
+a `file://` URL, which correctly takes the full-URL branch --
+`tests/python/test_templates.py`'s own git-fixture tests do exactly
+this. Structure detection (`deckifyr.templates.detect_template`)
+distinguishes a "typed" source (a `templates/` subdirectory, each entry
+its own `design`/`layouts`/`presentation.yaml` trio selected via
+`--type`, copied verbatim -- its `presentation.yaml` is meant to be a
+real, usable starter, not emptied, per the issue's own "various designs,
+layouts and minimal presentation configs" framing) from a "flat" source
+(a root `presentation.yaml`, whose `design.base`/`layouts` filenames are
+read directly via a plain `yaml.safe_load` rather than assumed to be
+literally named `design.yaml`/`layouts.yaml` or schema-validated --
+mirroring `deckifyr.projectio.load_project`'s own `base_dir`/
+`design_path`/`layouts_path` resolution, and deliberately not running
+the source's own `presentation.yaml` through `PresentationDocument
+.model_validate` since it's someone else's real deck that may reference
+`{rpfy}:`/Quarto content with no reason to resolve just to read two
+filenames). Only design + layouts are copied for a flat source, with a
+fresh minimal `presentation.yaml` generated to point at them --
+`deckifyr: schema.version.CURRENT_SCHEMA_VERSION` (a new
+`schema/version.py` constant, imported into `templates.py`; only
+`SUPPORTED_SCHEMA_VERSIONS` existed before), `metadata.title` from the
+target directory's own name,
+`build.output`/`build.manifest` following `inst/examples/minimal-deck/
+presentation.yaml`'s own `build/<name>.pptx` naming convention, and
+`slides: []` (confirmed schema-valid -- `PresentationDocument.slides`
+has no min-length constraint, only unique-id/watermark-text
+validators, and this generated document is still defensively
+`model_validate`d before being written, matching
+`validate_and_write_presentation`'s "never write what would fail its
+own schema" discipline). `materialize_template`'s conflict check
+follows `skills`' precedent (`_cmd_skills`, refuse only on the exact
+destination files a call is about to write, not `target`'s whole
+non-emptiness) rather than plain `init`'s whole-directory check --
+pulling a template into a directory that already has other files
+(`.git/`, `README.md`, ...) is this feature's own normal use case; the
+original no-flags `init` code path is untouched, byte-for-byte, and has
+its own regression test guarding that. v1 deliberately copies only
+`design.yaml`+`layouts.yaml` (or a typed source's `presentation.yaml`
+too) -- never the local assets they reference (a background image,
+`standard_footnotes.yaml`, fonts): `deckifyr.templates
+._scan_asset_warnings` emits a warning per uncopied local-path
+reference it finds (`design.slide.background_image` -- the *only*
+local-path-bearing `design.yaml` field, there is no
+`furniture.background.source` -- and `presentation.build.reportifyr
+.standard_footnotes`) into the CLI result's `warnings`, rather than
+attempting to resolve or copy it, the same "well-scoped, documented
+gap" posture the Quarto SVG/native-equation limitations already
+established elsewhere in this codebase.
 
 ## Testing strategy
 

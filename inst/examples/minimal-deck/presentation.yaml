@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../python/deckifyr/schemas/presentation.schema.json
 # Minimal example deck used as a fixture by tests/python and
 # tests/testthat, and as the template `deckifyr init` copies into a new
 # project. Deliberately avoids {rpfy}: and Quarto fragment references --

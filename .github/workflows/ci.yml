@@ -4,10 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: # manual re-run for a dependabot/combined-prs branch skipped below
 
 jobs:
   python-tests:
     name: python pytest (${{ matrix.os }})
+    # Dependabot PRs and the github/combine-prs-generated combined PR (see
+    # combine-prs.yml) don't get automatic checks -- individually, they're
+    # too numerous to burn the full matrix on for a routine dependency
+    # bump; the combined PR runs manually (workflow_dispatch above) before
+    # merge instead. Any other PR is untouched.
+    if: github.event_name != 'pull_request' || (!startsWith(github.head_ref, 'dependabot/') && github.head_ref != 'combined-prs-branch')
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +42,8 @@ jobs:
   # this job.
   full-pipeline:
     name: R testthat (full R -> pyro -> Python pipeline)
+    # See python-tests' identical condition above.
+    if: github.event_name != 'pull_request' || (!startsWith(github.head_ref, 'dependabot/') && github.head_ref != 'combined-prs-branch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

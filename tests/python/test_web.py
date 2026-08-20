@@ -450,6 +450,249 @@ def test_patch_layout_element_unknown_zone_is_422(client):
     assert response.status_code == 422
 
 
+# --- layout add/remove (issue #30) ---------------------------------------
+
+
+def test_list_layouts_returns_every_layout_resolved(client):
+    response = client.get("/api/layouts")
+    assert response.status_code == 200
+    ids = {layout["id"] for layout in response.json()["layouts"]}
+    assert ids == {"__layout__title-content", "__layout__blank"}
+
+
+def test_add_layout_appends_an_empty_layout(client, project_dir):
+    response = client.post("/api/layouts", json={"id": "new-layout"})
+    assert response.status_code == 200
+    assert response.json()["dirty"] is True
+
+    layouts_path = project_dir / "layouts.yaml"
+    assert "new-layout" not in layouts_path.read_text()  # not written until Save
+
+    body = client.get("/api/layouts/new-layout").json()
+    assert body["elements"] == []
+
+
+def test_add_layout_duplicate_id_is_422(client):
+    response = client.post("/api/layouts", json={"id": "blank"})
+    assert response.status_code == 422
+
+
+def test_remove_layout_deletes_it(client):
+    client.post("/api/layouts", json={"id": "unused-layout"})
+    response = client.delete("/api/layouts/unused-layout")
+    assert response.status_code == 200
+    assert response.json()["reassigned_slides"] == []
+
+    listed = {layout["id"] for layout in client.get("/api/layouts").json()["layouts"]}
+    assert "__layout__unused-layout" not in listed
+
+
+def test_remove_layout_refuses_to_remove_blank(client):
+    response = client.delete("/api/layouts/blank")
+    assert response.status_code == 422
+
+
+def test_remove_layout_unknown_id_is_422(client):
+    response = client.delete("/api/layouts/does-not-exist")
+    assert response.status_code == 422
+
+
+def test_remove_layout_in_use_reassigns_slides_that_stay_buildable(client, project_dir):
+    # A fully self-sufficient list-form element (explicit type/box of
+    # its own) doesn't depend on its layout's own zone for anything, so
+    # reassigning its slide to `blank` (no zones) leaves it buildable.
+    client.post("/api/layouts", json={"id": "extra"})
+    client.post(
+        "/api/slides", json={"id": "self-sufficient", "layout": "extra"}
+    )
+    client.post(
+        "/api/slides/self-sufficient/elements",
+        json={"id": "label", "type": "text", "value": "hi"},
+    )
+
+    response = client.delete("/api/layouts/extra")
+    assert response.status_code == 200
+    assert response.json()["reassigned_slides"] == ["self-sufficient"]
+
+    plan = client.get("/api/plan").json()
+    assert plan["slide_layouts"]["self-sufficient"] == "blank"
+
+
+def test_remove_layout_in_use_is_blocked_when_reassignment_would_break_a_slide(client):
+    # `content-slide`'s own `title` override in the minimal-deck fixture
+    # only sets `value` -- it relies on "title-content"'s `title` zone
+    # for `type`/`box`, which `blank` (no zones) can't supply.
+    response = client.delete("/api/layouts/title-content")
+    assert response.status_code == 422
+    assert "content-slide" in response.json()["message"]
+
+    # Rejected before either document was touched.
+    plan = client.get("/api/plan").json()
+    assert plan["slide_layouts"]["content-slide"] == "title-content"
+
+
+# --- slide/layout element add/remove (issue #31) -------------------------
+
+
+def test_add_slide_element_inserts_with_a_default_box(client):
+    response = client.post(
+        "/api/slides/title/elements", json={"id": "new-el", "type": "text", "value": "hi"}
+    )
+    assert response.status_code == 200
+    assert response.json()["element"] == "new-el"
+
+    plan = client.get("/api/plan").json()
+    title_slide = next(s for s in plan["slides"] if s["id"] == "title")
+    new_el = next(el for el in title_slide["elements"] if el["id"] == "new-el")
+    assert new_el["type"] == "text"
+    assert new_el["value"] == "hi"
+    assert new_el["box"]["width"]
+
+
+def test_add_slide_element_duplicate_id_is_422(client):
+    response = client.post(
+        "/api/slides/title/elements", json={"id": "deck-title", "type": "text", "value": "hi"}
+    )
+    assert response.status_code == 422
+
+
+def test_add_slide_element_unknown_slide_is_404(client):
+    response = client.post(
+        "/api/slides/does-not-exist/elements", json={"id": "x", "type": "text"}
+    )
+    assert response.status_code == 404
+
+
+def test_remove_slide_element_deletes_it(client):
+    response = client.delete("/api/slides/title/elements/deck-title")
+    assert response.status_code == 200
+
+    plan = client.get("/api/plan").json()
+    title_slide = next(s for s in plan["slides"] if s["id"] == "title")
+    assert all(el["id"] != "deck-title" for el in title_slide["elements"])
+
+
+def test_remove_slide_element_unknown_id_is_404(client):
+    response = client.delete("/api/slides/title/elements/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_add_layout_element_inserts_a_zone(client, project_dir):
+    response = client.post(
+        "/api/layouts/blank/elements", json={"id": "new-zone", "type": "slot"}
+    )
+    assert response.status_code == 200
+
+    layouts_path = project_dir / "layouts.yaml"
+    assert "new-zone" not in layouts_path.read_text()  # not written until Save
+
+    body = client.get("/api/layouts/blank").json()
+    assert {el["id"] for el in body["elements"]} == {"new-zone"}
+
+
+def test_add_layout_element_unknown_layout_is_404(client):
+    response = client.post(
+        "/api/layouts/does-not-exist/elements", json={"id": "x", "type": "text"}
+    )
+    assert response.status_code == 404
+
+
+def test_remove_layout_element_deletes_it(client):
+    response = client.delete("/api/layouts/title-content/elements/footnotes")
+    assert response.status_code == 200
+
+    body = client.get("/api/layouts/title-content").json()
+    assert all(el["id"] != "footnotes" for el in body["elements"])
+
+
+def test_remove_layout_element_unknown_id_is_404(client):
+    response = client.delete("/api/layouts/title-content/elements/does-not-exist")
+    assert response.status_code == 404
+
+
+# --- slide duplicate (issue #31 follow-up) --------------------------------
+
+
+def test_duplicate_slide_copies_layout_elements_and_notes(client):
+    response = client.post("/api/slides/content-slide/duplicate", json={"id": "copy"})
+    assert response.status_code == 200
+    assert response.json()["id"] == "copy"
+
+    plan = client.get("/api/plan").json()
+    assert [s["id"] for s in plan["slides"]] == ["title", "content-slide", "copy"]
+    assert plan["slide_layouts"]["copy"] == plan["slide_layouts"]["content-slide"]
+
+
+def test_duplicate_slide_unknown_id_is_404(client):
+    response = client.post("/api/slides/does-not-exist/duplicate", json={"id": "copy"})
+    assert response.status_code == 404
+
+
+def test_duplicate_slide_duplicate_new_id_is_422(client):
+    response = client.post("/api/slides/content-slide/duplicate", json={"id": "title"})
+    assert response.status_code == 422
+
+
+# --- project file discovery (issue #31) -----------------------------------
+
+
+def test_list_project_files_reportifyr_finds_artifacts_with_metadata(client, project_dir):
+    outputs = project_dir / "OUTPUTS"
+    outputs.mkdir()
+    (outputs / "fig.png").write_bytes(b"x")
+    (outputs / "fig_png_metadata.json").write_text("{}")
+
+    response = client.get("/api/project/files", params={"type": "reportifyr"})
+    assert response.status_code == 200
+    assert response.json()["files"] == ["fig.png"]
+
+
+def test_list_project_files_quarto_finds_qmd_files(client, project_dir):
+    (project_dir / "frag.qmd").write_text("# hi\n")
+
+    response = client.get("/api/project/files", params={"type": "quarto"})
+    assert response.status_code == 200
+    assert response.json()["files"] == ["frag.qmd"]
+
+
+def test_list_project_files_unknown_type_is_422(client):
+    response = client.get("/api/project/files", params={"type": "bogus"})
+    assert response.status_code == 422
+
+
+# --- project directory browsing (issue #32) --------------------------------
+
+
+def test_browse_project_lists_the_root_by_default(client, project_dir):
+    (project_dir / "build").mkdir()
+
+    response = client.get("/api/project/browse")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dir"] == ""
+    assert "build" in body["dirs"]
+    assert "presentation.yaml" in body["files"]
+    assert body["truncated"] is False
+
+
+def test_browse_project_navigates_into_a_subdirectory(client, project_dir):
+    sub = project_dir / "build"
+    sub.mkdir()
+    (sub / "existing.pptx").write_bytes(b"x")
+
+    response = client.get("/api/project/browse", params={"dir": "build"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dir"] == "build"
+    assert body["dirs"] == []
+    assert body["files"] == ["existing.pptx"]
+
+
+def test_browse_project_rejects_a_dir_that_escapes_the_project_root(client):
+    response = client.get("/api/project/browse", params={"dir": "../../etc"})
+    assert response.status_code == 422
+
+
 # --- furniture pseudo-slide (issue #21) ---------------------------------
 
 

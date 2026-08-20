@@ -1,3 +1,4 @@
+import importlib
 import json
 
 import pytest
@@ -27,7 +28,7 @@ from deckifyr.schema.design import (
     TableStyle,
     TextStyle,
 )
-from deckifyr.schema.errors import ContentValidationError
+from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.presentation import (
     BuildConfig,
@@ -37,6 +38,17 @@ from deckifyr.schema.presentation import (
     ReportifyrConfig,
     Slide,
 )
+
+# Not `import deckifyr.pptx.compose as compose_module` -- `deckifyr.pptx`'s
+# own `__init__.py` does `from deckifyr.pptx.compose import ... compose
+# ...`, which rebinds the `compose` *attribute* on the `deckifyr.pptx`
+# package object to that function, shadowing the submodule of the same
+# name; `import a.b.c as x` resolves via attribute access, not
+# `sys.modules`, so it would silently bind `compose_module` to the
+# function instead of the module. `importlib.import_module` looks up
+# `sys.modules` directly, sidestepping the shadowing -- the same fix
+# `test_pptx_quarto.py` already uses for this exact package.
+compose_module = importlib.import_module("deckifyr.pptx.compose")
 
 
 def test_contain_letterboxes_and_centers():
@@ -105,7 +117,7 @@ def project(tmp_path):
 
 
 def _build(project, presentation, design):
-    layouts = LayoutsDocument(deckifyr="0.1", layouts={})
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
     resolved = expand_presentation(presentation, design, layouts, strict=True)
     return compose_and_write(
         presentation,
@@ -972,3 +984,63 @@ def test_watermark_with_a_high_z_index_paints_on_top_of_ordinary_content(project
     )
     assert alpha is not None
     assert alpha.get("val") == "30000"
+
+
+# --- build.previews + a missing LibreOffice (issue #32 follow-up) --------
+
+
+def _raise_missing_soffice(*args, **kwargs):
+    raise MissingDependencyError(
+        "LibreOffice binary 'soffice' was not found on PATH",
+        name="soffice",
+        display_name="LibreOffice",
+        install_url="https://www.libreoffice.org/download/download/",
+    )
+
+
+def test_build_previews_missing_libreoffice_downgrades_to_a_warning(
+    project, monkeypatch
+):
+    # `build.previews: true` is opportunistic -- a missing LibreOffice
+    # must not cost the author the `.pptx`/manifest an ordinary build
+    # would otherwise have produced (this was a real, previously-latent
+    # gap the web editor's own "Render slide previews" checkbox, issue
+    # #32, made trivially reachable).
+    monkeypatch.setattr(compose_module, "render_slide_previews", _raise_missing_soffice)
+    presentation = _presentation()
+    presentation.build.previews = True
+    design = _design()
+
+    result = _build(project, presentation, design)
+
+    assert result.output_path.is_file()
+    assert result.manifest_path.is_file()
+    assert result.preview_paths == []
+    assert result.preview_pdf_path is None
+    assert any("LibreOffice" in w for w in result.warnings)
+
+
+def test_preview_command_missing_libreoffice_still_raises(project, monkeypatch):
+    # `force_previews=True` is `deckifyr preview`'s own escape hatch
+    # (also what the web editor's standalone Preview button ultimately
+    # triggers) -- an explicit request to render previews with nothing
+    # else to fall back on, so a missing LibreOffice there must still be
+    # a hard failure, unlike the opportunistic `build.previews: true`
+    # case above.
+    monkeypatch.setattr(compose_module, "render_slide_previews", _raise_missing_soffice)
+    presentation = _presentation()
+    design = _design()
+    layouts = LayoutsDocument(deckifyr="0.1", layouts={"blank": Layout()})
+    resolved = expand_presentation(presentation, design, layouts, strict=True)
+
+    with pytest.raises(MissingDependencyError):
+        compose_module.compose_and_write(
+            presentation,
+            design,
+            resolved,
+            project_root=project,
+            presentation_path=project / "presentation.yaml",
+            design_path=project / "design.yaml",
+            layouts_path=project / "layouts.yaml",
+            force_previews=True,
+        )

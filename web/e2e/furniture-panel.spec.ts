@@ -31,7 +31,7 @@ test("Show furniture toggles whether the furniture overlay is clickable on the r
   await page.getByText("⚙ Furniture").click();
   await page.getByLabel(/Show furniture/).check();
   await page
-    .locator(".furniture-controls__item", { hasText: "Branding" })
+    .locator(".element-list__item", { hasText: "Branding" })
     .getByRole("button", { name: "Add" })
     .click();
 
@@ -51,14 +51,24 @@ test("Show furniture toggles whether the furniture overlay is clickable on the r
   await expect(page.getByText("__furniture_branding")).toBeVisible();
 
   await canvas.click({ position: titleCenter });
-  await expect(page.getByText("deck-title")).toBeVisible();
+  // `exact: true` -- the sidebar's own collapsed row for this element
+  // reads "markdown: deck-title" (`ElementList.tsx`), a substring match
+  // that would otherwise collide with `ElementInspector`'s own
+  // `element-inspector__id` paragraph (the actual thing this assertion
+  // means to check).
+  await expect(page.getByText("deck-title", { exact: true })).toBeVisible();
 
   await page.getByLabel(/Show furniture/).uncheck();
   await canvas.click({ position: brandingCenter });
   // Branding is filtered out of what's paintable/clickable now -- the
   // click lands on nothing furniture-related, so selection stays on
   // deck-title rather than picking up branding again.
-  await expect(page.getByText("deck-title")).toBeVisible();
+  // `exact: true` -- the sidebar's own collapsed row for this element
+  // reads "markdown: deck-title" (`ElementList.tsx`), a substring match
+  // that would otherwise collide with `ElementInspector`'s own
+  // `element-inspector__id` paragraph (the actual thing this assertion
+  // means to check).
+  await expect(page.getByText("deck-title", { exact: true })).toBeVisible();
   await expect(page.getByText("__furniture_branding")).not.toBeVisible();
 });
 
@@ -66,7 +76,7 @@ test("Branding: Add creates a default style, Remove deletes it", async ({ page }
   await page.getByText("⚙ Furniture").click();
   await page.getByLabel(/Show furniture/).check();
 
-  const brandingItem = page.locator(".furniture-controls__item", { hasText: "Branding" });
+  const brandingItem = page.locator(".element-list__item", { hasText: "Branding" });
   await brandingItem.getByRole("button", { name: "Add" }).click();
   await expect(brandingItem.getByRole("button", { name: "Remove" })).toBeVisible();
 
@@ -78,7 +88,7 @@ test("Page number: Add creates a default style, Remove deletes it", async ({ pag
   await page.getByText("⚙ Furniture").click();
   await page.getByLabel(/Show furniture/).check();
 
-  const pageNumberItem = page.locator(".furniture-controls__item", { hasText: "Page number" });
+  const pageNumberItem = page.locator(".element-list__item", { hasText: "Page number" });
   await pageNumberItem.getByRole("button", { name: "Add" }).click();
   await expect(pageNumberItem.getByRole("button", { name: "Remove" })).toBeVisible();
 
@@ -89,11 +99,18 @@ test("Page number: Add creates a default style, Remove deletes it", async ({ pag
 test("selecting the Furniture pseudo-slide shows its own controls, an ordinary slide does not", async ({
   page,
 }) => {
-  await expect(page.locator(".furniture-controls")).not.toBeVisible();
+  // `ElementList.tsx` (issue #31) is always mounted as the right-hand
+  // sidebar -- what distinguishes the furniture pseudo-slide is its
+  // content (a "Furniture" heading and the four fixed rows), not the
+  // sidebar's own presence.
+  await expect(page.getByRole("heading", { name: "Elements" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Furniture" })).not.toBeVisible();
 
   await page.getByText("⚙ Furniture").click();
-  await expect(page.locator(".furniture-controls")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Furniture" })).toBeVisible();
+  await expect(page.locator(".element-list__item", { hasText: "Background" })).toBeVisible();
 
   await page.getByText("2. content-slide").click();
-  await expect(page.locator(".furniture-controls")).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Furniture" })).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Elements" })).toBeVisible();
 });

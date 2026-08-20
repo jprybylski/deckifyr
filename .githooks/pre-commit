@@ -39,12 +39,13 @@
 #
 # man/figures/web-app-editor.png/web-app-no-project.png/web-app-
 # furniture.png/web-app-layout-tab.png/web-app-add-slide.png/
-# web-app-build-preview.png/web-app-color-swatch.png (used in
-# vignettes/articles/web-app.Rmd) are a second, independent asset group,
-# checked separately below -- real screenshots of the web editor
-# (inst/python/deckifyr/web/static/'s built frontend, served by a real
-# `deckifyr serve`), not something a build step regenerates. Regenerate
-# with Playwright against a real running server, e.g.:
+# web-app-add-element.png/web-app-build-preview.png/
+# web-app-color-swatch.png (used in vignettes/articles/web-app.Rmd) are
+# a second, independent asset group, checked separately below -- real
+# screenshots of the web editor (inst/python/deckifyr/web/static/'s
+# built frontend, served by a real `deckifyr serve`), not something a
+# build step regenerates. Regenerate with Playwright against a real
+# running server, e.g.:
 #   npm --prefix web run build
 #   # use a scratch copy of examples/demo-deck, not the tracked one --
 #   # the "Show furniture"/"Deck-wide" toggles write real PUTs/PATCHes
@@ -56,14 +57,48 @@
 #   # screenshot http://127.0.0.1:8330/ at 1400x900, zoom set to 75% via
 #   # the toolbar's own <select> so a 13.333in-wide slide fits the
 #   # viewport, "Show furniture" left unchecked (the default) -- save as
-#   # man/figures/web-app-editor.png; check "Show furniture" and
-#   # re-screenshot for man/figures/web-app-furniture.png
+#   # man/figures/web-app-editor.png.
+#   #
+#   # Window-size note for whoever/whatever drives the browser (tested
+#   # against claude-in-chrome's own resize_window/computer tools, not
+#   # assumed): resize_window's requested WxH does not map 1:1 to the
+#   # screenshot's own pixel dimensions (DPR + window chrome), but on a
+#   # *fresh* tab, resized once immediately after creation and BEFORE
+#   # navigating, it reliably reproduces the same output size every
+#   # time (confirmed: 1400x900 requested -> 1519x784 captured, three
+#   # separate fresh-tab trials, byte-different pages, identical output
+#   # size). A real, confirmed trap this note exists because of: calling
+#   # an element-lookup helper (e.g. claude-in-chrome's `find`, or
+#   # `javascript_tool`) right before the *final* capture on an
+#   # already-set-up tab produced one screenshot 1400x757 instead of the
+#   # other four's 1519x784 in the same session, with no explicit resize
+#   # call in between -- these tools appear to transiently touch the
+#   # viewport (devtools-adjacent inspection), so prefer plain
+#   # coordinate clicks (read positions off an earlier screenshot,
+#   # per computer's own tool description) for whichever interactions
+#   # lead directly into a screenshot you're keeping, saving `find`/
+#   # `javascript_tool` for earlier setup steps (e.g. the zoom `<select>`,
+#   # which resists a plain click+keyboard approach) or a throwaway
+#   # calibration shot you'll discard. If a shot still comes out an odd
+#   # size, redo it on a brand new tab rather than reusing the drifted
+#   # one. Match whatever size the *rest* of this asset group already
+#   # is (`file man/figures/web-app-*.png`) rather than a fresh guess.
+#   #
+#   # check "Show furniture" and re-screenshot for
+#   # man/figures/web-app-furniture.png
 #   # repeat against an empty project directory (no presentation.yaml)
 #   # for man/figures/web-app-no-project.png
-#   # select a real slide, toggle the toolbar's Content/Layout switch to
-#   # Layout, for man/figures/web-app-layout-tab.png
+#   # in the slide list, toggle Slides/Layouts to Layouts and select a
+#   # layout with real zones (e.g. plot-with-note in demo-deck), for
+#   # man/figures/web-app-layout-tab.png (filename predates the mode
+#   # toggle's own issue #30 redesign -- kept as-is, not renamed, to
+#   # avoid churning this hook/CONTRIBUTING.md/the vignette's <img> src
+#   # for a cosmetic rename alone)
 #   # click "+ Add slide" in the slide list for
 #   # man/figures/web-app-add-slide.png
+#   # back in Slides mode, select an ordinary slide and click "+ Add
+#   # element" in the Elements sidebar (issue #31) for
+#   # man/figures/web-app-add-element.png
 #   # open the Build tab (editable output path + Preview section -- a
 #   # real render if this machine has soffice, otherwise the "LibreOffice
 #   # not installed" message is still a real, useful screenshot of that
@@ -79,71 +114,140 @@
 # machine-checkable half of the same rule, kept next to it so they're
 # easy to update together.
 
-if [ -n "$SKIP_DOCS_ASSET_CHECK" ]; then
-  exit 0
-fi
-
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
 
-assets_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/demo-deck(-[a-z-]+\.png|\.pptx)$')
+# SKIP_DOCS_ASSET_CHECK only silences the rendered-doc-asset *reminders*
+# below (demo-deck-*.png/.pptx and the web-app-*.png screenshots) -- it
+# must not also silence the web/ test-and-rebuild enforcement further
+# down, which has its own separate SKIP_WEB_CHECKS escape hatch. An
+# earlier version of this hook exited unconditionally on
+# SKIP_DOCS_ASSET_CHECK before reaching that block at all, which quietly
+# contradicted that block's own comment claiming it "always blocks" --
+# never actually true whenever a developer had SKIP_DOCS_ASSET_CHECK set
+# for an unrelated demo-deck edit.
+#
+# The demo-deck/screenshot reminder *detection* runs here, early, so it
+# doesn't depend on anything the web test-and-rebuild block below might
+# stage -- but the actual echo/exit for it is deferred to the very end
+# of the script (see "found" below), printed *after* that block's own
+# vitest/Playwright/build output instead of before it. Tried printing it
+# here first (the obvious order) and confirmed by hand that it's a real
+# usability trap: vitest alone runs ~150 tests and Playwright's `uv run
+# deckifyr serve` webServer logs every request, so an early reminder
+# scrolls off well before the commit actually gets rejected, and it's
+# easy to misread the final failure as coming from the test/build step
+# that happened to run last instead of this one -- the exact "stale
+# screenshots keep landing anyway" pattern issue #33 was filed over,
+# now compounded by issue #41's own fix adding a wall of test output in
+# between. Printing this reminder last -- as the actual final thing on
+# screen before the hook exits -- is the fix, not a bigger detector.
 found=0
+screenshot_reminder=""
 
-check_group() {
-  label="$1"
-  pattern="$2"
-  [ "$assets_touched" -gt 0 ] && return
-  if printf '%s\n' "$staged" | grep -qE "$pattern"; then
-    echo "pre-commit reminder: staged changes touch a source for $label" >&2
-    echo "  (man/figures/demo-deck-*.png and demo-deck.pptx may now be stale -- see this hook's own header for the regeneration recipe)" >&2
+if [ -z "$SKIP_DOCS_ASSET_CHECK" ]; then
+  assets_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/demo-deck(-[a-z-]+\.png|\.pptx)$')
+
+  check_group() {
+    label="$1"
+    pattern="$2"
+    [ "$assets_touched" -gt 0 ] && return
+    if printf '%s\n' "$staged" | grep -qE "$pattern"; then
+      screenshot_reminder="${screenshot_reminder}pre-commit reminder: staged changes touch a source for $label
+  (man/figures/demo-deck-*.png and demo-deck.pptx may now be stale -- see this hook's own header for the regeneration recipe)
+"
+      found=1
+    fi
+  }
+
+  check_group "the demo-deck example" \
+    '^examples/demo-deck/(design\.yaml|layouts\.yaml|presentation\.yaml|standard_footnotes\.yaml|assets/|OUTPUTS/)'
+
+  check_group "the PPTX compositor/planner/resolvers demo-deck exercises" \
+    '^inst/python/deckifyr/(schema/|plan\.py|pptx/|resolvers/)'
+
+  # Separate asset group, separate "touched" check (deliberately not folded
+  # into check_group()/assets_touched above -- those two are specifically
+  # about the demo-deck PNG/PPTX group, and touching one must not silence a
+  # reminder about this unrelated pair of web-editor screenshots).
+  web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture|layout-tab|add-slide|add-element|build-preview|color-swatch)\.png$')
+  if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^web/src/'; then
+    screenshot_reminder="${screenshot_reminder}pre-commit reminder: staged changes touch the web editor's frontend source
+  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png/web-app-layout-tab.png/web-app-add-slide.png/web-app-add-element.png/web-app-build-preview.png/web-app-color-swatch.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)
+"
     found=1
   fi
-}
-
-check_group "the demo-deck example" \
-  '^examples/demo-deck/(design\.yaml|layouts\.yaml|presentation\.yaml|standard_footnotes\.yaml|assets/|OUTPUTS/)'
-
-check_group "the PPTX compositor/planner/resolvers demo-deck exercises" \
-  '^inst/python/deckifyr/(schema/|plan\.py|pptx/|resolvers/)'
-
-# Separate asset group, separate "touched" check (deliberately not folded
-# into check_group()/assets_touched above -- those two are specifically
-# about the demo-deck PNG/PPTX group, and touching one must not silence a
-# reminder about this unrelated pair of web-editor screenshots).
-web_screenshots_touched=$(printf '%s\n' "$staged" | grep -cE '^man/figures/web-app-(editor|no-project|furniture|layout-tab|add-slide|build-preview|color-swatch)\.png$')
-if [ "$web_screenshots_touched" -eq 0 ] && printf '%s\n' "$staged" | grep -qE '^web/src/'; then
-  echo "pre-commit reminder: staged changes touch the web editor's frontend source" >&2
-  echo "  (man/figures/web-app-editor.png/web-app-no-project.png/web-app-furniture.png/web-app-layout-tab.png/web-app-add-slide.png/web-app-build-preview.png/web-app-color-swatch.png, used in vignettes/articles/web-app.Rmd, may now be stale -- see CONTRIBUTING.md for how to regenerate them)" >&2
-  found=1
 fi
 
 # Third, separate check: inst/python/deckifyr/web/static/ is not a docs
 # asset, it's the actual shipped frontend bundle -- the Python
 # wheel/R package install it, and `deckifyr serve` serves it directly
 # (CONTRIBUTING.md's "Rebuilding the web frontend" section documents the
-# rule; this is that rule enforced, not a stale-docs reminder to be
-# skipped with SKIP_DOCS_ASSET_CHECK). Runtime already carries its own
-# best-effort mtime-based check (`_frontend_build_warning` in
-# `inst/python/deckifyr/web/app.py`, surfaced via `deckifyr serve`'s
-# stderr and `GET /api/health`) but mtimes on a fresh checkout aren't
-# reliable -- this staged-content check is the authoritative one, so it
-# is not gated behind `found`/SKIP_DOCS_ASSET_CHECK and always blocks.
-if printf '%s\n' "$staged" | grep -qE '^web/(src/|package(-lock)?\.json)' \
-  && ! printf '%s\n' "$staged" | grep -qE '^inst/python/deckifyr/web/static/'; then
-  echo "pre-commit error: staged changes touch web/src/ (or web/'s package files) but not" >&2
-  echo "  inst/python/deckifyr/web/static/ -- the committed frontend build is now stale." >&2
-  echo "  Run: cd web && npm install && npm run build" >&2
-  echo "  then stage the resulting diff under inst/python/deckifyr/web/static/." >&2
-  echo "  Bypass only for changes that can't affect the build output (e.g. *.test.ts*" >&2
-  echo "  files, which the build excludes) with git commit --no-verify." >&2
-  exit 1
+# rule). This used to just hard-block and tell the human to rebuild by
+# hand -- but nothing forced that to actually happen before committing,
+# and nothing ran the frontend's own test suites either (issue #41:
+# "no forcing functions for the static elements of the web app to be
+# rebuilt at any step of development", so what got boxed up wasn't
+# rigorously tested or necessarily the intended build). This block now
+# runs the checks itself instead of asking for them -- vitest, a real
+# Playwright e2e run against `deckifyr serve` (needs `uv`, mirroring
+# test-wiring.R's/test_renderers_quarto.py's own "skip cleanly when the
+# toolchain is absent" posture elsewhere in this repo), then
+# `npm run build`, auto-staging whatever changed under
+# inst/python/deckifyr/web/static/ -- so what lands in the commit is
+# always the real output of a green build, not a promise that one was
+# run by hand. Not gated behind SKIP_DOCS_ASSET_CHECK (that's for the
+# separate rendered-doc-asset reminders above); use SKIP_WEB_CHECKS=1 or
+# --no-verify instead.
+if printf '%s\n' "$staged" | grep -qE '^web/(src/|package(-lock)?\.json)'; then
+  if [ -n "$SKIP_WEB_CHECKS" ]; then
+    echo "pre-commit: SKIP_WEB_CHECKS set -- not testing or rebuilding the web frontend" >&2
+    echo "  (inst/python/deckifyr/web/static/ may now be stale -- see CONTRIBUTING.md)" >&2
+  elif ! command -v npm >/dev/null 2>&1; then
+    echo "pre-commit error: staged changes touch web/src/ (or web/'s package files) but" >&2
+    echo "  npm isn't on PATH, so this hook can't test or rebuild the frontend bundle." >&2
+    echo "  Install Node/npm, or bypass with SKIP_WEB_CHECKS=1 git commit ... (only if" >&2
+    echo "  inst/python/deckifyr/web/static/ was already rebuilt by hand) or --no-verify." >&2
+    exit 1
+  else
+    echo "pre-commit: staged web/ changes -- running vitest..." >&2
+    if ! npm --prefix web test --silent; then
+      echo "pre-commit error: web/'s vitest suite failed -- fix it, or bypass with" >&2
+      echo "  SKIP_WEB_CHECKS=1 git commit ... / git commit --no-verify." >&2
+      exit 1
+    fi
+
+    if command -v uv >/dev/null 2>&1; then
+      echo "pre-commit: running Playwright e2e tests..." >&2
+      if ! npm --prefix web run test:e2e --silent; then
+        echo "pre-commit error: web/'s Playwright e2e suite failed -- fix it (a missing" >&2
+        echo "  browser install is one cause: cd web && npx playwright install chromium)," >&2
+        echo "  or bypass with SKIP_WEB_CHECKS=1 git commit ... / git commit --no-verify." >&2
+        exit 1
+      fi
+    else
+      echo "pre-commit: uv not on PATH -- skipping Playwright e2e (its webServer execs" >&2
+      echo "  'uv run deckifyr serve'); vitest alone can't exercise real browser behavior." >&2
+    fi
+
+    echo "pre-commit: rebuilding inst/python/deckifyr/web/static/..." >&2
+    if ! npm --prefix web run build --silent; then
+      echo "pre-commit error: 'npm run build' failed -- the staged web/src/ changes don't" >&2
+      echo "  compile. Fix the build, then re-stage and commit." >&2
+      exit 1
+    fi
+    git add -A -- inst/python/deckifyr/web/static
+  fi
 fi
 
 if [ "$found" = "1" ]; then
   echo "" >&2
+  echo "==================================================================" >&2
+  printf '%s' "$screenshot_reminder" >&2
   echo "If the change is purely cosmetic (comments, refactors with identical" >&2
   echo "composed output), commit anyway with SKIP_DOCS_ASSET_CHECK=1 git commit ..." >&2
   echo "or git commit --no-verify." >&2
+  echo "==================================================================" >&2
   exit 1
 fi
 

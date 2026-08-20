@@ -243,3 +243,125 @@ def test_move_slide_rejects_multiple_placement_args():
     presentation = _presentation("a", "b")
     with pytest.raises(editor.AmbiguousPlacementError):
         editor.move_slide(presentation, "a", index=0, before="b")
+
+
+# --- layout CRUD (issue #30) -----------------------------------------------
+
+
+def _layouts(*names):
+    return {"layouts": {name: {"elements": {}} for name in names}}
+
+
+def test_add_layout_appends_by_default():
+    layouts = _layouts("blank")
+    editor.add_layout(layouts, id="title-content")
+    assert list(layouts["layouts"]) == ["blank", "title-content"]
+    assert layouts["layouts"]["title-content"] == {"elements": {}}
+
+
+def test_add_layout_accepts_starting_elements():
+    layouts = _layouts("blank")
+    editor.add_layout(layouts, id="title-content", elements={"title": {"type": "text"}})
+    assert layouts["layouts"]["title-content"]["elements"] == {"title": {"type": "text"}}
+
+
+def test_add_layout_rejects_duplicate_id():
+    layouts = _layouts("blank")
+    with pytest.raises(editor.DuplicateLayoutIdError):
+        editor.add_layout(layouts, id="blank")
+
+
+def test_remove_layout_deletes_by_id():
+    layouts = _layouts("blank", "title-content")
+    editor.remove_layout(layouts, "title-content")
+    assert list(layouts["layouts"]) == ["blank"]
+
+
+def test_remove_layout_raises_for_unknown_id():
+    layouts = _layouts("blank")
+    with pytest.raises(editor.LayoutNotFoundError):
+        editor.remove_layout(layouts, "does-not-exist")
+
+
+def test_remove_layout_refuses_to_remove_blank():
+    layouts = _layouts("blank", "title-content")
+    with pytest.raises(editor.UnremovableLayoutError):
+        editor.remove_layout(layouts, "blank")
+
+
+def test_layouts_using_finds_matching_slide_ids():
+    presentation = {
+        "slides": [
+            {"id": "a", "layout": "title-content"},
+            {"id": "b", "layout": "blank"},
+            {"id": "c", "layout": "title-content"},
+        ]
+    }
+    assert editor.layouts_using(presentation, "title-content") == ["a", "c"]
+    assert editor.layouts_using(presentation, "blank") == ["b"]
+    assert editor.layouts_using(presentation, "unused") == []
+
+
+def test_reassign_layout_rewrites_matching_slides_only():
+    presentation = {
+        "slides": [
+            {"id": "a", "layout": "title-content"},
+            {"id": "b", "layout": "blank"},
+        ]
+    }
+    editor.reassign_layout(presentation, "title-content", "blank")
+    assert [s["layout"] for s in presentation["slides"]] == ["blank", "blank"]
+
+
+# --- element CRUD (issue #31) -----------------------------------------------
+
+
+def test_add_element_dict_form_inserts_by_id():
+    elements = {"title": {"type": "text", "value": "hi"}}
+    editor.add_element(elements, id="body", type="markdown", value="hello")
+    assert elements["body"] == {"type": "markdown", "value": "hello"}
+
+
+def test_add_element_defaults_none_to_dict_form():
+    result = editor.add_element(None, id="title", type="text", value="hi")
+    assert result == {"title": {"type": "text", "value": "hi"}}
+
+
+def test_add_element_list_form_appends_with_id():
+    elements = [{"id": "title", "type": "text"}]
+    result = editor.add_element(elements, id="body", type="markdown", value="hi")
+    assert result[-1] == {"id": "body", "type": "markdown", "value": "hi"}
+
+
+def test_add_element_rejects_duplicate_id_dict_form():
+    elements = {"title": {"type": "text"}}
+    with pytest.raises(editor.DuplicateElementIdError):
+        editor.add_element(elements, id="title", type="text")
+
+
+def test_add_element_rejects_duplicate_id_list_form():
+    elements = [{"id": "title", "type": "text"}]
+    with pytest.raises(editor.DuplicateElementIdError):
+        editor.add_element(elements, id="title", type="text")
+
+
+def test_remove_element_dict_form_deletes_by_id():
+    elements = {"title": {"type": "text"}, "body": {"type": "markdown"}}
+    editor.remove_element(elements, "title")
+    assert list(elements) == ["body"]
+
+
+def test_remove_element_list_form_deletes_by_id():
+    elements = [{"id": "title", "type": "text"}, {"id": "body", "type": "markdown"}]
+    editor.remove_element(elements, "title")
+    assert [e["id"] for e in elements] == ["body"]
+
+
+def test_remove_element_raises_for_unknown_id_dict_form():
+    with pytest.raises(editor.ElementNotFoundError):
+        editor.remove_element({"title": {}}, "does-not-exist")
+
+
+def test_remove_element_raises_for_unknown_id_list_form():
+    with pytest.raises(editor.ElementNotFoundError):
+        editor.remove_element([{"id": "title"}], "does-not-exist")

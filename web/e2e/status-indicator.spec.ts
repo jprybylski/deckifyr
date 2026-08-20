@@ -23,7 +23,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("Add with nothing selected defaults to the watermark placement", async ({ page }) => {
-  const statusItem = page.locator(".furniture-controls__item", { hasText: "Status" });
+  const statusItem = page.locator(".element-list__item", { hasText: "Status" });
   await expect(statusItem.getByText(/will show "draft"/)).toBeVisible();
 
   await statusItem.getByRole("button", { name: "Add" }).click();
@@ -40,7 +40,7 @@ test("selecting a corner from Deck Options materializes that corner, not the wat
 }) => {
   await page.getByLabel("Status indicator").selectOption({ label: "Corner: top-right" });
 
-  const statusItem = page.locator(".furniture-controls__item", { hasText: "Status" });
+  const statusItem = page.locator(".element-list__item", { hasText: "Status" });
   await expect(statusItem.getByRole("button", { name: "Remove" })).toBeVisible();
   // A corner never shows a Hide toggle -- it's small and behind content,
   // nothing for a corner placement to obscure.
@@ -54,7 +54,7 @@ test("selecting a corner from Deck Options materializes that corner, not the wat
 test("Remove clears status_indicator back to None, matching the dropdown's own None option", async ({
   page,
 }) => {
-  const statusItem = page.locator(".furniture-controls__item", { hasText: "Status" });
+  const statusItem = page.locator(".element-list__item", { hasText: "Status" });
   await statusItem.getByRole("button", { name: "Add" }).click();
   await expect(page.getByLabel("Status indicator")).toHaveValue("watermark");
 
@@ -68,7 +68,7 @@ test("Add is disabled with an explanation when there is no text to show yet", as
   await page.getByLabel("Deck status").fill("");
   await page.getByLabel("Deck status").blur();
 
-  const statusItem = page.locator(".furniture-controls__item", { hasText: "Status" });
+  const statusItem = page.locator(".element-list__item", { hasText: "Status" });
   await expect(statusItem.getByText(/set Deck status above first/)).toBeVisible();
   await expect(statusItem.getByRole("button", { name: "Add" })).toBeDisabled();
 });

@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-/** Real-browser coverage for add/remove slide (issue #23): the "+ Add
- * slide" form (id + layout picker) and each row's two-step Remove
- * confirm, against the real `deckifyr serve` fixture. */
+/** Real-browser coverage for add/remove/duplicate slide (issues #23,
+ * #31): the "+ Add slide" form (id + layout picker), each row's subtle
+ * corner remove (a two-step confirm) and duplicate icon buttons, against
+ * the real `deckifyr serve` fixture. */
 
 test.beforeEach(async ({ page }) => {
   // Each test gets a clean slate regardless of what a prior test in this
@@ -29,15 +30,15 @@ test("adds a slide with a picked layout, then it's selectable in the list", asyn
   // issue's own "quick layout (or empty except for furniture)" framing,
   // which already expects Add's common case to be exactly this kind of
   // still-needs-content-filled-in starting point.
-  await list.getByLabel("Layout").selectOption("blank");
+  await list.locator(".slide-list__add-form").getByLabel("Layout").selectOption("blank");
   await list.getByRole("button", { name: "Add" }).click();
 
   await expect(list.getByText(/3\. e2e-new-slide/)).toBeVisible();
   await list.getByText(/3\. e2e-new-slide/).click();
   // Selecting it should be reflected in the active slide -- "blank" is a
-  // real (if empty) named layout, so the Layout toggle is enabled (even
-  // though its own canvas view will just say "no zones defined yet").
-  await expect(page.locator(".toolbar__view-toggle").getByText("Layout")).toBeEnabled();
+  // real (if empty) named layout, so the sidebar's element list shows
+  // for it with nothing to add-remove yet (an ordinary, if empty, slide).
+  await expect(page.getByRole("heading", { name: "Elements" })).toBeVisible();
 });
 
 test("adding with no layout picked creates a freeform slide", async ({ page }) => {
@@ -49,18 +50,17 @@ test("adding with no layout picked creates a freeform slide", async ({ page }) =
 
   await expect(list.getByText(/3\. e2e-freeform-slide/)).toBeVisible();
   await list.getByText(/3\. e2e-freeform-slide/).click();
-  // A freeform slide has no layout to edit -- the toggle stays disabled.
-  await expect(page.locator(".toolbar__view-toggle").getByText("Layout")).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "Elements" })).toBeVisible();
 });
 
 test("removing a slide requires a two-step confirm", async ({ page }) => {
   const list = page.locator(".slide-list");
   const row = list.locator(".slide-list__row", { hasText: "content-slide" });
 
-  // The button's visible text (its accessible name) is just "Remove" --
-  // `title="Remove slide \"content-slide\""` is a tooltip, not the name,
-  // since accname computation prefers text content when both are present.
-  await row.getByRole("button", { name: "Remove", exact: true }).click();
+  // The corner "×" button is a subtle icon, not a "Remove" text button
+  // (issue #31 follow-up) -- targeted by its own `title` tooltip, the
+  // same way a user would discover what it does by hovering.
+  await row.getByTitle('Remove slide "content-slide"').click();
   await expect(row.getByText(/Remove .content-slide.\?/)).toBeVisible();
 
   // Cancel keeps it.
@@ -73,8 +73,20 @@ test("removing a slide requires a two-step confirm", async ({ page }) => {
   // makes `toBeVisible`/`not.toBeVisible` fail immediately on the
   // strict-mode violation rather than retry past it, confirmed the hard
   // way while writing this test.
-  await row.getByRole("button", { name: "Remove", exact: true }).click();
+  await row.getByTitle('Remove slide "content-slide"').click();
   await row.getByRole("button", { name: "Confirm" }).click();
   await expect(row).toHaveCount(0);
   await expect(list.getByText(/1\. title/)).toBeVisible();
+});
+
+test("duplicating a slide inserts a '-copy' immediately after it, no confirm needed", async ({
+  page,
+}) => {
+  const list = page.locator(".slide-list");
+  const row = list.locator(".slide-list__row", { hasText: "title" }).first();
+
+  await row.getByTitle('Duplicate slide "title"').click();
+
+  await expect(list.getByText(/2\. title-copy/)).toBeVisible();
+  await expect(list.getByText(/3\. content-slide/)).toBeVisible();
 });

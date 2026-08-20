@@ -12,10 +12,21 @@ deck_build(presentation, strict = TRUE)
 \item{strict}{Reject unitless geometry when \code{TRUE} (default).}
 }
 \value{
-A parsed list from the CLI's JSON output, including \code{output}
-(the written \code{.pptx} path), \code{manifest} (the manifest path, or \code{NULL}
-if \code{presentation.yaml}'s \code{build.manifest} is unset), and
-\code{slide_count}.
+A parsed list from the CLI's JSON output:
+\describe{
+\item{\code{output}}{The written \code{.pptx} path.}
+\item{\code{manifest}}{The manifest path, or \code{NULL} if
+\code{presentation.yaml}'s \code{build.manifest} is unset.}
+\item{\code{slide_count}}{Number of slides composed.}
+\item{\code{warning_count}}{Number of non-fatal build warnings (the
+manifest itself carries their text) -- includes a skipped
+preview render when \code{build.previews: true} and LibreOffice
+isn't installed.}
+\item{\code{previews}}{Per-slide preview PNG paths, only non-empty when
+\code{build.previews: true} actually rendered them.}
+\item{\code{preview_pdf}}{The intermediate PDF LibreOffice produced
+alongside those PNGs, or \code{NULL} if previews weren't rendered.}
+}
 }
 \description{
 Delegates to \verb{deckifyr build} in the bundled Python engine: plans
@@ -25,6 +36,21 @@ Delegates to \verb{deckifyr build} in the bundled Python engine: plans
 the external \code{quarto} binary on \code{PATH} (spec section 8.1, issue #3);
 every other element type needs nothing beyond this package's own
 Python dependencies.
+}
+\details{
+\code{presentation.yaml}'s \code{build.previews: true} makes an ordinary build
+also render a PNG per slide (plus the intermediate PDF LibreOffice
+produces along the way) alongside the \code{.pptx} -- the same thing the
+web editor's own "Render slide previews" checkbox controls (see
+\code{vignette("web-app")}). Unlike \code{\link[=deck_preview]{deck_preview()}}, a missing LibreOffice
+here does not fail the build: it's an opportunistic, secondary output
+riding along on a build whose actual deliverable (the \code{.pptx}) has
+already been written to disk by the time previews would render, so a
+missing \code{soffice} only adds one entry to the returned list's
+\code{warning_count}/manifest \code{warnings} -- \code{output}/\code{manifest} are still
+returned normally. \code{\link[=deck_preview]{deck_preview()}} has no such fallback: rendering
+previews is its entire purpose, so a missing LibreOffice there is
+always a hard failure.
 }
 \examples{
 \dontrun{

@@ -1,5 +1,76 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* Layouts editor mode in the web editor (issue #30): `SlideList`'s
+  "Slides" / "Layouts" toggle swaps the entire numbered list between
+  `presentation.yaml`'s slides and `layouts.yaml`'s layouts, with real
+  add/remove/rename layout CRUD. Every `layouts.yaml` must now define a
+  `blank` layout, which can't itself be removed -- it's the fallback any
+  slide using a removed layout falls back to. Removing an in-use layout
+  previews which slides would be reassigned before you confirm, and the
+  server rejects the removal outright (no partial write) if reassignment
+  would leave a slide unbuildable.
+* Element add/remove for both slides and layout zones (issue #31): a new
+  `ElementList` sidebar (replacing the old always-on `ElementInspector`
+  slot and the standalone furniture bar) lists every element as a
+  collapsed row you expand to edit; `reportifyr`/`quarto` elements get a
+  real file picker scoped to your project instead of a hand-typed path.
+* Slide add/remove/duplicate, and color swatches next to token pickers
+  in the config editor (issues #23, #27).
+* Build tab improvements (issue #32): the output-path field is now a
+  real single-level directory browser instead of free text; a "Render
+  slide previews" checkbox turns on `build.previews` and now keeps the
+  intermediate PDF alongside the PNGs for an ordinary `deckifyr build`,
+  not just `deckifyr preview`; and a shared preview gallery (PNG
+  thumbnails, collapsed-until-requested PDF) is used by both the Build
+  and Preview sections. The previews checkbox is disabled with a clear
+  warning when LibreOffice isn't available, and a `build.previews: true`
+  build with no LibreOffice now downgrades to a build warning instead of
+  losing the `.pptx` output entirely.
+* `deckifyr skills [DIRECTORY]` / `deck_export_skills()` (issue #50):
+  exports two bundled Claude Skills-format `SKILL.md` files
+  (`deckifyr-org-config` for `design.yaml`/`layouts.yaml`,
+  `deckifyr-presentation` for `presentation.yaml`) to a directory of
+  your choice, for use with Claude Code or any other coding agent that
+  reads `SKILL.md` files.
+* `deckifyr init --from-dir <path>` / `--from-repo <spec>` (issue #34):
+  scaffold a new project from an existing local directory or git repo
+  instead of only the bundled minimal example. `--from-repo` accepts a
+  `[host/]owner/repo[/subdir][@ref]` shorthand as well as a full git
+  URL. A "typed" source (a `templates/` directory of design/layouts/
+  presentation trios, selected via `--type`) is copied as-is; a "flat"
+  source copies just its `design.yaml`/`layouts.yaml` and generates a
+  fresh, empty `presentation.yaml` pointing at them.
+* Static JSON Schema files for `design`/`layouts`/`presentation`
+  (`inst/python/deckifyr/schemas/*.schema.json`, issue #49), so IDEs
+  like VS Code's YAML extension can validate against a real file via a
+  `yaml-language-server` `$schema` comment instead of shelling out to
+  `deckifyr schema`.
+* A third, Playwright-based end-to-end test tier for the web editor,
+  alongside the existing pytest and vitest suites.
+
+## Changed
+
+* `status_indicator` is a single-select again: the corner/watermark
+  split introduced in 0.2.1 (`watermark_overlay`) turned out to have a
+  confusing Add/Remove-vs-checkbox story with no real benefit, so a
+  corner placement and the full-page watermark once again share the
+  same `status_indicator` selection.
+
+## Fixed
+
+* A `quarto` element rendered as a PNG now composites with a
+  transparent background instead of opaque white (issue #9).
+* The "Deck Options" status-indicator dropdown now stays in sync after
+  the Furniture panel's own Add/Remove changes `status_indicator`
+  server-side, instead of showing stale state until a manual refresh.
+* Optional scalar fields in the schema-driven config form (an author
+  name, a table style's color, a corner's rotation, ...) no longer
+  render as a cut-off ~260px-tall sliver.
+
 # deckifyr 0.2.1
 
 ## Added

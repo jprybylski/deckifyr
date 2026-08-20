@@ -5,14 +5,21 @@ This module is deliberately the same kind of layer `deckifyr.plan` is
 relative to `deckifyr.pptx.compose`: it operates on plain, already-parsed
 YAML data (`dict`/`list`/scalar, exactly what `yaml.safe_load` returns),
 never on a `pydantic` model and never touching a filesystem path itself.
-`deckifyr.cli` is the only caller -- it owns reading a file, validating
-the edited result against the right `deckifyr.schema` model before
-writing, and turning this module's exceptions into `DeckifyrError`s with
-a stable code, the same "orchestration lives in `cli.py`, mechanism lives
-in its own module" split `_load_project`/`expand_presentation` already
-follow.
+`deckifyr.cli` and `deckifyr.web.app` are the only callers -- each owns
+reading its own copy of a document (a file for `cli.py`, an in-memory
+working copy for `app.py`), validating the edited result against the
+right `deckifyr.schema` model before writing, and turning this module's
+exceptions into a stable error code (`DeckifyrError` for the CLI,
+`DeckifyrError` -> HTTP 422 for the web app), the same "orchestration
+lives in the caller, mechanism lives in its own module" split
+`_load_project`/`expand_presentation` already follow. Only the CLI
+exposes every capability below as a subcommand, though -- layout CRUD
+and element CRUD (issues #30/#31) are web-editor-only today, the same
+precedent furniture CRUD (issue #21) and layout-zone editing (issue
+#23) already set: real, tested, callable from `app.py`, with no `cli.py`
+subcommand or R wrapper.
 
-Two independent capabilities, both operating on the raw dict a document
+Four independent capabilities, all operating on the raw dict a document
 parses to:
 
 - **Path get/set** (`get_value`/`set_value`), a small dotted-path (plus
@@ -34,18 +41,38 @@ parses to:
   are three ways to say the same thing -- placement -- so every function
   that takes them rejects more than one being set rather than picking a
   silent precedence order.
-
-Neither half touches `slide.elements` beyond replacing the whole block
-wholesale (`add_slide`'s/`update_slide`'s own `elements` parameter) --
-editing a single named element inside a slide is a `set_value` call
-against that element's own path (e.g.
-`slides[0].elements.title.value`), not a third CRUD surface here.
+- **Layout CRUD** (`add_layout`/`remove_layout`/`layouts_using`/
+  `reassign_layout`, issue #30), scoped to `layouts.yaml`'s own
+  `layouts` mapping. Unlike slides, a layout has no meaningful order to
+  place it in (it's a dict, not a list a user reads top-to-bottom), so
+  there's no `after`/`before`/`index` here. `remove_layout` refuses to
+  remove `deckifyr.schema.layouts.BLANK_LAYOUT_ID` -- every
+  `layouts.yaml` is required to define it -- and doesn't touch
+  `presentation.yaml` on its own; `layouts_using`/`reassign_layout` are
+  the separate, `presentation.yaml`-side half of "reassign every slide
+  that used the removed layout to `blank`", left as two small functions
+  rather than one that reaches across both documents, since every other
+  function here only ever touches the one document its own name says it
+  does.
+- **Element CRUD** (`add_element`/`remove_element`, issue #31),
+  usable against *either* a slide's `elements` block
+  (`presentation.yaml`) or a layout's `elements` block
+  (`layouts.yaml`) -- both are the same dict-or-list shape (spec
+  section 7.6), so one pair of functions covers both documents. This is
+  the "third CRUD surface" a slide's `elements` previously only had
+  wholesale replacement for (`add_slide`'s/`update_slide`'s own
+  `elements` parameter) -- editing a single *existing* element's fields
+  is still a `set_value` call against that element's own path (e.g.
+  `slides[0].elements.title.value`), not something `add_element`/
+  `remove_element` do.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+from deckifyr.schema.layouts import BLANK_LAYOUT_ID
 
 _PATH_TOKEN_RE = re.compile(r"([^.\[\]]+)|\[(-?\d+)\]")
 
@@ -70,6 +97,27 @@ class DuplicateSlideIdError(ValueError):
 
 class AmbiguousPlacementError(ValueError):
     """More than one of `index`/`after`/`before` was given for a placement."""
+
+
+class LayoutNotFoundError(ValueError):
+    """No layout in `layouts.yaml`'s `layouts` mapping has the given id."""
+
+
+class DuplicateLayoutIdError(ValueError):
+    """`add_layout` was asked to reuse an id already present in `layouts`."""
+
+
+class UnremovableLayoutError(ValueError):
+    """`remove_layout` was asked to remove the required `blank` layout
+    (spec-adjacent, issue #30: every `layouts.yaml` must keep one)."""
+
+
+class ElementNotFoundError(ValueError):
+    """No element in an `elements` dict/list has the given id."""
+
+
+class DuplicateElementIdError(ValueError):
+    """`add_element` was asked to reuse an id already present in `elements`."""
 
 
 # --- Dotted-path get/set -----------------------------------------------
@@ -315,3 +363,115 @@ def move_slide(
         _resolve_placement(slides, index=index, after=after, before=before), slide
     )
     return presentation
+
+
+# --- layouts.yaml layout CRUD (issue #30) -------------------------------
+
+
+def add_layout(layouts: dict, *, id: str, elements: dict | None = None) -> dict:
+    """Insert a new layout into `layouts["layouts"]`.
+
+    Unlike `add_slide`, there's no placement/`after`/`before` concept --
+    `layouts` is a dict, not an ordered list a user scans top-to-bottom
+    the way `presentation.yaml`'s `slides` is, so a new layout is always
+    appended at the end; dict insertion order is what a `sort_keys=False`
+    YAML dump round-trips (`deckifyr.cli._write_yaml`'s own established
+    precedent for every other document this module edits).
+    """
+    entries = layouts.setdefault("layouts", {})
+    if id in entries:
+        raise DuplicateLayoutIdError(f"layout id {id!r} already exists")
+    entries[id] = {"elements": elements or {}}
+    return layouts
+
+
+def remove_layout(layouts: dict, name: str) -> dict:
+    """Remove the layout `name` from `layouts["layouts"]`.
+
+    `blank` (`deckifyr.schema.layouts.BLANK_LAYOUT_ID`) can never be
+    removed -- every `layouts.yaml` is required to define it (issue
+    #30's new schema validator), and it's the fallback `reassign_layout`
+    below rewrites affected slides to when their own layout is removed.
+    """
+    if name == BLANK_LAYOUT_ID:
+        raise UnremovableLayoutError(f"the {BLANK_LAYOUT_ID!r} layout can't be removed")
+    entries = layouts.get("layouts") or {}
+    if name not in entries:
+        raise LayoutNotFoundError(f"no layout with id {name!r}")
+    del entries[name]
+    return layouts
+
+
+def layouts_using(presentation: dict, layout_name: str) -> list[str]:
+    """Ids of every slide in `presentation["slides"]` whose `layout`
+    field is `layout_name` -- used by `deckifyr.web.app`'s layout-removal
+    route to know which slides `reassign_layout` is about to touch."""
+    return [
+        slide["id"]
+        for slide in presentation.get("slides") or []
+        if slide.get("layout") == layout_name
+    ]
+
+
+def reassign_layout(presentation: dict, old_layout: str, new_layout: str) -> dict:
+    """Rewrite every slide referencing `old_layout` to use `new_layout`
+    instead -- the other half of removing a layout that's still in use
+    (issue #30's "impacted slides will be considered blank layout
+    type")."""
+    for slide in presentation.get("slides") or []:
+        if slide.get("layout") == old_layout:
+            slide["layout"] = new_layout
+    return presentation
+
+
+# --- slide/layout element CRUD (issue #31) ------------------------------
+
+
+def add_element(
+    elements: dict[str, Any] | list[dict[str, Any]] | None,
+    *,
+    id: str,
+    type: str,
+    **fields: Any,
+) -> dict[str, Any] | list[dict[str, Any]]:
+    """Insert a new element into a slide's or layout's `elements` block.
+
+    `elements` may be the dict-keyed form (`{id: {...}}`, the common
+    case, and what a `None` input defaults to) or the list-keyed
+    freeform form (`[{id: ..., ...}]`, spec section 7.6) -- whichever
+    shape the input already is, the output stays that shape, mirroring
+    `deckifyr.web.app.patch_element`'s existing dict-vs-list handling
+    rather than silently converting one slide's list-form elements into
+    dict form.
+    """
+    body = {"type": type, **fields}
+    if isinstance(elements, list):
+        if any(isinstance(e, dict) and e.get("id") == id for e in elements):
+            raise DuplicateElementIdError(f"element id {id!r} already exists")
+        elements.append({"id": id, **body})
+        return elements
+    elements = {} if elements is None else elements
+    if id in elements:
+        raise DuplicateElementIdError(f"element id {id!r} already exists")
+    elements[id] = body
+    return elements
+
+
+def remove_element(
+    elements: dict[str, Any] | list[dict[str, Any]], id: str
+) -> dict[str, Any] | list[dict[str, Any]]:
+    """Remove the element with id `id` from a slide's or layout's
+    `elements` block, in either its dict- or list-keyed form."""
+    if isinstance(elements, list):
+        index = next(
+            (i for i, e in enumerate(elements) if isinstance(e, dict) and e.get("id") == id),
+            None,
+        )
+        if index is None:
+            raise ElementNotFoundError(f"no element with id {id!r}")
+        del elements[index]
+        return elements
+    if not isinstance(elements, dict) or id not in elements:
+        raise ElementNotFoundError(f"no element with id {id!r}")
+    del elements[id]
+    return elements

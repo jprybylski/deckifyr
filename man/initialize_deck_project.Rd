@@ -4,12 +4,39 @@
 \alias{initialize_deck_project}
 \title{Initialize a new deckifyr project}
 \usage{
-initialize_deck_project(directory = ".", force = FALSE)
+initialize_deck_project(
+  directory = ".",
+  force = FALSE,
+  from_dir = NULL,
+  from_repo = NULL,
+  ref = NULL,
+  subdir = NULL,
+  type = NULL
+)
 }
 \arguments{
 \item{directory}{Target directory. Defaults to the current directory.}
 
 \item{force}{Overwrite existing files in \code{directory}. Default \code{FALSE}.}
+
+\item{from_dir}{Use a local directory as the template source instead
+of the bundled minimal example. Mutually exclusive with \code{from_repo}.}
+
+\item{from_repo}{Fetch a git repo as the template source:
+\code{"[host/]owner/repo[/subdir][@ref]"} shorthand (host defaults to
+github.com -- an explicit host is how GitHub Enterprise is
+supported) or a full URL. Requires \code{git} on PATH. Mutually
+exclusive with \code{from_dir}.}
+
+\item{ref}{Branch/tag/SHA to check out. Only valid with \code{from_repo};
+overrides any \verb{@ref} embedded in its shorthand.}
+
+\item{subdir}{Subdirectory of the resolved repo to use as the
+template source. Only valid with \code{from_repo}; overrides any
+subdirectory embedded in its shorthand.}
+
+\item{type}{Template name under a source's \verb{templates/<name>/}
+structure. Only valid alongside \code{from_dir}/\code{from_repo}.}
 }
 \value{
 A list describing the created files (invisibly).
@@ -18,8 +45,19 @@ A list describing the created files (invisibly).
 Provisions a project-local Python environment via pyro (writing a
 \code{deckifyr} dependency group to the calling project's \code{pyproject.toml},
 per deckifyr-specification.md section 5.2) and scaffolds
-\code{design.yaml}/\code{layouts.yaml}/\code{presentation.yaml} from the bundled
-minimal example into \code{directory}.
+\code{design.yaml}/\code{layouts.yaml}/\code{presentation.yaml} into \code{directory} --
+from the bundled minimal example by default, or from a template
+source (issue #34) when \code{from_dir}/\code{from_repo} is given.
+}
+\details{
+A template source is either "flat" (a directory with its own
+\code{presentation.yaml}, whose \code{design}/\code{layouts} files are duplicated
+under their original names and paired with a freshly generated,
+empty-slide \code{presentation.yaml} -- the "duplicate a prior project"
+case) or "typed" (a directory with a \verb{templates/} subdirectory, each
+holding its own named flat template -- select one with \code{type}; its
+\code{presentation.yaml} is copied verbatim as a real minimal starter,
+not emptied).
 }
 \examples{
 \dontrun{
@@ -28,5 +66,13 @@ minimal example into \code{directory}.
 # environment -- run it somewhere disposable, not the current project).
 project_dir <- file.path(tempdir(), "my-deck")
 initialize_deck_project(project_dir)
+
+# Scaffold from an org-standard design/layouts repo instead, pinned
+# to a tag, selecting the "quarterly-review" template type.
+initialize_deck_project(
+  project_dir,
+  from_repo = "acme-org/deck-templates@v2",
+  type = "quarterly-review"
+)
 }
 }

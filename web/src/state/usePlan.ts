@@ -13,27 +13,35 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
+  addLayoutElement,
+  addSlideElement,
+  deleteLayout,
+  deleteLayoutElement,
   deleteSlide,
+  deleteSlideElement,
+  duplicateSlide as apiDuplicateSlide,
   getConfig,
   getFurniture,
-  getLayoutZones,
+  getLayouts,
   getPlan,
   patchElement,
   patchFurnitureElement,
   patchLayoutElement,
+  postAddLayout,
   postAddSlide,
 } from "../api/client";
 import { boxToInches, parseInchesString } from "../geometry";
-import type { ElementPatchBody, ResolvedElement, ResolvedSlide } from "../types";
+import type { ElementPatchBody, NewElementBody, ResolvedElement, ResolvedSlide } from "../types";
 import { useAppContext } from "./AppContext";
 import type { HistoryEntry } from "./reducer";
 
 /** The synthetic slide id prefix `usePlan`/`SlideCanvas`/`ElementInspector`
  * use to address a layout's own zones through the same `applyElementPatch`/
- * undo/redo machinery real slides and the furniture pseudo-slide already
- * share (issue #23's Content/Layout tab) -- `sendPatch` below strips the
- * prefix back off to get the real layout name for `patchLayoutElement`. */
-const LAYOUT_SLIDE_PREFIX = "__layout__";
+ * undo/redo (and, since issue #30, add/remove) machinery real slides and
+ * the furniture pseudo-slide already share -- `sendPatch`/`addElement`/
+ * `removeElement` below strip the prefix back off to get the real layout
+ * name for the `.../layouts/{name}/...` routes. */
+export const LAYOUT_SLIDE_PREFIX = "__layout__";
 
 /** The synthetic slide id `GET /api/furniture` returns (issue #21) --
  * matches `deckifyr.web.app`'s own `FURNITURE_SLIDE_ID` constant. Not a
@@ -89,17 +97,19 @@ export interface UsePlanResult {
    * `null` while loading, same as `slides`/`slideSize`. */
   furnitureSlide: ResolvedSlide | null;
   /** Each real slide's `layout` name (`null` = freeform), keyed by slide
-   * id (issue #23's Content/Layout tab) -- `PlanResponse.slide_layouts`,
-   * unchanged shape. */
+   * id -- `PlanResponse.slide_layouts`. Used by `SlideList` (issue #30)
+   * to preview which slides a layout removal would reassign to `blank`. */
   slideLayouts: Record<string, string | null>;
-  /** The currently-loaded layout's own zones (issue #23), or `null`
-   * before `loadLayoutZones` has been called for one -- distinct from
-   * `slides`/`furnitureSlide` in that it's fetched on demand (only when
-   * Layout view is actually toggled on for a slide), not eagerly on
-   * every `refetch`. */
-  layoutSlide: ResolvedSlide | null;
-  layoutError: string | null;
-  loadLayoutZones: (layoutName: string) => Promise<void>;
+  /** Every layout in `layouts.yaml`, resolved the same `ResolvedSlide`
+   * shape `slides` already is (`id` is `"__layout__<name>"`) -- fetched
+   * eagerly on every `refetch`, the same as `furnitureSlide`, since
+   * issue #30's Layouts editor mode needs every layout's own element
+   * count up front, not just whichever one happens to be selected. This
+   * is what issue #23's original on-demand single-layout fetch
+   * (`loadLayoutZones`/`layoutSlide`) has been replaced with -- selecting
+   * a layout now works exactly like selecting a slide, just against this
+   * array instead of `slides`. */
+  layouts: ResolvedSlide[] | null;
   slideSize: DesignSlideSize | null;
   loading: boolean;
   error: string | null;
@@ -115,6 +125,24 @@ export interface UsePlanResult {
     before?: string;
   }) => Promise<void>;
   removeSlide: (slideId: string) => Promise<void>;
+  /** Copies an existing slide's layout/elements/notes into a new slide
+   * placed immediately after it (issue #31 follow-up). */
+  duplicateSlide: (slideId: string, newId: string) => Promise<void>;
+  /** Add/remove a layout (issue #30) -- same "structural, not part of
+   * undo/redo" shape as `addSlide`/`removeSlide`. `removeLayout` throws
+   * `ApiError` (422) if the removal was rejected -- either `blank`
+   * itself, or a reassignment that would leave a slide unbuildable
+   * (`deckifyr.web.app.remove_layout`'s own docstring); the caller
+   * decides how to surface that. */
+  addLayout: (id: string) => Promise<void>;
+  removeLayout: (layoutName: string) => Promise<void>;
+  /** Add/remove an element on an ordinary slide or a layout's own zones
+   * (issue #31) -- `slideId` may be a real slide id or a `__layout__`-
+   * prefixed one, routed the same way `applyElementPatch` already routes
+   * a patch (furniture uses its own fixed-cardinality Add/Remove, not
+   * this). Both refetch on success; not part of the undo/redo stack. */
+  addElement: (slideId: string, body: NewElementBody) => Promise<void>;
+  removeElement: (slideId: string, elementId: string) => Promise<void>;
   /** Applies `patch`, recording `inverse` (the affected fields' prior
    * values, computed by the caller) as an undo step. Throws `ApiError`
    * on a 422 rejection -- the caller decides how to surface it (e.g.
@@ -138,25 +166,13 @@ export function usePlan(): UsePlanResult {
   const [slides, setSlides] = useState<ResolvedSlide[] | null>(null);
   const [furnitureSlide, setFurnitureSlide] = useState<ResolvedSlide | null>(null);
   const [slideLayouts, setSlideLayouts] = useState<Record<string, string | null>>({});
-  const [layoutSlide, setLayoutSlide] = useState<ResolvedSlide | null>(null);
-  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [layouts, setLayouts] = useState<ResolvedSlide[] | null>(null);
   const [slideSize, setSlideSize] = useState<DesignSlideSize | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadLayoutZones = useCallback(async (layoutName: string) => {
-    try {
-      const zones = await getLayoutZones(layoutName);
-      setLayoutSlide(zones);
-      setLayoutError(null);
-    } catch (err) {
-      setLayoutSlide(null);
-      setLayoutError(err instanceof ApiError ? err.message : String(err));
-    }
-  }, []);
-
   const refetch = useCallback(async () => {
-    // `Promise.allSettled`, not `Promise.all` -- these three are
+    // `Promise.allSettled`, not `Promise.all` -- these four are
     // independently useful and must not take each other down. Real
     // scenario this fixes: `presentation.yaml`'s `status_indicator`
     // pointing at a placement `design.yaml` hasn't configured a style
@@ -167,11 +183,15 @@ export function usePlan(): UsePlanResult {
     // fix stays reachable. A single `Promise.all` would still fail the
     // whole refetch even though `getFurniture()` itself succeeded,
     // leaving `furnitureSlide` stuck on stale data and the fix
-    // unreachable -- exactly the trap this replaces.
-    const [planResult, designResult, furnitureResult] = await Promise.allSettled([
+    // unreachable -- exactly the trap this replaces. `getLayouts()`
+    // joins the same batch for the same reason (issue #30): a broken
+    // `GET /api/plan` must not also block the Layouts editor mode from
+    // being reachable to fix it.
+    const [planResult, designResult, furnitureResult, layoutsResult] = await Promise.allSettled([
       getPlan(),
       getConfig("design"),
       getFurniture(),
+      getLayouts(),
     ]);
 
     if (planResult.status === "fulfilled") {
@@ -186,8 +206,9 @@ export function usePlan(): UsePlanResult {
     }
     if (designResult.status === "fulfilled") setSlideSize(readSlideSize(designResult.value));
     if (furnitureResult.status === "fulfilled") setFurnitureSlide(furnitureResult.value);
+    if (layoutsResult.status === "fulfilled") setLayouts(layoutsResult.value.layouts);
 
-    const rejected = [planResult, designResult, furnitureResult].find(
+    const rejected = [planResult, designResult, furnitureResult, layoutsResult].find(
       (r): r is PromiseRejectedResult => r.status === "rejected"
     );
     setError(
@@ -204,32 +225,17 @@ export function usePlan(): UsePlanResult {
     refetch();
   }, [refetch]);
 
-  /** `refetch()` covers `slides`/`furnitureSlide`/`slideSize` but not
-   * `layoutSlide` (fetched on demand per layout name, not eagerly) --
-   * without this, committing a drag on a layout zone would visually
-   * "snap back" right after the PATCH resolves, since the canvas is
-   * driven by `layoutSlide`'s stale, pre-drag geometry until something
-   * else happens to reload it. Only refetches the layout actually
-   * touched (`patchedSlideId`'s `__layout__<name>` prefix, matching
-   * `sendPatch`'s own routing), and only when one was already loaded --
-   * a patch/undo/redo against an ordinary slide or the furniture
-   * pseudo-slide leaves `layoutSlide` untouched, same as before. */
-  const refetchAfterPatch = useCallback(
-    async (patchedSlideId: string) => {
-      await refetch();
-      if (patchedSlideId.startsWith(LAYOUT_SLIDE_PREFIX) && layoutSlide) {
-        await loadLayoutZones(patchedSlideId.slice(LAYOUT_SLIDE_PREFIX.length));
-      }
-    },
-    [refetch, loadLayoutZones, layoutSlide]
-  );
-
-  // Default slide selection to the first slide once the plan loads.
+  // Default slide selection to the first item of whichever collection
+  // `editorMode` currently picks, once it loads -- covers both the
+  // initial load and switching modes (`SET_EDITOR_MODE` resets
+  // `selectedSlideId` back to `null` specifically so this effect
+  // repopulates it, `reducer.ts`'s own docstring).
   useEffect(() => {
-    if (slides && slides.length > 0 && state.selectedSlideId === null) {
-      dispatch({ type: "SELECT_SLIDE", slideId: slides[0].id });
+    const active = state.editorMode === "layouts" ? layouts : slides;
+    if (active && active.length > 0 && state.selectedSlideId === null) {
+      dispatch({ type: "SELECT_SLIDE", slideId: active[0].id });
     }
-  }, [slides, state.selectedSlideId, dispatch]);
+  }, [slides, layouts, state.editorMode, state.selectedSlideId, dispatch]);
 
   const addSlide = useCallback(
     async (body: {
@@ -253,6 +259,54 @@ export function usePlan(): UsePlanResult {
     [refetch]
   );
 
+  const duplicateSlide = useCallback(
+    async (slideId: string, newId: string) => {
+      await apiDuplicateSlide(slideId, newId);
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const addLayout = useCallback(
+    async (id: string) => {
+      await postAddLayout(id);
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const removeLayout = useCallback(
+    async (layoutName: string) => {
+      await deleteLayout(layoutName);
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const addElement = useCallback(
+    async (slideId: string, body: NewElementBody) => {
+      if (slideId.startsWith(LAYOUT_SLIDE_PREFIX)) {
+        await addLayoutElement(slideId.slice(LAYOUT_SLIDE_PREFIX.length), body);
+      } else {
+        await addSlideElement(slideId, body);
+      }
+      await refetch();
+    },
+    [refetch]
+  );
+
+  const removeElement = useCallback(
+    async (slideId: string, elementId: string) => {
+      if (slideId.startsWith(LAYOUT_SLIDE_PREFIX)) {
+        await deleteLayoutElement(slideId.slice(LAYOUT_SLIDE_PREFIX.length), elementId);
+      } else {
+        await deleteSlideElement(slideId, elementId);
+      }
+      await refetch();
+    },
+    [refetch]
+  );
+
   const applyElementPatch = useCallback(
     async (
       slideId: string,
@@ -264,9 +318,9 @@ export function usePlan(): UsePlanResult {
       await sendPatch(slideId, elementId, patch);
       const entry: HistoryEntry = { slideId, elementId, patch, inverse, label };
       dispatch({ type: "PUSH_HISTORY", entry });
-      await refetchAfterPatch(slideId);
+      await refetch();
     },
-    [dispatch, refetchAfterPatch]
+    [dispatch, refetch]
   );
 
   const undo = useCallback(async () => {
@@ -274,30 +328,33 @@ export function usePlan(): UsePlanResult {
     if (!entry) return;
     await sendPatch(entry.slideId, entry.elementId, entry.inverse);
     dispatch({ type: "UNDO" });
-    await refetchAfterPatch(entry.slideId);
-  }, [state.past, dispatch, refetchAfterPatch]);
+    await refetch();
+  }, [state.past, dispatch, refetch]);
 
   const redo = useCallback(async () => {
     const entry = state.future[0];
     if (!entry) return;
     await sendPatch(entry.slideId, entry.elementId, entry.patch);
     dispatch({ type: "REDO" });
-    await refetchAfterPatch(entry.slideId);
-  }, [state.future, dispatch, refetchAfterPatch]);
+    await refetch();
+  }, [state.future, dispatch, refetch]);
 
   return {
     slides,
     furnitureSlide,
     slideLayouts,
-    layoutSlide,
-    layoutError,
-    loadLayoutZones,
+    layouts,
     slideSize,
     loading,
     error,
     refetch,
     addSlide,
     removeSlide,
+    duplicateSlide,
+    addLayout,
+    removeLayout,
+    addElement,
+    removeElement,
     applyElementPatch,
     undo,
     redo,
