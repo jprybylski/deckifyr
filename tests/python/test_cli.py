@@ -43,6 +43,27 @@ def test_build_writes_pptx_and_manifest(minimal_deck_dir, tmp_path, capsys):
     assert {"deckifyr_version", "elements", "input_files", "output"} <= manifest.keys()
 
 
+@requires_soffice
+def test_build_with_previews_enabled_also_keeps_the_pdf(minimal_deck_dir, tmp_path, capsys):
+    for name in ("design.yaml", "layouts.yaml", "presentation.yaml"):
+        shutil.copyfile(minimal_deck_dir / name, tmp_path / name)
+    presentation_path = tmp_path / "presentation.yaml"
+    text = presentation_path.read_text()
+    assert "previews: false" in text
+    presentation_path.write_text(text.replace("previews: false", "previews: true"))
+
+    exit_code = main(["--json", "build", str(presentation_path)])
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert len(output["previews"]) == 2
+    for preview_path in output["previews"]:
+        assert Path(preview_path).is_file()
+    # Issue #32: an ordinary build with `build.previews: true` now also
+    # keeps the intermediate PDF, not just `deckifyr preview`.
+    assert output["preview_pdf"] is not None
+    assert Path(output["preview_pdf"]).is_file()
+
+
 def test_validate_reports_missing_file(capsys):
     exit_code = main(["--json", "validate", "does/not/exist.yaml"])
     assert exit_code != EXIT_OK
@@ -204,7 +225,9 @@ def test_preview_renders_one_png_per_slide(minimal_deck_dir, tmp_path, capsys):
     for preview_path in output["previews"]:
         assert Path(preview_path).is_file()
     # `deckifyr preview` always keeps the intermediate PDF (issue #27) --
-    # unlike an ordinary `build.previews: true` build, which never does.
+    # an ordinary `build.previews: true` build keeps it too now (issue
+    # #32), see `test_build_with_previews_enabled_also_keeps_the_pdf`
+    # below.
     assert output["preview_pdf"] is not None
     assert Path(output["preview_pdf"]).is_file()
 

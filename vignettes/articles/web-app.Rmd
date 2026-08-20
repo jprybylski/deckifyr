@@ -210,21 +210,30 @@ plan and lets you:
   </div>
 * On the Build tab, see and edit where the built `.pptx` will go
   (`presentation.yaml`'s `build.output`) right there, instead of only
-  through the Config tab. Trigger a full build and watch it run as a
-  background job, or trigger a **Preview** -- one, several
-  (`e.g. 1,3`), or every slide. Preview needs LibreOffice; whether it's
-  actually installed is checked up front, with an install link shown
-  right there if it isn't, rather than only surfacing as a failed-job
-  error after you click. Both Build and Preview show an animated
-  progress bar while queued/running (the
-  backend doesn't report a real percentage, so this is honest about
-  that rather than faking one). A finished Preview shows a PNG per
-  requested slide plus an embedded PDF viewer of the whole deck (your
-  browser's own built-in PDF viewer, reused as-is):
+  through the Config tab -- either type a project-relative path
+  directly, or click **Browse…** to navigate the project's real
+  directory tree (one level at a time; a large, unrelated directory like
+  a populated `renv/library` is never walked as a whole) and type a
+  filename in whichever folder you land in. A **"Render slide previews
+  (PNG + PDF) with this build"** checkbox controls `build.previews`: on,
+  an ordinary Build also renders a PNG per slide and keeps the PDF
+  LibreOffice produces along the way, right alongside the `.pptx`.
+  Trigger a full build and watch it run as a background job, or trigger
+  a **Preview** -- one, several (`e.g. 1,3`), or every slide. Preview
+  needs LibreOffice; whether it's actually installed is checked up
+  front, with an install link shown right there if it isn't, rather than
+  only surfacing as a failed-job error after you click. Both Build and
+  Preview show an animated progress bar while queued/running (the
+  backend doesn't report a real percentage, so this is honest about that
+  rather than faking one). A finished Build or Preview shows a thumbnail
+  per rendered slide -- click one to expand it (only one expands at a
+  time; click again, or click a different thumbnail, to collapse it) --
+  plus a **"Show PDF preview"** disclosure, collapsed by default so a
+  large PDF is never even fetched unless you actually ask for it:
 
   <div style="margin: 1rem 0;">
-  <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful Preview: an editable Output path field, a Build button, a Preview section with five rendered slide thumbnails, and an embedded PDF viewer below showing the first slide with page thumbnails on the left" width="700" loading="lazy">
-  <p style="font-size:0.85em;">A finished Preview: per-slide images plus the embedded PDF viewer</p>
+  <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful build with previews enabled: an editable Output path field with a Browse button, a checked 'Render slide previews' checkbox, manifest/pptx download links, five rendered slide thumbnails, and a collapsed 'Show PDF preview' disclosure below them" width="700" loading="lazy">
+  <p style="font-size:0.85em;">A finished build with previews enabled: expandable per-slide thumbnails plus a collapsed PDF disclosure</p>
   </div>
 * Download the resulting `.pptx`, its manifest, and any rendered
   previews once a build finishes.
@@ -285,12 +294,6 @@ issue" link to request it.
   `deck_set_config()`/`deck_*_slide()` already have
   ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
   if you'd like this prioritized).
-* **The Build tab's output path is a plain text field, and a finished
-  Preview always shows its full PDF viewer and PNG thumbnails inline.**
-  There's no file picker for the output path, no checkbox for building
-  a PDF alongside the `.pptx`, and no way to collapse or expand the
-  Preview's PDF/PNGs individually
-  ([#32](https://github.com/jprybylski/deckifyr/issues/32)).
 
 None of this is hidden behind the scenes -- if you hit one of these
 edges, dropping back to `deck_get_config()`/`deck_set_config()`/

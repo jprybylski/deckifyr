@@ -979,6 +979,50 @@ subtle `×`/`⧉` icon pair in each row's own corner (replacing a full-width
 ...) with no naming prompt, since it's non-destructive and needs no
 confirm step the way Remove still does.
 
+**Build-tab improvements (issue #32) -- a real output-path directory
+browser, a build-time PDF-keeping change, and a shared preview-gallery
+component -- landed together as one issue but are three independent
+pieces.** `deckifyr.resolvers.discovery.list_project_directory` backs a
+new `GET /api/project/browse?dir=...` route: **one single level**
+(`Path.iterdir()`, never `rglob`) of one project-relative directory,
+capped at 500 combined entries (`truncated: true` past that). This is
+deliberately not the same shape as that module's own
+`list_reportifyr_artifacts`/`list_quarto_fragments`, which eagerly walk
+the whole project tree -- a directory picker has to stay usable against
+a project with a deep, unrelated tree it has no business walking (a
+populated `renv/library`, `node_modules`, ...), so `web/src/components
+/OutputPathBrowser.tsx` calls this once per directory an author actually
+clicks into, never up front. Second, independent piece: `_cmd_build`
+now passes `keep_preview_pdf=True` to `compose_and_write` unconditionally
+(a no-op when `build.previews` is off, since no preview render happens
+at all) and surfaces `preview_pdf` in its own result dict the same shape
+`_cmd_preview` already had -- an ordinary `deckifyr build` with
+`build.previews: true` now keeps the intermediate PDF LibreOffice
+produces alongside the PNGs, not just `deckifyr preview`, mirroring that
+command's own "already paying the conversion cost" reasoning. The Build
+tab's new checkbox ("Render slide previews (PNG + PDF) with this
+build") is bound straight to that same existing `build.previews` field --
+no new schema field, since one flag now controls both outputs. Third
+piece: `web/src/components/PreviewGallery.tsx` is the shared
+presentation for a job's `preview-N`/`pdf` artifacts, used by both the
+Build section's own results and the pre-existing standalone Preview
+section (previously the latter's only consumer) -- PNG thumbnails are
+small by default, a click toggles a single `expandedKey` so at most one
+is ever enlarged at a time; the PDF sits behind a `<summary>Show PDF
+preview</summary>` disclosure whose `<iframe>` is only actually rendered
+(not just visually hidden) once opened, confirmed the hard way while
+writing this: a closed native `<details>`'s children stay attached to
+the DOM, so an `<iframe src=...>` inside one still loads its `src`
+regardless of the `display: none` a closed `<details>` gives it --
+"never fetched unless requested" needed a real React-state-gated
+conditional render, not just relying on the native collapsed state.
+Toggling that disclosure is handled by the `<summary>`'s own `onClick`
+(`preventDefault` + flip state), not the native `"toggle"` DOM event --
+confirmed against a real test failure that the HTML spec fires
+`"toggle"` from a queued task, not synchronously with the click, which
+would make the very next render (in real usage, not just tests) lag one
+tick behind the visible native open/close for no benefit here.
+
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found
 via a live user report, not caught by this repo's own mocked test

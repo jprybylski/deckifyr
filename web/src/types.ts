@@ -240,3 +240,15 @@ export interface PreviewAvailability {
   display_name: string;
   install_url: string | null;
 }
+
+/** `GET /api/project/browse` (issue #32's output-path browser) -- one
+ * single level of one project-relative directory, never the whole tree
+ * (see `browseProject`'s own doc comment in `api/client.ts`). `dirs`/
+ * `files` are capped server-side; `truncated` is `true` when this
+ * directory had more entries than that cap. */
+export interface ProjectBrowseResponse {
+  dir: string;
+  dirs: string[];
+  files: string[];
+  truncated: boolean;
+}

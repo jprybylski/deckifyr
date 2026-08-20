@@ -123,6 +123,13 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     resolved_slides = expand_presentation(
         presentation, design, layouts, strict=args.strict
     )
+    # `keep_preview_pdf=True`: harmless when `build.previews` is off (no
+    # preview render happens at all, so `result.preview_pdf_path` stays
+    # `None`), and when a preview render does happen this build is already
+    # paying LibreOffice's PDF-conversion cost to make the PNGs -- keeping
+    # that intermediate PDF alongside the built `.pptx` (issue #32) is
+    # free, the same reasoning `_cmd_preview` below already uses for its
+    # own `keep_preview_pdf=True`.
     result = compose_and_write(
         presentation,
         design,
@@ -131,6 +138,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         presentation_path=presentation_path,
         design_path=(project_root / presentation.design.base).resolve(),
         layouts_path=(project_root / presentation.layouts).resolve(),
+        keep_preview_pdf=True,
     )
 
     return {
@@ -139,6 +147,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
         "previews": [str(p) for p in result.preview_paths],
+        "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
     }
 
 
@@ -310,8 +319,9 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     # flag -- see `compose_and_write`'s own docstring note on this.
     # `keep_preview_pdf=True`: this command already pays the LibreOffice
     # PDF-conversion cost, so keeping the intermediate PDF around (issue
-    # #27's embedded-PDF-viewer support) is free -- unlike an ordinary
-    # `build.previews: true` build, which never keeps it.
+    # #27's embedded-PDF-viewer support) is free -- `_cmd_build` above
+    # does the same (issue #32) whenever `build.previews` actually
+    # triggers a render.
     result = compose_and_write(
         presentation,
         design,

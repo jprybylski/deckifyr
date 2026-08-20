@@ -151,6 +151,85 @@ describe("BuildPanel output path (issue #27)", () => {
   });
 });
 
+describe("BuildPanel previews checkbox (issue #32)", () => {
+  it("reflects build.previews and PUTs an edit when toggled", async () => {
+    let putBody: unknown;
+    stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "/api/config/presentation" && init?.method === "PUT") {
+        putBody = JSON.parse(init.body as string);
+        return jsonResponse(200, { path: "presentation.yaml", dirty: true });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+
+    await screen.findByDisplayValue("build/deck.pptx");
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Render slide previews (PNG + PDF) with this build",
+    });
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(checkbox);
+
+    await waitFor(() => expect(putBody).toMatchObject({ build: { previews: true } }));
+  });
+
+  it("starts checked when build.previews is already true", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/config/presentation" && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(
+          jsonResponse(200, { deckifyr: "0.1", build: { output: "build/deck.pptx", previews: true } })
+        );
+      }
+      if (url === "/api/preview/availability") {
+        return Promise.resolve(jsonResponse(200, AVAILABLE));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBuildPanel(false);
+
+    await screen.findByDisplayValue("build/deck.pptx");
+    expect(
+      screen.getByRole("checkbox", { name: "Render slide previews (PNG + PDF) with this build" })
+    ).toBeChecked();
+  });
+});
+
+describe("BuildPanel build result gallery (issue #32)", () => {
+  it("renders a PreviewGallery for the build job's own preview-N/pdf artifacts", async () => {
+    stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "/api/build" && init?.method === "POST") {
+        return jsonResponse(200, { job_id: "build-job-1" });
+      }
+      if (url === "/api/jobs/build-job-1") {
+        return jsonResponse(200, {
+          id: "build-job-1",
+          status: "succeeded",
+          result: { output: "build/deck.pptx", previews: ["a.png"], preview_pdf: "a.pdf" },
+          error: null,
+        });
+      }
+      if (url === "/api/jobs/build-job-1/artifacts") {
+        return jsonResponse(200, { artifacts: ["pptx", "preview-0", "pdf"] });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+    await screen.findByDisplayValue("build/deck.pptx");
+
+    fireEvent.click(screen.getByRole("button", { name: "Build" }));
+
+    await waitFor(() => expect(screen.getByRole("img", { name: "preview-0" })).toBeInTheDocument());
+    // The generic artifact-link list keeps non-preview artifacts only --
+    // the gallery already presents preview-0/pdf.
+    expect(screen.getByRole("link", { name: "pptx" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "preview-0" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pdf" })).not.toBeInTheDocument();
+  });
+});
+
 describe("BuildPanel preview availability (issue #27)", () => {
   it("shows an install link and disables Preview when LibreOffice isn't available", async () => {
     stubBuildPanelFetch(UNAVAILABLE);
@@ -206,6 +285,10 @@ describe("BuildPanel preview job (issue #27)", () => {
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
 
     await waitFor(() => expect(screen.getByRole("img", { name: "preview-0" })).toBeInTheDocument());
+    // The PDF is minimized by default (issue #32) -- only requesting it
+    // explicitly mounts the iframe.
+    expect(screen.queryByTitle("Preview PDF")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Show PDF preview"));
     expect(screen.getByTitle("Preview PDF")).toHaveAttribute(
       "src",
       "/api/jobs/job-1/artifacts/pdf"

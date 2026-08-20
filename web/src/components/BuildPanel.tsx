@@ -19,6 +19,16 @@
  * of per-slide PNGs plus an embedded `<iframe>` PDF viewer (the
  * browser's own built-in PDF viewer, no new dependency) whenever the
  * job's artifacts include a `pdf` key.
+ *
+ * Issue #32 adds: `OutputPathBrowser` next to the output-path input (a
+ * real directory-browsing "file select" instead of a bare text field), a
+ * "Render slide previews with this build" checkbox bound to
+ * `presentation.yaml`'s `build.previews` (an ordinary `deckifyr build`
+ * now also keeps the PDF it already produces internally once that's on,
+ * mirroring `deckifyr preview`'s own reasoning -- see `cli.py`'s
+ * `_cmd_build`), and `PreviewGallery` -- shared by both the Build
+ * section's own results and the Preview section below -- replacing the
+ * inline images-grid/iframe blocks that used to live only in the latter.
  */
 import { useEffect, useState } from "react";
 import {
@@ -32,6 +42,8 @@ import {
   postPreview,
   putConfig,
 } from "../api/client";
+import OutputPathBrowser from "./OutputPathBrowser";
+import PreviewGallery from "./PreviewGallery";
 import { useAppContext } from "../state/AppContext";
 import type { ApiErrorBody, Job, JobStatus, PreviewAvailability } from "../types";
 
@@ -148,6 +160,25 @@ export default function BuildPanel() {
     }
   }
 
+  // --- render previews with build (issue #32) ---------------------------
+  const previewsEnabled = outputBuild.previews === true;
+
+  async function handlePreviewsChange(checked: boolean) {
+    if (!outputDoc) return;
+    const next = { ...outputDoc, build: { ...outputBuild, previews: checked } };
+    setOutputSaving(true);
+    try {
+      const result = await putConfig("presentation", next);
+      setOutputDoc(next);
+      setOutputError(null);
+      dispatch({ type: "SET_DIRTY", dirty: result.dirty });
+    } catch (err) {
+      setOutputError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setOutputSaving(false);
+    }
+  }
+
   // --- preview availability (issue #27) -------------------------------
   const [availability, setAvailability] = useState<PreviewAvailability | null>(null);
 
@@ -200,10 +231,13 @@ export default function BuildPanel() {
   }
 
   const previewUnavailable = availability !== null && !availability.available;
-  const previewImageKeys = preview.artifacts
-    .filter((key) => key.startsWith("preview-"))
-    .sort((a, b) => Number(a.slice("preview-".length)) - Number(b.slice("preview-".length)));
   const previewJobId = preview.job?.id;
+  // The gallery already presents preview-N/pdf artifacts; the plain
+  // download-link list only needs to cover everything else (pptx,
+  // manifest, ...).
+  const otherBuildArtifacts = build.artifacts.filter(
+    (key) => !key.startsWith("preview-") && key !== "pdf"
+  );
 
   return (
     <div className="build-panel">
@@ -216,11 +250,26 @@ export default function BuildPanel() {
           onBlur={(e) => void saveOutputPath(e.target.value)}
         />
       </label>
+      <OutputPathBrowser
+        currentValue={outputValue}
+        onSelect={(path) => void saveOutputPath(path)}
+        disabled={outputSaving || !outputDoc}
+      />
       {outputError && (
         <p className="build-panel__error" role="alert">
           {outputError}
         </p>
       )}
+
+      <label className="build-panel__previews-toggle">
+        <input
+          type="checkbox"
+          checked={previewsEnabled}
+          disabled={outputSaving || !outputDoc}
+          onChange={(e) => void handlePreviewsChange(e.target.checked)}
+        />
+        Render slide previews (PNG + PDF) with this build
+      </label>
 
       <button
         type="button"
@@ -264,9 +313,9 @@ export default function BuildPanel() {
         </pre>
       )}
 
-      {build.job && build.artifacts.length > 0 && (
+      {build.job && otherBuildArtifacts.length > 0 && (
         <ul className="build-panel__artifacts">
-          {build.artifacts.map((key) => (
+          {otherBuildArtifacts.map((key) => (
             <li key={key}>
               <a href={jobArtifactUrl(build.job!.id, key)} download>
                 {key}
@@ -275,6 +324,7 @@ export default function BuildPanel() {
           ))}
         </ul>
       )}
+      {build.job && <PreviewGallery jobId={build.job.id} artifacts={build.artifacts} />}
 
       <div className="build-panel__preview">
         <h3>Preview</h3>
@@ -326,21 +376,7 @@ export default function BuildPanel() {
           </pre>
         )}
 
-        {previewJobId && previewImageKeys.length > 0 && (
-          <div className="build-panel__preview-images">
-            {previewImageKeys.map((key) => (
-              <img key={key} src={jobArtifactUrl(previewJobId, key)} alt={key} />
-            ))}
-          </div>
-        )}
-
-        {previewJobId && preview.artifacts.includes("pdf") && (
-          <iframe
-            className="build-panel__pdf-viewer"
-            title="Preview PDF"
-            src={jobArtifactUrl(previewJobId, "pdf")}
-          />
-        )}
+        {previewJobId && <PreviewGallery jobId={previewJobId} artifacts={preview.artifacts} />}
       </div>
     </div>
   );

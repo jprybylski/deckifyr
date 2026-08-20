@@ -50,7 +50,11 @@ from deckifyr.plan import (
     resolve_watermark_text,
 )
 from deckifyr.renderers.preview import LIBREOFFICE_INSTALL_URL
-from deckifyr.resolvers.discovery import list_quarto_fragments, list_reportifyr_artifacts
+from deckifyr.resolvers.discovery import (
+    list_project_directory,
+    list_quarto_fragments,
+    list_reportifyr_artifacts,
+)
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import BLANK_LAYOUT_ID, Element, Layout, LayoutsDocument
@@ -1151,6 +1155,20 @@ def create_app(
         raise HTTPException(
             status_code=422, detail=f"unknown file type {type!r} (expected reportifyr or quarto)"
         )
+
+    @app.get("/api/project/browse")
+    def browse_project(dir: str = "") -> dict[str, Any]:
+        """One single level of one project-relative directory (issue #32's
+        Build-tab output-path browser) -- `dir=""` is the project root.
+        Deliberately not a recursive/eager listing (`list_project_directory`'s
+        own docstring): the frontend calls this again for whichever
+        subdirectory the user actually clicks into next, so a project with a
+        deep, unrelated directory tree (a populated `renv/library`,
+        `node_modules`, ...) is never walked as a whole just because this
+        panel was opened.
+        """
+        dirs, files, truncated = list_project_directory(project_root, dir)
+        return {"dir": dir, "dirs": dirs, "files": files, "truncated": truncated}
 
     # --- furniture pseudo-slide (issue #21) -----------------------------
 

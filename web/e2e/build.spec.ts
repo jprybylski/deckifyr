@@ -42,3 +42,27 @@ test("Build is disabled while there are unsaved changes", async ({ page }) => {
   await expect(panel.getByRole("button", { name: "Build" })).toBeDisabled();
   await expect(panel.getByText(/Save your changes before building/)).toBeVisible();
 });
+
+test("toggling the previews checkbox syncs build.previews to the working copy (issue #32)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByText("All changes saved")).toBeVisible();
+  await page.getByRole("button", { name: "Build" }).click();
+
+  const panel = page.locator(".build-panel");
+  const checkbox = panel.getByRole("checkbox", {
+    name: "Render slide previews (PNG + PDF) with this build",
+  });
+  await expect(checkbox).not.toBeChecked();
+
+  // Not `.check()` -- this is a controlled checkbox synced to a PUT
+  // round trip, so it doesn't reflect "checked" synchronously with the
+  // click the way `.check()`'s own post-condition expects.
+  await checkbox.click();
+  await expect(checkbox).toBeChecked();
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+
+  const doc = await (await page.request.get("/api/config/presentation")).json();
+  expect(doc.build.previews).toBe(true);
+});

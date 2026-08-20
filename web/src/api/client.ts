@@ -28,6 +28,7 @@ import type {
   NewElementBody,
   PlanResponse,
   PreviewAvailability,
+  ProjectBrowseResponse,
   ProjectInfo,
   RemoveLayoutResult,
   ResolvedSlide,
@@ -220,6 +221,18 @@ export function duplicateSlide(slideId: string, newId: string): Promise<WriteRes
  * `deckifyr.resolvers.discovery`'s two list functions. */
 export function getProjectFiles(type: "reportifyr" | "quarto"): Promise<{ files: string[] }> {
   return request(`/api/project/files?type=${encodeURIComponent(type)}`);
+}
+
+/** One single level of one project-relative directory (issue #32's
+ * Build-tab output-path browser) -- `dir=""` is the project root.
+ * Deliberately not recursive: `OutputPathBrowser.tsx` calls this again
+ * for whichever subdirectory the user actually clicks into next, rather
+ * than fetching the whole project tree up front (see
+ * `deckifyr.resolvers.discovery.list_project_directory`'s own docstring
+ * for why -- a deep, unrelated tree like a populated `renv/library`
+ * should never get walked as a whole just because this panel opened). */
+export function browseProject(dir: string): Promise<ProjectBrowseResponse> {
+  return request(`/api/project/browse?dir=${encodeURIComponent(dir)}`);
 }
 
 /** `design.yaml`'s `furniture` block, resolved the same way a real

@@ -660,6 +660,39 @@ def test_list_project_files_unknown_type_is_422(client):
     assert response.status_code == 422
 
 
+# --- project directory browsing (issue #32) --------------------------------
+
+
+def test_browse_project_lists_the_root_by_default(client, project_dir):
+    (project_dir / "build").mkdir()
+
+    response = client.get("/api/project/browse")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dir"] == ""
+    assert "build" in body["dirs"]
+    assert "presentation.yaml" in body["files"]
+    assert body["truncated"] is False
+
+
+def test_browse_project_navigates_into_a_subdirectory(client, project_dir):
+    sub = project_dir / "build"
+    sub.mkdir()
+    (sub / "existing.pptx").write_bytes(b"x")
+
+    response = client.get("/api/project/browse", params={"dir": "build"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dir"] == "build"
+    assert body["dirs"] == []
+    assert body["files"] == ["existing.pptx"]
+
+
+def test_browse_project_rejects_a_dir_that_escapes_the_project_root(client):
+    response = client.get("/api/project/browse", params={"dir": "../../etc"})
+    assert response.status_code == 422
+
+
 # --- furniture pseudo-slide (issue #21) ---------------------------------
 
 

@@ -1,13 +1,20 @@
-"""Project-file discovery for the web editor's "Add element" menu
-(issue #31): listing the `reportifyr`/`quarto` sources a new element
-could validly point at, rather than requiring a hand-typed path.
+"""Project-file discovery for the web editor.
+
+`list_reportifyr_artifacts`/`list_quarto_fragments` back the "Add
+element" menu (issue #31): listing the `reportifyr`/`quarto` sources a
+new element could validly point at, rather than requiring a hand-typed
+path -- `deckifyr.web.app`'s `GET /api/project/files` route calls them.
+`list_project_directory` backs the Build tab's output-path browser
+(issue #32) instead: a single-level (non-recursive) directory listing,
+called once per directory an author actually clicks into rather than
+walking the whole project tree up front -- `deckifyr.web.app`'s `GET
+/api/project/browse` route calls it.
 
 Deliberately its own small module, not a method on `ReportifyrResolver`/
 `QuartoResolver` -- those classes resolve one already-known reference
-(spec section 9.2's `ContentResolver` contract); this is a different
-operation (enumerate every *valid* reference) with no resolver-protocol
-shape of its own, and only `deckifyr.web.app`'s new
-`GET /api/project/files` route calls it.
+(spec section 9.2's `ContentResolver` contract); every function here is a
+different kind of operation (enumerate candidates/entries) with no
+resolver-protocol shape of its own.
 """
 
 from __future__ import annotations
@@ -67,3 +74,71 @@ def list_quarto_fragments(project_root: Path) -> list[str]:
     return sorted(
         p.relative_to(project_root).as_posix() for p in project_root.rglob("*.qmd") if p.is_file()
     )
+
+
+# Combined dirs+files cap for one `list_project_directory` call (issue
+# #32's output-path browser). Deliberately small and deliberately not
+# configurable: this exists to keep one directory listing response (and
+# the DOM it becomes) bounded, not to be a real pagination mechanism --
+# a directory with more entries than this is nearly always something
+# irrelevant to "where should the built .pptx go" (a populated
+# `renv/library/<hash>` cache dir, `node_modules`, ...), and the browser
+# UI's own `truncated` note tells the author to type a subdirectory name
+# directly instead.
+_MAX_BROWSE_ENTRIES = 500
+
+
+def list_project_directory(
+    project_root: Path, rel_dir: str
+) -> tuple[list[str], list[str], bool]:
+    """One single level (`Path.iterdir()`, never `rglob`) of
+    `project_root / rel_dir` -- `(subdirectory names, file names,
+    truncated)`, each list sorted and capped at `_MAX_BROWSE_ENTRIES`
+    combined.
+
+    Deliberately non-recursive: `deckifyr.web.app`'s `GET
+    /api/project/browse` route (issue #32's output-path "file select")
+    calls this once per directory the user actually clicks into, not
+    once for the whole project tree the way `list_reportifyr_artifacts`/
+    `list_quarto_fragments` above eagerly `rglob` theirs -- a project
+    with a deep, unrelated directory tree (a populated `renv/library`, a
+    `node_modules`, ...) never gets walked or globbed as a whole just
+    because an author opened the output-path browser once. The entry cap
+    guards the other half of the same concern: even a single directory
+    can itself be huge in that kind of tree (a populated
+    `renv/library/<hash>` cache directory, say), so this still bounds
+    one call's own response/DOM size rather than assuming "one level" is
+    automatically small.
+
+    Raises `ContentValidationError` if `rel_dir` resolves outside
+    `project_root` (same containment check `list_reportifyr_artifacts`
+    uses) or isn't a directory.
+    """
+    project_root = Path(project_root).resolve()
+    target = (project_root / rel_dir).resolve()
+    try:
+        target.relative_to(project_root)
+    except ValueError as exc:
+        raise ContentValidationError(
+            f"directory {rel_dir!r} resolves outside the project root {project_root}"
+        ) from exc
+    if not target.is_dir():
+        raise ContentValidationError(f"{rel_dir!r} is not a directory")
+
+    dirs: list[str] = []
+    files: list[str] = []
+    for entry in target.iterdir():
+        (dirs if entry.is_dir() else files).append(entry.name)
+    dirs.sort()
+    files.sort()
+
+    truncated = len(dirs) + len(files) > _MAX_BROWSE_ENTRIES
+    if truncated:
+        # Directories first, up to the cap, then whatever room is left
+        # for files -- matches the browser UI's own dirs-before-files
+        # row ordering, so a truncated listing doesn't arbitrarily favor
+        # files over the (usually more useful, for navigation purposes)
+        # directories.
+        dirs = dirs[:_MAX_BROWSE_ENTRIES]
+        files = files[: max(0, _MAX_BROWSE_ENTRIES - len(dirs))]
+    return dirs, files, truncated
