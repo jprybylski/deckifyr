@@ -44,19 +44,24 @@ output lands in `inst/python/deckifyr/web/static/` and is committed to
 git, the same "generated output ships in the repo" precedent
 `man/figures/*.png` already sets (see this file's own git-hooks section
 above) -- neither the Python wheel nor an R package install can run a
-Node build at install time. If you touch anything under `web/src/`,
-rerun the command above and commit the resulting diff under
-`inst/python/deckifyr/web/static/` in the same PR. `npm test` (inside
-`web/`) runs the frontend's own vitest suite; run it before opening a
-PR that touches `web/src/`.
+Node build at install time. The command above is for interactive use
+(`npm install` once, then `npm run build` as you iterate); you don't
+need to run it by hand before committing -- see below.
 
-The pre-commit hook also *blocks* (not just warns) a commit that stages
-`web/src/` or `web/package(-lock).json` changes without a matching diff
-under `inst/python/deckifyr/web/static/` -- this is the actual shipped
-bundle, not a docs asset, so it isn't gated behind `SKIP_DOCS_ASSET_CHECK`
-the way the reminders below are; use `git commit --no-verify` only for a
-change that provably can't affect build output (e.g. a `*.test.ts*` file,
-which the build already excludes).
+The pre-commit hook does the enforcement for you: staging any
+`web/src/` or `web/package(-lock).json` change runs `web/`'s vitest
+suite, then (if `uv` is on `PATH`) a real Playwright e2e run against a
+live `deckifyr serve`, then `npm run build`, auto-staging whatever
+changed under `inst/python/deckifyr/web/static/` -- so the commit
+always carries the actual output of a build that just passed, not a
+promise that one was run by hand (issue #41). A failure at any step
+blocks the commit with the command that failed. This needs `npm`
+(and, for the e2e step, `uv`) on `PATH`; bypass with
+`SKIP_WEB_CHECKS=1 git commit ...` only if
+`inst/python/deckifyr/web/static/` was already rebuilt and tested by
+hand, or `git commit --no-verify` for a change that provably can't
+affect build output (e.g. a `*.test.ts*` file, which the build already
+excludes).
 
 `man/figures/web-app-editor.png`/`web-app-no-project.png`/
 `web-app-furniture.png`/`web-app-layout-tab.png`/`web-app-add-slide.png`/
