@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../inst/python/deckifyr/schemas/layouts.schema.json
 deckifyr: "0.1"
 
 layouts:

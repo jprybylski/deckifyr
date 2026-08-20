@@ -25,6 +25,13 @@ deck_inspect <- function(target) {
 #' is fully functional today: it dumps the pydantic-generated JSON
 #' Schema for `design`, `layouts`, or `presentation`.
 #'
+#' For IDE YAML tooling (e.g. VS Code's YAML extension, via a
+#' `# yaml-language-server: $schema=...` comment or a `yaml.schemas`
+#' setting) that needs a real file rather than this function's return
+#' value, the same schemas also ship as static files at
+#' `system.file("python", "deckifyr", "schemas", paste0(document,
+#' ".schema.json"), package = "deckifyr")` (issue #49).
+#'
 #' @param document One of `"design"`, `"layouts"`, or `"presentation"`.
 #' @return A parsed list representing the document type's JSON Schema.
 #' @examples

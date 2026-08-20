@@ -1,0 +1,649 @@
+{
+  "$defs": {
+    "Box": {
+      "additionalProperties": false,
+      "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "string"
+        },
+        "y": {
+          "title": "Y",
+          "type": "string"
+        },
+        "width": {
+          "title": "Width",
+          "type": "string"
+        },
+        "height": {
+          "title": "Height",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Box",
+      "type": "object"
+    },
+    "BuildConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "strict": {
+          "default": true,
+          "title": "Strict",
+          "type": "boolean"
+        },
+        "output": {
+          "title": "Output",
+          "type": "string"
+        },
+        "manifest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest"
+        },
+        "previews": {
+          "default": false,
+          "title": "Previews",
+          "type": "boolean"
+        },
+        "autosave": {
+          "default": false,
+          "title": "Autosave",
+          "type": "boolean"
+        },
+        "reportifyr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReportifyrConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quarto": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuartoConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "output"
+      ],
+      "title": "BuildConfig",
+      "type": "object"
+    },
+    "DesignRef": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "title": "Base",
+          "type": "string"
+        }
+      },
+      "required": [
+        "base"
+      ],
+      "title": "DesignRef",
+      "type": "object"
+    },
+    "Element": {
+      "additionalProperties": false,
+      "description": "One element, as it appears in either a layout or a slide override.\n\n`id` is optional here because layouts.yaml and presentation.yaml's\ndict-keyed slide forms (spec section 7.6's `elements: {title: ...}`)\nuse the mapping key as the id; only the list-keyed freeform form\n(`elements: [{id: ..., ...}]`) sets it inline. Every field besides\n`type` is optional so an override can touch only what it changes,\nper the merge precedence in spec section 7.2.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "text",
+                "markdown",
+                "quarto",
+                "image",
+                "table",
+                "shape",
+                "group",
+                "slot",
+                "footnotes",
+                "reportifyr"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "value": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rotation"
+        },
+        "z_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Z Index"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style"
+        },
+        "center": {
+          "default": false,
+          "title": "Center",
+          "type": "boolean"
+        },
+        "align": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Align"
+        },
+        "table_style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Style"
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "enum": [
+                "contain",
+                "cover",
+                "stretch",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fit"
+        },
+        "overflow": {
+          "anyOf": [
+            {
+              "enum": [
+                "error",
+                "shrink",
+                "clip",
+                "continue"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overflow"
+        },
+        "render_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "native",
+                "svg",
+                "png",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Render Mode"
+        },
+        "alt_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alt Text"
+        },
+        "remove": {
+          "default": false,
+          "title": "Remove",
+          "type": "boolean"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "footer_placement": {
+          "anyOf": [
+            {
+              "enum": [
+                "below",
+                "notes",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footer Placement"
+        },
+        "shape_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "rectangle",
+                "rounded_rectangle",
+                "oval",
+                "triangle",
+                "diamond",
+                "pentagon",
+                "hexagon",
+                "chevron",
+                "right_arrow",
+                "left_arrow",
+                "up_arrow",
+                "down_arrow",
+                "star_5"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shape Kind"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "object"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elements"
+        }
+      },
+      "title": "Element",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": true,
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Author"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "PreviewConfig": {
+      "additionalProperties": false,
+      "description": "Tuning knobs for slide preview rendering (spec section 12/18 Phase\n3), mirroring `QuartoConfig`'s own \"`None` means every default\napplies\" shape -- `previews: true` below is the on/off switch; this\nblock only matters once that (or an explicit `deckifyr preview`\ninvocation) actually triggers a render.\n`deckifyr.renderers.preview.render_slide_previews` shells out to\nLibreOffice for real PowerPoint-engine fidelity, so `binary` is a\nbare name resolved via PATH by default, or a full path for a\nnon-PATH install -- same convention as `QuartoConfig.binary`.",
+      "properties": {
+        "binary": {
+          "default": "soffice",
+          "title": "Binary",
+          "type": "string"
+        },
+        "dpi": {
+          "default": 110,
+          "title": "Dpi",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "title": "PreviewConfig",
+      "type": "object"
+    },
+    "QuartoConfig": {
+      "additionalProperties": false,
+      "description": "Execution settings for `type: quarto` elements (spec section 8.1,\nissue #3), project-relative to `presentation.yaml` where a path is\ninvolved. `None` on `BuildConfig.quarto` (the default) means every\nsetting below's own default -- read lazily by\n`deckifyr.pptx.compose`'s `_build_quarto_context`, only when a build\nactually contains a `quarto` element, same as `ReportifyrConfig`.",
+      "properties": {
+        "binary": {
+          "default": "quarto",
+          "title": "Binary",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "max_output_bytes": {
+          "default": 5000000,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "QuartoConfig",
+      "type": "object"
+    },
+    "ReportifyrConfig": {
+      "additionalProperties": false,
+      "description": "Where/how to resolve `{rpfy}:` magic strings (spec section 9.1),\nproject-relative paths. `standard_footnotes` is required only\nlazily -- a build with no `reportifyr`/rpfy-sourced element never\nreads it; `deckifyr.pptx.compose` raises a `ContentValidationError`\nif one exists and this is unset.",
+      "properties": {
+        "outputs_dir": {
+          "default": "OUTPUTS",
+          "title": "Outputs Dir",
+          "type": "string"
+        },
+        "standard_footnotes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Standard Footnotes"
+        },
+        "fail_on_missing_metadata": {
+          "default": true,
+          "title": "Fail On Missing Metadata",
+          "type": "boolean"
+        }
+      },
+      "title": "ReportifyrConfig",
+      "type": "object"
+    },
+    "Slide": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Layout"
+        },
+        "elements": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "object"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/Element"
+              },
+              "type": "array"
+            }
+          ],
+          "default": {},
+          "title": "Elements"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "id",
+        "layout"
+      ],
+      "title": "Slide",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "deckifyr": {
+      "title": "Deckifyr",
+      "type": "string"
+    },
+    "design": {
+      "$ref": "#/$defs/DesignRef"
+    },
+    "layouts": {
+      "title": "Layouts",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "build": {
+      "$ref": "#/$defs/BuildConfig"
+    },
+    "status_indicator": {
+      "anyOf": [
+        {
+          "enum": [
+            "watermark",
+            "corner-tr",
+            "corner-tl",
+            "corner-bl",
+            "corner-br",
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status Indicator"
+    },
+    "watermark": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Watermark"
+    },
+    "slides": {
+      "items": {
+        "$ref": "#/$defs/Slide"
+      },
+      "title": "Slides",
+      "type": "array"
+    }
+  },
+  "required": [
+    "deckifyr",
+    "design",
+    "layouts",
+    "metadata",
+    "build",
+    "slides"
+  ],
+  "title": "PresentationDocument",
+  "type": "object"
+}

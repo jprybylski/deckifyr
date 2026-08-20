@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../inst/python/deckifyr/schemas/presentation.schema.json
 # A working demo, in the spirit of quartifyr's examples/demo-report: a
 # small PK-style deck built from a real reportifyr artifact rather than
 # placeholder content. `OUTPUTS/figures/conc-time.png` and its metadata

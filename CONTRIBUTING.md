@@ -72,6 +72,27 @@ above -- the pre-commit hook flags a `web/src/` change that doesn't also
 touch at least one of these files; see `.githooks/pre-commit`'s own
 header comment for the exact Playwright-based regeneration recipe.
 
+## Regenerating the JSON Schema files
+
+`inst/python/deckifyr/schemas/{design,layouts,presentation}.schema.json`
+are static JSON Schema files IDE YAML tooling (e.g. VS Code's YAML
+extension, via the `# yaml-language-server: $schema=...` comment at the
+top of `inst/examples/minimal-deck/*.yaml`/`examples/demo-deck/*.yaml`)
+points at for autocomplete and inline validation -- generated from the
+same `deckifyr.schema.{design,layouts,presentation}` pydantic models
+`deckifyr schema [design|layouts|presentation]`/R's `deck_schema()`
+already dump on demand (issue #49). After changing any pydantic field
+in `inst/python/deckifyr/schema/`, regenerate them with:
+
+```bash
+uv run python scripts/generate_json_schemas.py
+```
+
+and commit the result -- `tests/python/test_json_schema_files.py` fails
+if they're out of date with the live models, the same
+"regenerate, don't hand-edit" enforcement `roxygen2::roxygenise()` has
+for `NAMESPACE`/`man/*.Rd` below.
+
 ## R setup
 
 ```bash
@@ -133,6 +154,9 @@ directly against the checkout instead.
 
 - `uv run --extra dev pytest tests/python -v` passes.
 - R tests pass or skip cleanly (see above).
+- If you touched a pydantic field in `inst/python/deckifyr/schema/`,
+  `uv run python scripts/generate_json_schemas.py` produces no
+  unexpected diff (see above).
 - `Rscript -e 'roxygen2::roxygenise()'` produces no unexpected diff if
   you touched any `R/*.R` doc comment.
 - Any new `@export`ed R function is added to `_pkgdown.yml`'s
