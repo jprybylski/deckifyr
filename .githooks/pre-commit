@@ -57,8 +57,35 @@
 #   # screenshot http://127.0.0.1:8330/ at 1400x900, zoom set to 75% via
 #   # the toolbar's own <select> so a 13.333in-wide slide fits the
 #   # viewport, "Show furniture" left unchecked (the default) -- save as
-#   # man/figures/web-app-editor.png; check "Show furniture" and
-#   # re-screenshot for man/figures/web-app-furniture.png
+#   # man/figures/web-app-editor.png.
+#   #
+#   # Window-size note for whoever/whatever drives the browser (tested
+#   # against claude-in-chrome's own resize_window/computer tools, not
+#   # assumed): resize_window's requested WxH does not map 1:1 to the
+#   # screenshot's own pixel dimensions (DPR + window chrome), but on a
+#   # *fresh* tab, resized once immediately after creation and BEFORE
+#   # navigating, it reliably reproduces the same output size every
+#   # time (confirmed: 1400x900 requested -> 1519x784 captured, three
+#   # separate fresh-tab trials, byte-different pages, identical output
+#   # size). A real, confirmed trap this note exists because of: calling
+#   # an element-lookup helper (e.g. claude-in-chrome's `find`, or
+#   # `javascript_tool`) right before the *final* capture on an
+#   # already-set-up tab produced one screenshot 1400x757 instead of the
+#   # other four's 1519x784 in the same session, with no explicit resize
+#   # call in between -- these tools appear to transiently touch the
+#   # viewport (devtools-adjacent inspection), so prefer plain
+#   # coordinate clicks (read positions off an earlier screenshot,
+#   # per computer's own tool description) for whichever interactions
+#   # lead directly into a screenshot you're keeping, saving `find`/
+#   # `javascript_tool` for earlier setup steps (e.g. the zoom `<select>`,
+#   # which resists a plain click+keyboard approach) or a throwaway
+#   # calibration shot you'll discard. If a shot still comes out an odd
+#   # size, redo it on a brand new tab rather than reusing the drifted
+#   # one. Match whatever size the *rest* of this asset group already
+#   # is (`file man/figures/web-app-*.png`) rather than a fresh guess.
+#   #
+#   # check "Show furniture" and re-screenshot for
+#   # man/figures/web-app-furniture.png
 #   # repeat against an empty project directory (no presentation.yaml)
 #   # for man/figures/web-app-no-project.png
 #   # in the slide list, toggle Slides/Layouts to Layouts and select a
