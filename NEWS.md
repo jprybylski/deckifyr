@@ -1,5 +1,19 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `shape`/`table`/`reportifyr`/`quarto` elements can now be dragged,
+  resized, and rotated on the web editor's canvas (issue #54), the same
+  placeholder-box interaction `image` elements already had -- no
+  backend changes were needed, since the PATCH endpoint and schema
+  already supported positioning any element type generically. `group`
+  elements are intentionally still a static placeholder: a group's
+  on-slide position is derived entirely from its own children's boxes
+  at build time, not its own `box` field, so making it draggable needs
+  a separate, larger fix (tracked in issue #55).
+
 # deckifyr 0.3.0
 
 ## Added

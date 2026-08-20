@@ -708,15 +708,17 @@ at the optional `web` extra -- the same posture `deckifyr.resolvers
 rasterization) already established for their own optional dependencies,
 so every other subcommand keeps working without `fastapi`/`uvicorn`
 installed. On the frontend, `web/src/components/SlideCanvas.tsx`'s own
-`DRAGGABLE_TYPES` is `text`/`markdown`/`image` -- those three render as
-real Konva `Group`s that can be dragged, resized, and rotated
-(committing back through `PATCH /api/slides/{slide}/elements
+`DRAGGABLE_TYPES` was originally `text`/`markdown`/`image` -- those
+three rendered as real Konva `Group`s that can be dragged, resized, and
+rotated (committing back through `PATCH /api/slides/{slide}/elements
 /{element}`, or, on the furniture pseudo-slide, `PATCH /api/furniture
 /elements/{element}` -- see this section's own furniture-pseudo-slide
-paragraph below); `shape`/`group`/`table`/`reportifyr`/`quarto` elements
-render as a static, labeled, dashed placeholder box, per that
-component's own module comment naming this as this project's deliberate
-scope. `image` is draggable/resizable/rotatable like text, but still
+paragraph below), while `shape`/`group`/`table`/`reportifyr`/`quarto`
+elements rendered as a static, labeled, dashed placeholder box. Issue
+#54 (0.3.1) extended `DRAGGABLE_TYPES` to also cover `shape`/`table`/
+`reportifyr`/`quarto` -- see this section's own later paragraph on that
+change for what's now different and why `group` alone stays excluded.
+`image` is draggable/resizable/rotatable like text, but still
 renders as a labeled placeholder rather than the real picture --
 confirmed against both the component and the API it calls: `GET
 /api/plan` (`app.py`'s `_serialize_element`) only ever returns an image
@@ -1062,6 +1064,82 @@ doesn't regress `deckifyr preview`'s own hard-failure contract via
 (`tests/python/test_pptx.py`), alongside
 `test_build_previews_missing_libreoffice_downgrades_to_a_warning` for
 the opportunistic case.
+
+**`shape`/`table`/`reportifyr`/`quarto` elements are now draggable/
+resizable/rotatable on the web editor's canvas (issue #54, 0.3.1), the
+same interaction `image` already had -- confirmed, before building this,
+that it needed no backend changes at all.** `PATCH /api/slides/{slide_id}
+/elements/{element_id}` (`app.py`'s `patch_element`) has no
+`element["type"]` check anywhere in it, and `deckifyr.schema.layouts
+.Element` declares `box`/`rotation`/`z_index` once, unconditional on
+`type` -- both already applied to every element kind before this issue,
+proven in practice by `ElementInspector.tsx`'s numeric X/Y/Width/Height/
+Rotation form, which never gated on element type either and was already
+the (keyboard-only) way to reposition these five kinds. The only real
+gap was `SlideCanvas.tsx`'s own `DRAGGABLE_TYPES` set (its one deliberate
+scope gate, per that file's own module docstring) -- extending it to
+`shape`/`table`/`reportifyr`/`quarto` was enough to make
+`isDraggableElement`/the shared `Transformer`/`handleDragEnd`/
+`handleTransformEnd` all treat them like any other element, with no
+changes needed to any of those functions themselves; they were already
+fully generic over `element`, proven independently by
+`isDraggableLayoutZone()` already returning `true` unconditionally for
+layout zones of any type. The one rendering change needed:
+`shape`/`table`/`reportifyr`/`quarto`, like `image`, still don't render
+their real content (no route returns their actual pixels/rendered
+output, same limitation `image` already had), so the draggable-branch
+JSX's one `element.type === "image"` special case (fill color, label
+vs. plain text, alignment) generalized to a new
+`isContentPlaceholderElement(element)` (`true` for exactly
+`image`/`shape`/`table`/`reportifyr`/`quarto`) -- covering all four new
+types the same way `image` already worked, and also now gating
+`selectOrEdit`'s double-click-to-edit-text path, since none of these
+five types' `value` is freeform prose (`table`'s is a source path,
+`reportifyr`/`quarto`'s are a magic string/`.qmd` path). The first draft
+of that helper generalized the other way instead -- "true unless
+`text`/`markdown`" -- which typechecks and passed every existing test,
+but is wrong: Layouts mode's `slot`/`footnotes` zone types (issue #30)
+have no `value` either, so that phrasing silently swept them in too,
+turning their on-canvas look from an empty box (unchanged since before
+this feature existed) into a labeled placeholder -- exactly the kind of
+regression `man/figures/web-app-layout-tab.png`'s own pre-commit
+staleness reminder exists to catch, caught here by re-deriving the
+helper from the specific five-type list instead, with a regression test
+(`SlideCanvas.logic.test.ts`) pinning `slot`/`footnotes` to `false`.
+
+**`group` was deliberately left out of issue #54, not overlooked --
+its own `box` field is functionally vestigial, a real, confirmed
+discovery, not a hypothetical concern.** Tracing
+`deckifyr.pptx.compose._compose_element`'s `group` branch
+(`elif element.type == "group":`) shows it never reads `element.box` at
+all: a group's on-slide position is entirely the union of its own
+children's independently-placed, slide-absolute boxes (spec section
+7.3 -- group children were never given a group-relative coordinate
+system), reparented under a synthetic `add_group_shape` afterward; only
+`element.rotation` is applied post-hoc, rotating that auto-computed
+bounding box. `deckifyr.plan` still requires every element, `group`
+included, to resolve a `box` (`plan.py`'s own "no box/geometry
+resolved" check has no `group` exception), so the field exists,
+validates, and was already editable through `ElementInspector`'s
+numeric form before this issue touched anything -- silently writing a
+value the compositor has always ignored. Making `group` draggable on
+the canvas the same way as the other four would have compounded rather
+than fixed this: dragging it would look like it worked (the PATCH
+succeeds, the box persists) while doing nothing to the built deck,
+exactly the kind of silent-no-op this codebase otherwise refuses to
+ship (spec section 20 warning 7 -- see the furniture rotation/z_index
+422-rejection precedent elsewhere in this file). `SlideCanvas.tsx`'s
+`DRAGGABLE_TYPES` therefore still excludes `group`, and
+`ElementInspector.tsx`'s note for a selected `group` element was
+rewritten to explain the real mechanism ("a group's position comes
+entirely from its own children's boxes -- edit a child element's
+geometry instead") rather than the previous, now-inaccurate-for-four-
+of-five-types "elements aren't draggable on the canvas yet." Making
+`group` genuinely repositionable needs a real geometry feature --
+translating a canvas drag/resize/rotate into a delta applied to every
+descendant element's own box, recursively for nested groups -- tracked
+as its own, separate follow-up (issue #55) rather than folded into this
+one, since it's meaningfully bigger than a `DRAGGABLE_TYPES` entry.
 
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found

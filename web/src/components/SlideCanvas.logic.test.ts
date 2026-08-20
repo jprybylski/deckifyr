@@ -7,13 +7,14 @@ import {
   furnitureElementSupportsRotation,
   furnitureElementSupportsValue,
   furnitureElementSupportsZIndex,
+  isContentPlaceholderElement,
   isDraggableElement,
   isDraggableFurnitureElement,
   isFurnitureElement,
   konvaTextAlign,
   konvaVerticalAlign,
 } from "./SlideCanvas";
-import type { ResolvedElement } from "../types";
+import type { ElementType, ResolvedElement } from "../types";
 
 function element(overrides: Partial<ResolvedElement>): ResolvedElement {
   return {
@@ -61,16 +62,59 @@ describe("isFurnitureElement", () => {
 });
 
 describe("isDraggableElement", () => {
-  it("is draggable for ordinary text/markdown/image elements", () => {
-    expect(isDraggableElement(element({ id: "title", type: "text" }))).toBe(true);
-    expect(isDraggableElement(element({ id: "body", type: "markdown" }))).toBe(true);
-    expect(isDraggableElement(element({ id: "pic", type: "image" }))).toBe(true);
+  it("is draggable for text/markdown/image/shape/table/reportifyr/quarto elements", () => {
+    for (const type of [
+      "text",
+      "markdown",
+      "image",
+      "shape",
+      "table",
+      "reportifyr",
+      "quarto",
+    ] as const) {
+      expect(isDraggableElement(element({ id: "x", type }))).toBe(true);
+    }
   });
 
-  it("is never draggable for shape/group/table/reportifyr/quarto elements", () => {
-    for (const type of ["shape", "group", "table", "reportifyr", "quarto"] as const) {
-      expect(isDraggableElement(element({ id: "x", type }))).toBe(false);
+  it("is never draggable for group elements (issue #55 -- its box is ignored by the compositor)", () => {
+    expect(isDraggableElement(element({ id: "x", type: "group" }))).toBe(false);
+  });
+});
+
+describe("isContentPlaceholderElement", () => {
+  it("is true for image/shape/table/reportifyr/quarto -- no real content preview on this canvas", () => {
+    for (const type of ["image", "shape", "table", "reportifyr", "quarto"] as const) {
+      expect(isContentPlaceholderElement(element({ id: "x", type }))).toBe(true);
     }
+  });
+
+  it("is false for text/markdown -- real, previewable prose", () => {
+    expect(isContentPlaceholderElement(element({ id: "x", type: "text" }))).toBe(false);
+    expect(isContentPlaceholderElement(element({ id: "x", type: "markdown" }))).toBe(false);
+  });
+
+  it("is false for a layout zone's slot/footnotes types, even though they have no value either", () => {
+    // Regression guard: an earlier draft of this helper generalized to
+    // "not text/markdown", which incidentally swept in Layouts mode's
+    // `slot`/`footnotes` zone types too (issue #30) -- silently
+    // changing their on-canvas look (an empty box) to a labeled
+    // placeholder, staling man/figures/web-app-layout-tab.png. `slot`/
+    // `footnotes` must render exactly as before issue #54.
+    //
+    // `as unknown as ElementType`: a real `GET /api/layouts` zone can
+    // carry `type: "slot"`/`"footnotes"` (see `NewElementBody`'s own
+    // wider `ElementType | "slot" | "footnotes"` union, and
+    // `ElementList.tsx`'s `LAYOUT_ONLY_TYPES`), but `ResolvedElement
+    // .type` here is still typed as plain `ElementType` -- a pre-
+    // existing type-safety gap, not introduced by this change.
+    expect(
+      isContentPlaceholderElement(element({ id: "x", type: "slot" as unknown as ElementType }))
+    ).toBe(false);
+    expect(
+      isContentPlaceholderElement(
+        element({ id: "x", type: "footnotes" as unknown as ElementType })
+      )
+    ).toBe(false);
   });
 
   it("is fixed (not draggable) for a furniture element even though its type is draggable", () => {
@@ -109,7 +153,7 @@ describe("isDraggableFurnitureElement", () => {
   });
 
   it("still respects the ordinary draggable-type set", () => {
-    expect(isDraggableFurnitureElement(element({ id: "x", type: "shape" }))).toBe(false);
+    expect(isDraggableFurnitureElement(element({ id: "x", type: "group" }))).toBe(false);
   });
 });
 
