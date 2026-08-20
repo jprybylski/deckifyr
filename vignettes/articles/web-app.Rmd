@@ -128,7 +128,7 @@ plan and lets you:
   freeform slide, since neither has a layout of its own to edit.
 * Set the deck's own status (`metadata.status` -- "demo", "draft",
   "final", ...) and toggle the deck-wide status/watermark placement
-  (`presentation.yaml`'s `status_indicator`, spec section 7.8) on or
+  (`presentation.yaml`'s `status_indicator`) on or
   off, from a "Deck-wide" bar above the slide list -- without opening
   the config editor. Both are real, persisted edits: they write to
   `presentation.yaml` and change what the *built* deck looks like. A
@@ -191,32 +191,41 @@ plan and lets you:
 * Download the resulting `.pptx`, its manifest, and any rendered
   previews once a build finishes.
 
-## What it deliberately doesn't do yet
+## Currently unsupported features
 
-This is an early slice of the editor (spec's own Phase 3), not a
-finished PowerPoint replacement -- some gaps are worth knowing about
-before you reach for it instead of editing YAML directly:
+Some things aren't supported by the editor yet -- worth knowing before
+you reach for it instead of editing YAML directly. Each one links to
+its tracking issue if it has one; if it doesn't, use the "open an
+issue" link to request it.
 
 * **No multi-select or clipboard.** One element at a time; no
-  copy/paste, no group-move.
+  copy/paste, no group-move
+  ([#31](https://github.com/jprybylski/deckifyr/issues/31)).
 * **No on-canvas editing for `shape`/`group`/`table`/`reportifyr`/
   `quarto` elements.** They render as static, labeled placeholder
   boxes so you can see where they sit relative to everything else, but
-  moving, resizing, or editing their content still means editing the
-  YAML (or using `deck_set_config()`).
+  adding, moving, resizing, or editing their content still means
+  editing the YAML (or using `deck_set_config()`)
+  ([#31](https://github.com/jprybylski/deckifyr/issues/31)).
 * **`image` elements are draggable, but you won't see the actual
   picture.** The API that backs the canvas returns an image element's
   source path, not its pixels, so an image is a placeholder box too --
   one that participates in drag/resize/rotate like a real image would,
-  just without a preview inside it.
+  just without a preview inside it
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **No image cropping or snapping guides.** Positioning is freehand;
-  there's no ruler/grid snap or alignment assist yet.
+  there's no ruler/grid snap or alignment assist yet
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
 * **Layout view only edits a layout's existing zones' geometry --
-  there's no way to add or remove a zone from the canvas.** Reshaping
-  what a layout (`layouts.yaml`) offers at all -- a new zone, or
-  deleting one -- still means editing the YAML or using
-  `deck_set_config()`; Layout view just repositions what's already
-  there.
+  there's no way to add, remove, or switch which layout you're editing
+  from the canvas.** Reshaping what a layout (`layouts.yaml`) offers at
+  all -- a new zone, deleting one, or adding a whole new layout --
+  still means editing the YAML or using `deck_set_config()`; Layout
+  view just repositions what's already there
+  ([#30](https://github.com/jprybylski/deckifyr/issues/30),
+  [#31](https://github.com/jprybylski/deckifyr/issues/31)).
 * **The furniture pseudo-slide only edits geometry (box/rotation),
   never the underlying text.** A status/watermark or page-number
   element's displayed word isn't a literal `design.yaml` field -- it's
@@ -224,7 +233,8 @@ before you reach for it instead of editing YAML directly:
   format string) -- so double-clicking it there doesn't open a text
   editor the way branding's own literal `text` field does. Set the
   deck status from the "Deck-wide" bar instead, or the page-number
-  format from the Config tab.
+  format from the Config tab
+  ([#31](https://github.com/jprybylski/deckifyr/issues/31)).
 * **The schema-driven config form falls back to raw JSON for a few
   field shapes.** Most fields -- strings, numbers, booleans, enums,
   nested objects, open dictionaries like `colors`/`text_styles`, arrays
@@ -237,7 +247,15 @@ before you reach for it instead of editing YAML directly:
   toggle away) always covers the whole document either way. Comments
   and formatting in the on-disk YAML still aren't preserved through a
   save, in either view -- the same limitation
-  `deck_set_config()`/`deck_*_slide()` already have.
+  `deck_set_config()`/`deck_*_slide()` already have
+  ([open an issue](https://github.com/jprybylski/deckifyr/issues/new)
+  if you'd like this prioritized).
+* **The Build tab's output path is a plain text field, and a finished
+  Preview always shows its full PDF viewer and PNG thumbnails inline.**
+  There's no file picker for the output path, no checkbox for building
+  a PDF alongside the `.pptx`, and no way to collapse or expand the
+  Preview's PDF/PNGs individually
+  ([#32](https://github.com/jprybylski/deckifyr/issues/32)).
 
 None of this is hidden behind the scenes -- if you hit one of these
 edges, dropping back to `deck_get_config()`/`deck_set_config()`/
