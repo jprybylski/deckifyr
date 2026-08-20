@@ -14,6 +14,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: # manual re-run for a dependabot/combined-prs branch skipped below
 
 name: R-CMD-check.yaml
 
@@ -24,6 +25,11 @@ jobs:
     runs-on: ${{ matrix.config.os }}
 
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    # See ci.yml's identical condition: dependabot PRs and the combined PR
+    # (combine-prs.yml) don't get automatic checks, run this manually
+    # (workflow_dispatch above) before merging either kind instead.
+    if: github.event_name != 'pull_request' || (!startsWith(github.head_ref, 'dependabot/') && github.head_ref != 'combined-prs-branch')
 
     strategy:
       fail-fast: false

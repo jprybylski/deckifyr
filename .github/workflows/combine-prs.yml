@@ -1,0 +1,38 @@
+# Batches open dependabot PRs (see .github/dependabot.yml) into a single
+# PR so they get one review/merge instead of one per ecosystem/directory
+# group. `branch_prefix`'s default ("dependabot") already matches every
+# branch dependabot.yml's three update blocks create, so no override is
+# needed here -- this only ever touches dependabot branches, never
+# unrelated PRs.
+#
+# ci_required: false is deliberate, not a relaxation of standards: ci.yml/
+# R-CMD-check.yaml/test-coverage.yaml (see their own "skip automatically
+# for dependabot" job conditions) never run checks on the individual
+# dependabot branches this combines, so there are no check runs for the
+# action to wait on -- ci_required: true would block combination forever.
+# The combined PR itself still doesn't get automatic checks either (same
+# skip condition, matched on combine_branch_name below); run them manually
+# from the Actions tab before merging.
+name: Combine dependabot PRs
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC, after a week of weekly dependabot runs
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  combine-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: combine-prs
+        uses: github/combine-prs@v5.2.0
+        with:
+          combine_branch_name: combined-prs-branch
+          ci_required: false
+          pr_title: "Combine dependabot PRs"
+          labels: dependencies
