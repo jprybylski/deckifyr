@@ -203,6 +203,26 @@ def test_render_image_produces_svg_and_png(tmp_path):
 
 
 @requires_quarto
+def test_render_image_png_background_is_transparent(tmp_path):
+    # Issue #9: a rasterized fragment's background used to composite onto
+    # opaque white regardless of what it sat on top of in the deck.
+    pytest.importorskip("pymupdf")
+    from PIL import Image
+
+    qmd = tmp_path / "frag.qmd"
+    qmd.write_text("Some prose to rasterize.\n")
+    png_path = render_image(qmd, image_format="png", config=QuartoExecutionConfig())
+    try:
+        image = Image.open(png_path)
+        assert "A" in image.mode
+        # A corner pixel, far from any glyph, should be fully transparent
+        # rather than opaque white.
+        assert image.getpixel((0, 0))[-1] == 0
+    finally:
+        png_path.unlink(missing_ok=True)
+
+
+@requires_quarto
 def test_render_image_cleans_up_sibling_fragment(tmp_path):
     pytest.importorskip("pymupdf")
     qmd = tmp_path / "frag.qmd"

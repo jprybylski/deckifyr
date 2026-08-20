@@ -30,7 +30,8 @@ Two render paths, matching spec section 8's render-mode table:
   would rasterize as one small fragment adrift in a mostly-blank page
   with a stray "1" printed under it -- `_inject_typst_autosize` works
   around this by rendering a sibling copy of the fragment with a
-  `#set page(width: auto, height: auto, margin: ..., numbering: none)`
+  `#set page(width: auto, height: auto, margin: ..., numbering: none,
+  fill: none)`
   raw Typst block spliced in after any YAML frontmatter (confirmed
   empirically, twice: the same `#set page` rule passed via Pandoc's
   `--include-in-header` does *not* take effect at all, because Quarto's
@@ -44,7 +45,12 @@ Two render paths, matching spec section 8's render-mode table:
   first page is then rasterized with PyMuPDF (a pure-Python dependency,
   imported lazily like `pyarrow` in `deckifyr.resolvers.table` --
   chosen specifically to avoid a hard dependency on system-installed
-  `poppler-utils`). Both formats work at this module's level -- but
+  `poppler-utils`) with `alpha=True` so a `png` render's background stays
+  transparent rather than pymupdf's own default of compositing onto
+  opaque white (issue #9) -- `fill: none` alone only keeps the *PDF*
+  page transparent; without also passing `alpha=True` to `get_pixmap`,
+  the rasterizer still flattens that transparency onto white. Both
+  formats work at this module's level -- but
   `deckifyr.pptx.compose` (confirmed against a real render, not just
   read from docs: `pptx.package.py` explicitly skips SVG as an
   "unknown/unsupported image type", and Pillow -- which
@@ -385,7 +391,7 @@ def _inject_typst_autosize(
     frontmatter, body = _split_frontmatter(source_text)
     typst_lines = [
         "#set page(width: auto, height: auto, "
-        f"margin: {config.image_margin_in}in, numbering: none)"
+        f"margin: {config.image_margin_in}in, numbering: none, fill: none)"
     ]
     text_args = []
     if font:
@@ -414,7 +420,13 @@ def _rasterize_pdf(pdf_path: Path, image_path: Path, *, image_format: str) -> No
         if image_format == "svg":
             image_path.write_text(page.get_svg_image(), encoding="utf-8")
         else:
-            page.get_pixmap(dpi=_PNG_DPI).save(str(image_path))
+            # alpha=True keeps the page's `fill: none` (set by
+            # `_inject_typst_autosize`) transparent in the rasterized PNG,
+            # instead of pymupdf's own default of compositing onto opaque
+            # white (issue #9) -- a fragment placed over a colored slide
+            # background or another element previously showed a visible
+            # white box around its content.
+            page.get_pixmap(dpi=_PNG_DPI, alpha=True).save(str(image_path))
     finally:
         doc.close()
 
