@@ -24,9 +24,12 @@ import type {
   HealthResponse,
   Job,
   JobArtifactsResponse,
+  LayoutsResponse,
+  NewElementBody,
   PlanResponse,
   PreviewAvailability,
   ProjectInfo,
+  RemoveLayoutResult,
   ResolvedSlide,
   SaveResult,
   ValidateResponse,
@@ -151,6 +154,72 @@ export function patchLayoutElement(
     `/api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
     { method: "PATCH", body: JSON.stringify(body) }
   );
+}
+
+/** Every layout in `layouts.yaml`, resolved (issue #30's Layouts editor
+ * mode) -- the eager list `getLayoutZones` above was originally the
+ * on-demand, one-at-a-time version of. */
+export function getLayouts(): Promise<LayoutsResponse> {
+  return request("/api/layouts");
+}
+
+export function postAddLayout(id: string): Promise<WriteResult> {
+  return request("/api/layouts", { method: "POST", body: JSON.stringify({ id }) });
+}
+
+/** Removes a layout, reassigning any slide that used it to `"blank"` --
+ * rejected (422) instead if that reassignment would leave a slide
+ * unbuildable (`deckifyr.web.app.remove_layout`'s own docstring). */
+export function deleteLayout(layoutName: string): Promise<RemoveLayoutResult> {
+  return request(`/api/layouts/${encodeURIComponent(layoutName)}`, { method: "DELETE" });
+}
+
+/** Add/remove an element on an ordinary slide or a layout's own zones
+ * (issue #31) -- geometry is always a server-computed default box; drag/
+ * resize afterward the same way any other element already works. */
+export function addSlideElement(slideId: string, body: NewElementBody): Promise<WriteResult> {
+  return request(`/api/slides/${encodeURIComponent(slideId)}/elements`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteSlideElement(slideId: string, elementId: string): Promise<WriteResult> {
+  return request(
+    `/api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export function addLayoutElement(layoutName: string, body: NewElementBody): Promise<WriteResult> {
+  return request(`/api/layouts/${encodeURIComponent(layoutName)}/elements`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLayoutElement(layoutName: string, elementId: string): Promise<WriteResult> {
+  return request(
+    `/api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
+    { method: "DELETE" }
+  );
+}
+
+/** Copies an existing slide's layout/elements/notes into a new slide
+ * placed immediately after it (issue #31 follow-up comment's "duplicate"
+ * button). */
+export function duplicateSlide(slideId: string, newId: string): Promise<WriteResult> {
+  return request(`/api/slides/${encodeURIComponent(slideId)}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify({ id: newId }),
+  });
+}
+
+/** Real project files a new `reportifyr`/`quarto` element could validly
+ * point at (issue #31's "Add element" picker) -- `type` mirrors
+ * `deckifyr.resolvers.discovery`'s two list functions. */
+export function getProjectFiles(type: "reportifyr" | "quarto"): Promise<{ files: string[] }> {
+  return request(`/api/project/files?type=${encodeURIComponent(type)}`);
 }
 
 /** `design.yaml`'s `furniture` block, resolved the same way a real

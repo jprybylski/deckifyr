@@ -15,7 +15,7 @@
  * boolean (a "Show watermark" checkbox here) so a corner and the full
  * watermark could render at the same time -- reverted after dogfeeding:
  * the checkbox turned out to be functionally identical to
- * `FurnitureControls`' own "Add" button for the same element whenever it
+ * `ElementList`'s furniture branch's own "Add" button for the same element whenever it
  * turned the watermark *on*, and diverged from "Remove" in a way that
  * wasn't visible from either control (the checkbox only flipped the
  * activation flag, "Remove" deleted the underlying `design.yaml` style
@@ -72,7 +72,7 @@ interface Props {
   onSaved?: () => void;
 }
 
-// Mirrors `FurnitureControls.tsx`'s own literal (see that file's own
+// Mirrors `ElementList.tsx`'s own literal (see that file's own
 // comment on why it isn't imported from a shared constants module).
 const FURNITURE_STATUS_ID = "__furniture_status";
 
@@ -143,7 +143,7 @@ export default function DeckOptions({ onSaved }: Props) {
    * which reads as a crash on an ordinary, allowed action, not a
    * deliberate strictness policy -- because from the dropdown's own
    * point of view, it wasn't an invalid choice. This materializes a
-   * default style the same way `FurnitureControls`' own "Add" button
+   * default style the same way `ElementList`'s furniture branch's own "Add" button
    * does (`POST /api/furniture/elements/__furniture_status`), right
    * after selecting -- so selecting and configuring collapse into one
    * action instead of two. "Already configured" (422 -- an earlier

@@ -140,6 +140,9 @@ describe("App project gate", () => {
       if (url === "/api/furniture") {
         return Promise.resolve(jsonResponse(200, { id: "__furniture__", notes: null, elements: [] }));
       }
+      if (url === "/api/layouts") {
+        return Promise.resolve(jsonResponse(200, { layouts: [] }));
+      }
       if (url === "/api/config/design") {
         return Promise.resolve(
           jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } })
@@ -190,6 +193,9 @@ describe("App project gate", () => {
         if (url === "/api/plan") return Promise.resolve(jsonResponse(200, { slides: [] }));
         if (url === "/api/furniture") {
           return Promise.resolve(jsonResponse(200, { id: "__furniture__", notes: null, elements: [] }));
+        }
+        if (url === "/api/layouts") {
+          return Promise.resolve(jsonResponse(200, { layouts: [] }));
         }
         if (url === "/api/config/design") {
           return Promise.resolve(jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } }));

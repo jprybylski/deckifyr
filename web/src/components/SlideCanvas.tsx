@@ -108,14 +108,15 @@ export function furnitureElementSupportsValue(elementId: string): boolean {
   return elementId === "__furniture_branding";
 }
 
-// Layout view (issue #23's Content/Layout tab): every zone is
-// draggable regardless of its `type` -- unlike `isDraggableElement`,
-// which only allows `text`/`markdown`/`image`. A layout zone is a pure
-// position slot (`layouts.yaml`'s own `slot`/`footnotes` types have no
-// content of their own at all, spec section 7.5), so gating on
-// `DRAGGABLE_TYPES` the way ordinary slide content is would make most
-// of a typical layout's own zones (its `slot`/`footnotes` entries)
-// immovable, defeating the point of this view.
+// Layouts editor mode (issue #30, originally issue #23's since-
+// superseded per-slide Content/Layout tab): every zone is draggable
+// regardless of its `type` -- unlike `isDraggableElement`, which only
+// allows `text`/`markdown`/`image`. A layout zone is a pure position
+// slot (`layouts.yaml`'s own `slot`/`footnotes` types have no content of
+// their own at all, spec section 7.5), so gating on `DRAGGABLE_TYPES`
+// the way ordinary slide content is would make most of a typical
+// layout's own zones (its `slot`/`footnotes` entries) immovable,
+// defeating the point of this mode.
 export function isDraggableLayoutZone(): boolean {
   return true;
 }
@@ -216,7 +217,7 @@ interface Props {
 
 export default function SlideCanvas({ plan }: Props) {
   const { state, dispatch } = useAppContext();
-  const { slides, furnitureSlide, slideSize } = plan;
+  const { slides, furnitureSlide, layouts, slideSize } = plan;
   const [editingElementId, setEditingElementId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -226,36 +227,29 @@ export default function SlideCanvas({ plan }: Props) {
 
   const isFurnitureSlideSelected =
     furnitureSlide !== null && state.selectedSlideId === furnitureSlide.id;
-  const layoutName =
-    !isFurnitureSlideSelected && state.selectedSlideId
-      ? (plan.slideLayouts[state.selectedSlideId] ?? null)
-      : null;
-  const isLayoutViewSelected = state.slideViewMode === "layout" && layoutName !== null;
-  // `plan.layoutSlide` is fetched on demand, keyed to whichever layout
-  // `Toolbar`'s own effect last requested -- comparing its `id` against
-  // what the *currently* selected slide's layout should be catches the
-  // brief window right after switching slides/toggling the view where a
-  // stale, previously-loaded layout's zones are still in state (showing
-  // those instead of a "loading" message would be a real, if momentary,
-  // wrong-content bug).
-  const layoutSlideReady =
-    isLayoutViewSelected && plan.layoutSlide?.id === `__layout__${layoutName}`;
+  // Issue #30: which collection `state.selectedSlideId` is looked up
+  // in is now a persistent, app-wide choice (`state.editorMode`), not a
+  // per-slide toggle -- so, unlike the superseded `layoutSlide`/
+  // `loadLayoutZones` this replaces, there's no on-demand fetch and no
+  // staleness race to guard against: `plan.layouts` is fetched in full,
+  // eagerly, the same as `plan.slides`.
+  const isLayoutsMode = !isFurnitureSlideSelected && state.editorMode === "layouts";
   const slide = isFurnitureSlideSelected
     ? furnitureSlide
-    : isLayoutViewSelected
-      ? (layoutSlideReady ? plan.layoutSlide! : undefined)
+    : isLayoutsMode
+      ? (layouts?.find((l) => l.id === state.selectedSlideId) ?? layouts?.[0])
       : (slides?.find((s) => s.id === state.selectedSlideId) ?? slides?.[0]);
   const selectedElement = findElement(slide, state.selectedElementId);
 
   // On the furniture pseudo-slide, `background` stays a fixed
   // placeholder (no `box` field to drag) but `status`/`branding`/
   // `page_number` all become draggable -- the opposite of an ordinary
-  // real slide, where every `__furniture_*` element is fixed. In Layout
-  // view, every zone is draggable regardless of type (see
+  // real slide, where every `__furniture_*` element is fixed. In
+  // Layouts mode, every zone is draggable regardless of type (see
   // `isDraggableLayoutZone`'s own comment for why).
   const isDraggable = isFurnitureSlideSelected
     ? isDraggableFurnitureElement
-    : isLayoutViewSelected
+    : isLayoutsMode
       ? isDraggableLayoutZone
       : isDraggableElement;
 
@@ -288,34 +282,27 @@ export default function SlideCanvas({ plan }: Props) {
   // below instead, so the reason the real slides are broken stays
   // visible.
   const furnitureSlideUsable = isFurnitureSlideSelected && furnitureSlide && slideSize;
-  // Layout view depends on `plan.layoutSlide`, not `plan.slides` -- an
+  // Layouts mode depends on `plan.layouts`, not `plan.slides` -- an
   // unrelated real-slide plan failure (`plan.error`) must not block it
   // either, same carve-out `furnitureSlideUsable` above already has.
-  const layoutViewUsable = isLayoutViewSelected && layoutSlideReady && slideSize;
-  if (plan.error && !furnitureSlideUsable && !layoutViewUsable) {
+  const layoutsModeUsable = isLayoutsMode && layouts && slideSize;
+  if (plan.error && !furnitureSlideUsable && !layoutsModeUsable) {
     return (
       <div className="slide-canvas slide-canvas--empty" role="alert">
         {plan.error}
       </div>
     );
   }
-  if (isLayoutViewSelected && plan.layoutError) {
-    return (
-      <div className="slide-canvas slide-canvas--empty" role="alert">
-        {plan.layoutError}
-      </div>
-    );
-  }
-  if (!slideSize || (!isFurnitureSlideSelected && !isLayoutViewSelected && !slides)) {
+  if (
+    !slideSize ||
+    (!isFurnitureSlideSelected && (isLayoutsMode ? !layouts : !slides))
+  ) {
     return <div className="slide-canvas slide-canvas--loading">Loading plan…</div>;
-  }
-  if (isLayoutViewSelected && !layoutSlideReady) {
-    return <div className="slide-canvas slide-canvas--loading">Loading layout…</div>;
   }
   if (!slide) {
     return <div className="slide-canvas slide-canvas--empty">No slides.</div>;
   }
-  if (isLayoutViewSelected && slide.elements.length === 0) {
+  if (isLayoutsMode && slide.elements.length === 0) {
     return (
       <div className="slide-canvas slide-canvas--empty">
         This layout has no zones defined yet.

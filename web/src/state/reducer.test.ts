@@ -28,22 +28,23 @@ describe("selection", () => {
   });
 });
 
-describe("slideViewMode", () => {
-  it("defaults to content", () => {
-    expect(initialAppState.slideViewMode).toBe("content");
+describe("editorMode", () => {
+  it("defaults to slides", () => {
+    expect(initialAppState.editorMode).toBe("slides");
   });
 
-  it("sets the view mode and clears element selection", () => {
-    const withElement = { ...initialAppState, selectedElementId: "el-1" };
-    const next = appReducer(withElement, { type: "SET_SLIDE_VIEW_MODE", mode: "layout" });
-    expect(next.slideViewMode).toBe("layout");
+  it("sets the mode and clears both selections", () => {
+    const selected = { ...initialAppState, selectedSlideId: "slide-1", selectedElementId: "el-1" };
+    const next = appReducer(selected, { type: "SET_EDITOR_MODE", mode: "layouts" });
+    expect(next.editorMode).toBe("layouts");
+    expect(next.selectedSlideId).toBeNull();
     expect(next.selectedElementId).toBeNull();
   });
 
-  it("resets to content on SELECT_SLIDE", () => {
-    const inLayoutMode = { ...initialAppState, slideViewMode: "layout" as const };
-    const next = appReducer(inLayoutMode, { type: "SELECT_SLIDE", slideId: "slide-2" });
-    expect(next.slideViewMode).toBe("content");
+  it("persists across SELECT_SLIDE, unlike the superseded per-slide toggle", () => {
+    const inLayoutsMode = { ...initialAppState, editorMode: "layouts" as const };
+    const next = appReducer(inLayoutsMode, { type: "SELECT_SLIDE", slideId: "__layout__blank" });
+    expect(next.editorMode).toBe("layouts");
   });
 });
 

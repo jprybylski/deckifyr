@@ -83,6 +83,23 @@ export interface PlanResponse {
   slide_layouts: Record<string, string | null>;
 }
 
+/** `GET /api/layouts` (issue #30) -- every layout in `layouts.yaml`,
+ * resolved the same `ResolvedSlide` shape a real slide's plan entry
+ * already is (`id` is `"__layout__<name>"`, matching
+ * `LAYOUT_SLIDE_PREFIX` in `usePlan.ts`). Eager, unlike the original
+ * issue #23 on-demand single-layout fetch this replaces -- the Layouts
+ * editor mode needs every layout's element count up front, the same way
+ * `GET /api/furniture` is already eager relative to `GET /api/plan`. */
+export interface LayoutsResponse {
+  layouts: ResolvedSlide[];
+}
+
+export interface RemoveLayoutResult extends WriteResult {
+  /** Slide ids reassigned to `"blank"` by this removal -- empty when
+   * the layout wasn't in use. */
+  reassigned_slides: string[];
+}
+
 export interface ProjectInfo {
   root: string;
   presentation: string;
@@ -132,6 +149,24 @@ export interface ElementPatchBody {
   rotation?: number;
   z_index?: number;
   value?: string;
+}
+
+/** `POST /api/slides/{id}/elements`/`POST /api/layouts/{name}/elements`
+ * (issue #31) -- `id`/`type` are required, everything else is whichever
+ * type-specific field the chosen element type actually uses (mirrors
+ * `deckifyr.web.app._NEW_ELEMENT_FIELDS` exactly). Geometry is always
+ * server-computed (a centered default box), so there's no `box` field
+ * here the way there is on `ElementPatchBody`. */
+export interface NewElementBody {
+  id: string;
+  type: ElementType | "slot" | "footnotes";
+  value?: string;
+  source?: string;
+  shape_kind?: string;
+  table_style?: string;
+  footer_placement?: string;
+  render_mode?: string;
+  alt_text?: string;
 }
 
 export interface WriteResult {

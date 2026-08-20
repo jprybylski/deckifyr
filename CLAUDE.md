@@ -884,6 +884,101 @@ scrolled together via `onScroll`. Switching Raw -> Form is blocked
 (with an inline error) while the current raw text doesn't parse, so the
 form is never handed a value that doesn't match what's on screen.
 
+**The Layouts editor mode (issue #30) replaces issue #23's per-slide
+Content/Layout tab with a persistent, app-wide toggle: `SlideList.tsx`'s
+own "Slides / Layouts" buttons (`state.editorMode`, `reducer.ts`) swap
+the *entire* numbered list between `presentation.yaml`'s slides and
+`layouts.yaml`'s layouts, rather than re-targeting whichever slide
+happened to be selected.** Every `layouts.yaml` is now required to
+define a `blank` layout (`deckifyr.schema.layouts.BLANK_LAYOUT_ID`,
+`LayoutsDocument`'s new `_check_has_blank_layout` validator) -- it's the
+fallback `DELETE /api/layouts/{name}` reassigns affected slides to when
+their own layout is removed, and it can never itself be removed
+(`editor.remove_layout` raises `UnremovableLayoutError`). Backend layout
+CRUD (`editor.add_layout`/`remove_layout`/`layouts_using`/
+`reassign_layout`) and the `GET`/`POST`/`DELETE /api/layouts` routes
+follow the exact precedent furniture CRUD (issue #21) and slide CRUD
+(issue #23) already set: web-editor-only, no CLI subcommand or R
+wrapper. `GET /api/layouts` resolves every layout eagerly (the same
+`_resolve_layout_zone` `GET /api/layouts/{name}` already used), replacing
+issue #23's on-demand single-layout fetch and the staleness-guard
+complexity that came with it (`layoutSlideReady` in `SlideCanvas.tsx`/
+`ElementInspector.tsx` is gone -- `usePlan.ts`'s `layouts` is just
+another eagerly-fetched array, the same shape `furnitureSlide` already
+is). Removing an in-use layout previews which slides would be
+reassigned *before* the confirm even fires -- computed client-side from
+`plan.slideLayouts`, no extra request needed -- but the server still
+rejects the removal outright (422, nothing committed on either document)
+if that reassignment would actually leave a slide unbuildable. This
+was a real discovery, not a designed-in feature: a naive
+"reassign to blank" against the demo-deck fixture immediately broke
+`content-slide`, because its own `title` override only sets `value` and
+relies entirely on its old layout's zone for `type`/`box` -- `blank` has
+no zones, so the override resolved to "no element type" at
+`expand_presentation` time. `remove_layout`'s route now runs that same
+`expand_presentation` as a dry run (against the edited-but-not-yet-
+committed `layouts`/`presentation` data) before committing either
+document, surfacing the specific slide/element/reason in the 422 rather
+than silently leaving the working copy in a state where an unrelated
+later `GET /api/plan` call starts failing. Building this also surfaced a
+real, previously-latent bug in `projectio.validate_presentation_data`:
+its `slide.layout` cross-check read `layouts.yaml` from disk, which was
+harmless before this feature (nothing ever edited `layouts.yaml`
+in-memory-only) but silently rejected a brand-new, unsaved layout as
+"unknown" the moment #30 made that possible. Fixed with a new
+`layouts_data` parameter (`None` -- every pre-existing caller -- keeps
+the old disk-read behavior exactly); every mutating route in `app.py`
+that calls it now passes `layouts_data=working_copy.get("layouts")`.
+
+**Element add/remove (issue #31) is real:
+`deckifyr.editor.add_element`/`remove_element` work against either
+document's `elements` block (a slide's own, or a layout's own zones --
+both the same dict-or-list shape, spec section 7.6), backing new
+`POST`/`DELETE /api/slides/{id}/elements[/{element_id}]` and
+`/api/layouts/{name}/elements[/{element_id}]` routes.** A new element's
+geometry is always a server-computed default box (`app.py`'s
+`_new_element_fields`, reusing `_default_box`/`_slide_size_in` the same
+way `_default_furniture_value` already does) -- centered, sized relative
+to the project's own slide dimensions, refined afterward by the same
+drag/resize the canvas already supports. `reportifyr`/`quarto` element
+types get a real file picker instead of a hand-typed path: new
+`deckifyr.resolvers.discovery.list_reportifyr_artifacts`/
+`list_quarto_fragments`, backing `GET /api/project/files?type=...`.
+`list_reportifyr_artifacts` inverts `reportifyr.metadata_sidecar_path`'s
+own `<stem>_<ext>_metadata.json` naming convention (now public,
+following the same "public for one specific cross-module caller"
+precedent `deckifyr.plan`'s `FURNITURE_*_ID` constants set) to find
+candidate artifacts, deliberately only surfacing ones that would
+actually resolve (a real artifact file *and* a matching sidecar both
+present) -- not every file under `outputs_dir`. On the frontend, a new
+`web/src/components/ElementList.tsx` sidebar replaces both
+`ElementInspector`'s old always-visible fixed slot and the standalone
+`FurnitureControls` bar (deleted) that used to sit above the canvas:
+one collapsed row per element, selecting a row (or the same element on
+`SlideCanvas`) expands it via the one shared `state.selectedElementId`
+-- the expanded content is `ElementInspector`'s existing box/rotation/
+z-index form, rendered inline for whichever row is selected rather than
+in its own separate sidebar slot; `App.tsx` no longer renders
+`ElementInspector` directly. On the furniture pseudo-slide, the same
+four fixed-cardinality Add/Remove/Hide controls `FurnitureControls` had
+are now list rows instead of a horizontal strip -- still going through
+`addFurnitureElement`/`removeFurnitureElement`, not the new generic
+element-CRUD routes, since furniture is deliberately not generic element
+CRUD (`app.py`'s own routing comment). Per-slide element counts
+(`SlideList.tsx`) now exclude synthesized `__furniture_*` entries --
+`slide.elements` from `GET /api/plan` includes them (furniture merges in
+at plan time, spec section 7.8), so the raw `.length` `SlideList` used
+to show was counting furniture as the slide's own content; shown as
+`(N)*`, a `title` tooltip explaining the `*`. `SlideList.tsx` also picked
+up two small polish items from the same issue's follow-up comments: a
+subtle `×`/`⧉` icon pair in each row's own corner (replacing a full-width
+"Remove" text button) for remove/duplicate, and duplicate
+(`POST /api/slides/{id}/duplicate`, a thin wrapper over the existing
+`editor.add_slide`'s own `elements`/`notes` passthrough -- no new
+`editor.py` function needed) auto-names the copy `<id>-copy` (`-copy-2`,
+...) with no naming prompt, since it's non-destructive and needs no
+confirm step the way Remove still does.
+
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found
 via a live user report, not caught by this repo's own mocked test

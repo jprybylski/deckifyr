@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
-import { AppProvider, useAppContext } from "./state/AppContext";
+import { AppProvider } from "./state/AppContext";
 import { usePlan } from "./state/usePlan";
 import { ApiError, getHealth, getProject } from "./api/client";
 import type { Launcher } from "./types";
 import SlideCanvas from "./components/SlideCanvas";
 import SlideList from "./components/SlideList";
-import ElementInspector from "./components/ElementInspector";
+import ElementList from "./components/ElementList";
 import Toolbar from "./components/Toolbar";
 import DeckOptions from "./components/DeckOptions";
-import FurnitureControls from "./components/FurnitureControls";
 import ConfigEditor from "./components/ConfigEditor";
 import BuildPanel from "./components/BuildPanel";
 import SessionControls from "./components/SessionControls";
@@ -18,20 +17,17 @@ type Tab = "editor" | "config" | "build";
 
 function EditorTab() {
   // `usePlan` is called once here (not inside SlideCanvas itself) so
-  // SlideList/Toolbar/ElementInspector all see the same fetched slide
-  // list and share one set of undo/redo history bookkeeping instead of
-  // each firing its own `/api/plan` request -- see `state/usePlan.ts`'s
-  // own module docstring for the fuller rationale.
+  // SlideList/Toolbar/ElementList all see the same fetched slide list
+  // and share one set of undo/redo history bookkeeping instead of each
+  // firing its own `/api/plan` request -- see `state/usePlan.ts`'s own
+  // module docstring for the fuller rationale.
   const plan = usePlan();
-  const { state } = useAppContext();
-  const isFurnitureSlideSelected =
-    plan.furnitureSlide !== null && state.selectedSlideId === plan.furnitureSlide.id;
   // `DeckOptions` fetches `presentation.yaml` once on mount and only
   // ever updates its own local copy from its own saves -- it has no way
-  // to learn that `FurnitureControls`' "Add" (status-indicator redesign
-  // note: `deckifyr.plan.FURNITURE_STATUS_ID`'s own docstring) just
-  // changed `status_indicator` server-side out from under it. Confirmed
-  // the real way, not assumed: an e2e test clicking Add in the
+  // to learn that `ElementList`'s furniture Add (status-indicator
+  // redesign note: `deckifyr.plan.FURNITURE_STATUS_ID`'s own docstring)
+  // just changed `status_indicator` server-side out from under it.
+  // Confirmed the real way, not assumed: an e2e test clicking Add in the
   // Furniture panel left the Deck Options dropdown still showing "None"
   // until something else happened to remount it. Bumping this key
   // forces a clean remount (and therefore a fresh fetch) the same way
@@ -42,13 +38,10 @@ function EditorTab() {
     <div className="editor-layout">
       <Toolbar plan={plan} />
       <DeckOptions key={deckOptionsKey} onSaved={plan.refetch} />
-      {isFurnitureSlideSelected && (
-        <FurnitureControls plan={plan} onStatusIndicatorChanged={refreshDeckOptions} />
-      )}
       <div className="editor-layout__body">
         <SlideList plan={plan} />
         <SlideCanvas plan={plan} />
-        <ElementInspector plan={plan} />
+        <ElementList plan={plan} onStatusIndicatorChanged={refreshDeckOptions} />
       </div>
     </div>
   );

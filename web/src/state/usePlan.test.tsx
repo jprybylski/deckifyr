@@ -23,6 +23,7 @@ function jsonResponse(status: number, body: unknown): Response {
 const EMPTY_PLAN = { slides: [] };
 const EMPTY_DESIGN = { slide: { width: "13.333in", height: "7.5in" } };
 const EMPTY_FURNITURE = { id: FURNITURE_SLIDE_ID, notes: null, elements: [] };
+const EMPTY_LAYOUTS = { layouts: [] };
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AppProvider>{children}</AppProvider>;
@@ -39,6 +40,7 @@ describe("usePlan's patch dispatcher", () => {
       const method = init?.method ?? "GET";
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
       if (url === "/api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
@@ -76,6 +78,7 @@ describe("usePlan's patch dispatcher", () => {
       const method = init?.method ?? "GET";
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
       if (url === "/api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
@@ -113,6 +116,7 @@ describe("usePlan's patch dispatcher", () => {
       const method = init?.method ?? "GET";
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
       if (url === "/api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
@@ -142,15 +146,17 @@ describe("usePlan's patch dispatcher", () => {
   });
 });
 
-describe("usePlan's loadLayoutZones", () => {
-  it("fetches a layout's zones and exposes them as layoutSlide", async () => {
-    const zones = { id: "__layout__title-content", notes: null, elements: [] };
+describe("usePlan's layouts", () => {
+  it("fetches every layout eagerly, alongside slides/furniture", async () => {
+    const layoutsBody = {
+      layouts: [{ id: "__layout__title-content", notes: null, elements: [] }],
+    };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
       if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts/title-content") return Promise.resolve(jsonResponse(200, zones));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, layoutsBody));
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -158,23 +164,16 @@ describe("usePlan's loadLayoutZones", () => {
     const { result } = renderHook(() => usePlan(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await act(async () => {
-      await result.current.loadLayoutZones("title-content");
-    });
-
-    expect(result.current.layoutSlide).toEqual(zones);
-    expect(result.current.layoutError).toBeNull();
+    expect(result.current.layouts).toEqual(layoutsBody.layouts);
   });
 
-  it("surfaces a fetch failure as layoutError instead of throwing", async () => {
+  it("a failed layouts fetch doesn't block slides/furniture", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
       if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts/does-not-exist") {
-        return Promise.resolve(jsonResponse(404, { detail: "unknown layout" }));
-      }
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(500, { message: "boom" }));
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -182,12 +181,145 @@ describe("usePlan's loadLayoutZones", () => {
     const { result } = renderHook(() => usePlan(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
+    expect(result.current.layouts).toBeNull();
+    expect(result.current.furnitureSlide).toEqual(EMPTY_FURNITURE);
+  });
+});
+
+describe("usePlan's addLayout/removeLayout", () => {
+  it("addLayout posts to /api/layouts and refetches", async () => {
+    let layoutsCallCount = 0;
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts" && method === "GET") {
+        layoutsCallCount += 1;
+        return Promise.resolve(jsonResponse(200, { layouts: [] }));
+      }
+      if (url === "/api/layouts" && method === "POST") {
+        return Promise.resolve(jsonResponse(200, { id: "new-layout", dirty: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => usePlan(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const callsBeforeAdd = layoutsCallCount;
+
     await act(async () => {
-      await result.current.loadLayoutZones("does-not-exist");
+      await result.current.addLayout("new-layout");
     });
 
-    expect(result.current.layoutSlide).toBeNull();
-    expect(result.current.layoutError).toBe("unknown layout");
+    expect(
+      fetchMock.mock.calls.some(
+        (call) => String(call[0]) === "/api/layouts" && call[1]?.method === "POST"
+      )
+    ).toBe(true);
+    expect(layoutsCallCount).toBeGreaterThan(callsBeforeAdd);
+  });
+
+  it("removeLayout deletes /api/layouts/{name} and refetches", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts" && method === "GET") {
+        return Promise.resolve(jsonResponse(200, { layouts: [] }));
+      }
+      if (url === "/api/layouts/title-content" && method === "DELETE") {
+        return Promise.resolve(
+          jsonResponse(200, { id: "title-content", reassigned_slides: [], dirty: true })
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => usePlan(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.removeLayout("title-content");
+    });
+
+    expect(
+      fetchMock.mock.calls.some(
+        (call) => String(call[0]) === "/api/layouts/title-content" && call[1]?.method === "DELETE"
+      )
+    ).toBe(true);
+  });
+});
+
+describe("usePlan's addElement/removeElement", () => {
+  it("addElement routes a __layout__ slide id to /api/layouts/{name}/elements", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts" && method === "GET") {
+        return Promise.resolve(jsonResponse(200, { layouts: [] }));
+      }
+      if (url === "/api/layouts/title-content/elements" && method === "POST") {
+        return Promise.resolve(jsonResponse(200, { element: "new-zone", dirty: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => usePlan(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.addElement("__layout__title-content", { id: "new-zone", type: "slot" });
+    });
+
+    expect(
+      fetchMock.mock.calls.some(
+        (call) =>
+          String(call[0]) === "/api/layouts/title-content/elements" && call[1]?.method === "POST"
+      )
+    ).toBe(true);
+  });
+
+  it("removeElement routes an ordinary slide id to /api/slides/{id}/elements/{id}", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts" && method === "GET") {
+        return Promise.resolve(jsonResponse(200, { layouts: [] }));
+      }
+      if (url === "/api/slides/title/elements/deck-title" && method === "DELETE") {
+        return Promise.resolve(jsonResponse(200, { element: "deck-title", dirty: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => usePlan(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.removeElement("title", "deck-title");
+    });
+
+    expect(
+      fetchMock.mock.calls.some(
+        (call) =>
+          String(call[0]) === "/api/slides/title/elements/deck-title" &&
+          call[1]?.method === "DELETE"
+      )
+    ).toBe(true);
   });
 });
 
@@ -203,6 +335,7 @@ describe("usePlan's addSlide/removeSlide", () => {
       }
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
       if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
       if (url === "/api/slides" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { id: "new-slide", slide_count: 3, dirty: true }));
       }
@@ -233,6 +366,7 @@ describe("usePlan's addSlide/removeSlide", () => {
       if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
       if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
       if (url === "/api/slides/content-slide" && method === "DELETE") {
         return Promise.resolve(jsonResponse(200, { id: "content-slide", slide_count: 1, dirty: true }));
       }

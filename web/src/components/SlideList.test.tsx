@@ -4,7 +4,34 @@ import { afterEach } from "vitest";
 import SlideList from "./SlideList";
 import { AppProvider } from "../state/AppContext";
 import type { UsePlanResult } from "../state/usePlan";
-import type { ResolvedSlide } from "../types";
+import type { ResolvedElement, ResolvedSlide } from "../types";
+
+function element(overrides: Partial<ResolvedElement>): ResolvedElement {
+  return {
+    id: "el",
+    type: "text",
+    value: null,
+    source: null,
+    box: { x: "0in", y: "0in", width: "1in", height: "1in" },
+    rotation: 0,
+    z_index: 0,
+    order: 0,
+    style: null,
+    fit: "shrink",
+    overflow: "clip",
+    render_mode: "native",
+    alt_text: null,
+    required: false,
+    footer_placement: null,
+    shape_kind: null,
+    shape_style: null,
+    table_style: null,
+    center: false,
+    align: null,
+    children: [],
+    ...overrides,
+  };
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -18,15 +45,18 @@ function makePlan(overrides: Partial<UsePlanResult>): UsePlanResult {
     slides: null,
     furnitureSlide: null,
     slideLayouts: {},
-    layoutSlide: null,
-    layoutError: null,
-    loadLayoutZones: vi.fn(),
+    layouts: null,
     slideSize: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
     addSlide: vi.fn(),
     removeSlide: vi.fn(),
+    duplicateSlide: vi.fn(),
+    addLayout: vi.fn(),
+    removeLayout: vi.fn(),
+    addElement: vi.fn(),
+    removeElement: vi.fn(),
     applyElementPatch: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn(),
@@ -186,5 +216,120 @@ describe("SlideList add/remove (issue #23)", () => {
     fireEvent.click(screen.getByText("Confirm"));
 
     await waitFor(() => expect(removeSlide).toHaveBeenCalledWith("title"));
+  });
+
+  it("duplicates a slide with a '-copy' suffix, no confirm needed", async () => {
+    const duplicateSlide = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: FURNITURE, duplicateSlide });
+    renderList(plan);
+
+    fireEvent.click(screen.getByTitle('Duplicate slide "title"'));
+
+    await waitFor(() => expect(duplicateSlide).toHaveBeenCalledWith("title", "title-copy"));
+  });
+});
+
+describe("SlideList element counts (issue #31)", () => {
+  it("excludes furniture elements from a slide's own count", () => {
+    const slideWithFurniture: ResolvedSlide = {
+      id: "title",
+      notes: null,
+      elements: [
+        element({ id: "deck-title", type: "text" }),
+        element({ id: "__furniture_background", type: "image" }),
+        element({ id: "__furniture_status", type: "text" }),
+      ],
+    };
+    const plan = makePlan({ slides: [slideWithFurniture], furnitureSlide: FURNITURE });
+
+    renderList(plan);
+
+    expect(screen.getByText("(1)*")).toBeInTheDocument();
+  });
+
+  it("shows the furniture pseudo-slide's own unfiltered count", () => {
+    const furnitureWithItems: ResolvedSlide = {
+      id: "__furniture__",
+      notes: null,
+      elements: [element({ id: "__furniture_branding" }), element({ id: "__furniture_status" })],
+    };
+    const plan = makePlan({ slides: [SLIDE], furnitureSlide: furnitureWithItems });
+
+    renderList(plan);
+
+    expect(screen.getByText("2 items")).toBeInTheDocument();
+  });
+});
+
+describe("SlideList Layouts mode (issue #30)", () => {
+  const LAYOUT: ResolvedSlide = { id: "__layout__title-content", notes: null, elements: [] };
+  const BLANK_LAYOUT: ResolvedSlide = { id: "__layout__blank", notes: null, elements: [] };
+
+  it("toggling to Layouts renders layouts instead of slides", () => {
+    const plan = makePlan({
+      slides: [SLIDE],
+      layouts: [LAYOUT, BLANK_LAYOUT],
+      furnitureSlide: FURNITURE,
+    });
+    renderList(plan);
+
+    fireEvent.click(screen.getByText("Layouts"));
+
+    expect(screen.getByText(/title-content/)).toBeInTheDocument();
+    expect(screen.queryByText(/^1\. title$/)).not.toBeInTheDocument();
+    // The furniture entry stays reachable in either mode.
+    expect(screen.getByText(/⚙ Furniture/)).toBeInTheDocument();
+  });
+
+  it("the blank layout's remove control is disabled", () => {
+    const plan = makePlan({
+      slides: [SLIDE],
+      layouts: [LAYOUT, BLANK_LAYOUT],
+      furnitureSlide: FURNITURE,
+    });
+    renderList(plan);
+    fireEvent.click(screen.getByText("Layouts"));
+
+    const removeBlank = screen.getByTitle('"blank" is required and can\'t be removed');
+    expect(removeBlank).toBeDisabled();
+  });
+
+  it("removing an in-use layout previews impacted slides before confirming", async () => {
+    const removeLayout = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({
+      slides: [SLIDE],
+      layouts: [LAYOUT, BLANK_LAYOUT],
+      furnitureSlide: FURNITURE,
+      slideLayouts: { title: "title-content" },
+      removeLayout,
+    });
+    renderList(plan);
+    fireEvent.click(screen.getByText("Layouts"));
+
+    fireEvent.click(screen.getByTitle('Remove layout "title-content"'));
+    expect(screen.getByText(/Used by title -- these will switch to "blank"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Confirm"));
+    await waitFor(() => expect(removeLayout).toHaveBeenCalledWith("title-content"));
+  });
+
+  it("adds a new layout via the Add layout form", async () => {
+    const addLayout = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({
+      slides: [SLIDE],
+      layouts: [LAYOUT, BLANK_LAYOUT],
+      furnitureSlide: FURNITURE,
+      addLayout,
+    });
+    renderList(plan);
+    fireEvent.click(screen.getByText("Layouts"));
+
+    fireEvent.click(screen.getByText("+ Add layout"));
+    fireEvent.change(screen.getByLabelText("New layout id"), {
+      target: { value: "new-layout" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() => expect(addLayout).toHaveBeenCalledWith("new-layout"));
   });
 });

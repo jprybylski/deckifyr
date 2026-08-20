@@ -9,7 +9,12 @@
 import { useEffect, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { boxToInches, formatInchesString } from "../geometry";
-import { findElement, inverseForBoxPatch, type UsePlanResult } from "../state/usePlan";
+import {
+  LAYOUT_SLIDE_PREFIX,
+  findElement,
+  inverseForBoxPatch,
+  type UsePlanResult,
+} from "../state/usePlan";
 import {
   furnitureElementSupportsRotation,
   furnitureElementSupportsValue,
@@ -26,22 +31,14 @@ export default function ElementInspector({ plan }: Props) {
 
   const isFurnitureSlideSelected =
     furnitureSlide !== null && state.selectedSlideId === furnitureSlide.id;
-  // Mirrors `SlideCanvas.tsx`'s own 3-way `slide` derivation (issue #23's
-  // Content/Layout tab) -- see that component's own comments for why
-  // `layoutSlide`'s `id` is checked against the currently-expected
-  // `__layout__<name>` rather than trusted blindly (stale data from a
-  // just-switched-away-from layout, otherwise).
-  const layoutName =
-    !isFurnitureSlideSelected && state.selectedSlideId
-      ? (plan.slideLayouts[state.selectedSlideId] ?? null)
-      : null;
-  const isLayoutViewSelected = state.slideViewMode === "layout" && layoutName !== null;
-  const layoutSlideReady =
-    isLayoutViewSelected && plan.layoutSlide?.id === `__layout__${layoutName}`;
+  // Mirrors `SlideCanvas.tsx`'s own `slide` derivation (issue #30): which
+  // collection `state.selectedSlideId` is looked up in follows the same
+  // persistent `state.editorMode`, not a per-slide toggle.
+  const isLayoutsMode = !isFurnitureSlideSelected && state.editorMode === "layouts";
   const slide = isFurnitureSlideSelected
     ? furnitureSlide
-    : isLayoutViewSelected
-      ? (layoutSlideReady ? (plan.layoutSlide ?? undefined) : undefined)
+    : isLayoutsMode
+      ? plan.layouts?.find((l) => l.id === state.selectedSlideId)
       : slides?.find((s) => s.id === state.selectedSlideId);
   const element = findElement(slide, state.selectedElementId);
   const [error, setError] = useState<string | null>(null);
@@ -153,11 +150,11 @@ export default function ElementInspector({ plan }: Props) {
             select the &ldquo;⚙ Furniture&rdquo; entry in the slide list to edit it directly.
           </p>
         )
-      ) : isLayoutViewSelected ? (
+      ) : isLayoutsMode ? (
         <p className="element-inspector__note">
-          This is a zone of layout &ldquo;{layoutName}&rdquo; (<code>layouts.yaml</code>) --
-          editing its geometry here applies to every slide using this layout, not just the one
-          you switched from.
+          This is a zone of layout &ldquo;{slide.id.slice(LAYOUT_SLIDE_PREFIX.length)}&rdquo; (
+          <code>layouts.yaml</code>) -- editing its geometry here applies to every slide using
+          this layout.
         </p>
       ) : (
         isPlaceholder && (
