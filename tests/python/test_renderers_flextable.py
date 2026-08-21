@@ -124,8 +124,15 @@ def test_render_raises_a_structured_dependency_error_when_flextable_package_miss
     }
 
 
-@requires_r
+@requires_flextable
 def test_render_reports_a_non_flextable_rds_object_clearly(tmp_path):
+    # Needs the flextable package installed, not just Rscript --
+    # render_flextable.R's own requireNamespace("flextable") guard runs
+    # before the class check this test exercises, so a plain Rscript-only
+    # environment would exit 2 (missing package) first, never reaching
+    # the "does not contain a flextable" message (a real CI failure this
+    # test's own too-loose @requires_r gate caused on windows-latest,
+    # where Rscript is present but flextable isn't).
     rds = tmp_path / "table.rds"
     subprocess.run(
         ["Rscript", "--vanilla", "-e", f"saveRDS(1:3, {str(rds)!r})"],
