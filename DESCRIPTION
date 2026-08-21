@@ -25,7 +25,8 @@ Suggests:
     covr,
     rmarkdown,
     pkgdown,
-    rstudioapi
+    rstudioapi,
+    flextable
 Config/testthat/edition: 3
 License: GPL (>= 3)
 Encoding: UTF-8
