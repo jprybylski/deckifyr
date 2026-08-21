@@ -75,7 +75,7 @@ never a second implementation of the same logic.
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, `deck_preview()`, `deck_inspect()`, `deck_get_config()`/`deck_set_config()`, `deck_*_slide()`, ...) delegating to the bundled Python CLI via pyro | R |
 | `inst/python/deckifyr/` | The canonical engine: schemas, unit/merge logic, plan/compose passes, resolvers, renderers, and CLI. Bundled into the R package and built as the standalone wheel from the same source | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio, used as `deckifyr init`'s template and as the test fixture for both languages | YAML |
-| `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a five-slide deck using a real `reportifyr`-produced figure and two real `quarto` fragments | YAML |
+| `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a six-slide deck using real `reportifyr`-produced artifacts (a figure, a native table, and a rendered flextable) and two real `quarto` fragments | YAML |
 | `tests/` | `tests/python/` (pytest, unit-level plus an end-to-end build of `examples/demo-deck/`) and `tests/testthat/` (R, including end-to-end tests of the real R→pyro→Python bridge) | Python, R |
 
 ## Quick start

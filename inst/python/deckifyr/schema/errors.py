@@ -77,9 +77,12 @@ class ColorResolutionError(DeckifyrError):
 
 
 class MissingDependencyError(ContentValidationError):
-    """Raised when a build step needs an external binary that isn't on
-    PATH -- LibreOffice for `deckifyr.renderers.preview`, Quarto for
-    `deckifyr.renderers.quarto`. Distinct from a plain
+    """Raised when a build step needs an external binary (or, for
+    `deckifyr.renderers.flextable`, an R package on top of a present
+    `Rscript` binary) that isn't available -- LibreOffice for
+    `deckifyr.renderers.preview`, Quarto for `deckifyr.renderers.quarto`,
+    `Rscript`/the R `flextable` package for `deckifyr.renderers
+    .flextable`. Distinct from a plain
     `ContentValidationError` (still its parent, so existing `except
     ContentValidationError` call sites keep working unchanged) so a
     caller can reliably detect "you need to install something external"

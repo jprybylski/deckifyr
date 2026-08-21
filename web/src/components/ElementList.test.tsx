@@ -174,6 +174,78 @@ describe("ElementList on an ordinary slide", () => {
 
     expect(screen.getByText("Add")).toBeDisabled();
   });
+
+  it("routes a .csv reportifyr artifact pick to a native table element", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/project/files?type=reportifyr") {
+        return Promise.resolve(
+          jsonResponse(200, { files: ["pk-summary.csv", "conc-time.png"] })
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const addElement = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], addElement });
+    renderList(plan, "title");
+
+    fireEvent.click(screen.getByText("+ Add element"));
+    fireEvent.change(screen.getByLabelText("New element id"), {
+      target: { value: "tbl" },
+    });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "reportifyr" } });
+    await screen.findByText("pk-summary.csv");
+    fireEvent.change(screen.getByLabelText("Reportifyr artifact"), {
+      target: { value: "pk-summary.csv" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() =>
+      expect(addElement).toHaveBeenCalledWith("title", {
+        id: "tbl",
+        type: "table",
+        source: "{rpfy}:pk-summary.csv",
+      })
+    );
+  });
+
+  it("keeps a non-table reportifyr artifact pick as a reportifyr picture element", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/project/files?type=reportifyr") {
+        return Promise.resolve(
+          jsonResponse(200, { files: ["conc-time.png", "pk-flextable-summary.rds"] })
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const addElement = vi.fn().mockResolvedValue(undefined);
+    const plan = makePlan({ slides: [SLIDE], addElement });
+    renderList(plan, "title");
+
+    fireEvent.click(screen.getByText("+ Add element"));
+    fireEvent.change(screen.getByLabelText("New element id"), {
+      target: { value: "flex" },
+    });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "reportifyr" } });
+    await screen.findByText("pk-flextable-summary.rds");
+    fireEvent.change(screen.getByLabelText("Reportifyr artifact"), {
+      target: { value: "pk-flextable-summary.rds" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+
+    await waitFor(() =>
+      expect(addElement).toHaveBeenCalledWith("title", {
+        id: "flex",
+        type: "reportifyr",
+        value: "{rpfy}:pk-flextable-summary.rds",
+      })
+    );
+  });
 });
 
 describe("ElementList on the furniture pseudo-slide", () => {

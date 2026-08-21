@@ -406,6 +406,34 @@
       "title": "Element",
       "type": "object"
     },
+    "FlextableConfig": {
+      "additionalProperties": false,
+      "description": "Execution settings for rendering a reportifyr `.rds` artifact --\nan R `flextable` object (issue #57) -- to a picture via\n`deckifyr.renderers.flextable`. Nested under `ReportifyrConfig`\nrather than a `QuartoConfig`/`PreviewConfig`-style top-level\n`BuildConfig` sibling: unlike Quarto/preview rendering (each\ntriggered by its own distinct element type), flextable rendering\nonly ever exists to serve a `reportifyr` element whose resolved\nartifact happens to be `.rds`. `None` on `ReportifyrConfig.flextable`\n(the default) means every setting below's own default -- read\nlazily by `deckifyr.pptx.compose._build_reportifyr_context`, only\nwhen a build actually resolves an `.rds` reportifyr artifact.",
+      "properties": {
+        "binary": {
+          "default": "Rscript",
+          "title": "Binary",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "max_output_bytes": {
+          "default": 5000000,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "dpi": {
+          "default": 200,
+          "title": "Dpi",
+          "type": "integer"
+        }
+      },
+      "title": "FlextableConfig",
+      "type": "object"
+    },
     "Metadata": {
       "additionalProperties": true,
       "properties": {
@@ -515,6 +543,17 @@
           "default": true,
           "title": "Fail On Missing Metadata",
           "type": "boolean"
+        },
+        "flextable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlextableConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "ReportifyrConfig",

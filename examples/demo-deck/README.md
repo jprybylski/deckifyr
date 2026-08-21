@@ -2,13 +2,17 @@
 
 A small, working example, in the spirit of
 [quartifyr's `examples/demo-report`](https://github.com/jprybylski/quartifyr/tree/main/examples/demo-report):
-a five-slide PK-style deck built from version-controlled YAML, using a
-real `reportifyr` artifact and two real `quarto` fragments rather than
-placeholder content.
+a six-slide PK-style deck built from version-controlled YAML, using real
+`reportifyr` artifacts (a figure, a native table, and a rendered
+flextable) and two real `quarto` fragments rather than placeholder
+content.
 
 > **Building this deck requires the external `quarto` binary on `PATH`**
 > (<https://quarto.org>) -- the `pk-interpretation` slide's `note`
-> element also executes a real R code chunk, so it needs `Rscript` too.
+> element also executes a real R code chunk, and the `table-formats`
+> slide's flextable half renders via `Rscript` directly (not through
+> Quarto), so both need `Rscript` on `PATH` too, with the R `flextable`
+> package installed (<https://cran.r-project.org/package=flextable>).
 > Every other slide needs nothing beyond this repo's own Python
 > dependencies. See `inst/examples/minimal-deck/` instead for a project
 > that builds with no external tools at all.
@@ -39,7 +43,11 @@ watermark come from" below.
    a native, fully-editable PowerPoint table, exercising
    `deckifyr.resolvers.TableResolver` (spec section 9.2) and, for its
    fill/border colors, a `design.yaml` `table_styles` entry.
-5. **Closing** -- a freeform (`layout: null`) slide combining text, a
+5. **Reportifyr Table Formats: Native vs. Flextable** ([issue #57](https://github.com/jprybylski/deckifyr/issues/57))
+   -- a `{rpfy}:`-sourced native table next to a `{rpfy}:`-sourced `.rds`
+   flextable, each with its own footer: see "Where the flextable comes
+   from" below.
+6. **Closing** -- a freeform (`layout: null`) slide combining text, a
    markdown note, and a rotated logo image, to exercise `z_index` and
    `rotation` together.
 
@@ -123,6 +131,43 @@ header band, alternating row tint, thin gray grid lines) comes from
 `table_style: pk-summary`, a `design.yaml` `table_styles` entry
 exercising the deck's own brand colors (`primary`/`muted`) rather than
 `python-pptx`'s bundled default table look.
+
+## Where the flextable comes from
+
+The `table-formats` slide ([issue #57](https://github.com/jprybylski/deckifyr/issues/57))
+puts two reportifyr table artifacts side by side to make deckifyr's two
+different `{rpfy}:`-sourced-table paths concrete, since picking between
+them in the web editor's Add-element form used to be a confusing,
+crash-prone guess:
+
+- **`raw-table`** is a `type: table` element sourced from
+  `{rpfy}:pk-summary.csv` -- the exact same underlying data as the
+  `pk-summary` slide's plain-local-path table above, just resolved
+  through `deckifyr.resolvers.ReportifyrResolver` first (its metadata
+  sidecar is `OUTPUTS/tables/pk-summary_csv_metadata.json`) so it also
+  gets a real footer from `standard_footnotes.yaml`'s `table_footnotes`.
+- **`flextable-summary`** is a `type: reportifyr` element sourced from
+  `{rpfy}:pk-flextable-summary.rds` -- an R `flextable` object (see
+  `scripts/generate_pk_flextable.R`, which regenerates the committed
+  `.rds` file), not a plain data frame: it has a merged "Population
+  Summary" header spanning four value columns and a highlighted `Mean`
+  row, per-cell formatting a native PowerPoint table has no way to
+  represent. `deckifyr.pptx.compose._add_reportifyr_shape` detects the
+  `.rds` extension and renders it to a transparent-background PNG via
+  `deckifyr.renderers.flextable` (a real `Rscript`/`flextable::
+  save_as_image()` call, confirmed to need no headless-browser backend)
+  before placing it exactly like any other reportifyr figure, footer
+  included -- reusing `figure_footnotes` (not `table_footnotes`), since
+  `_apply_footer` always treats a `reportifyr` element as a figure
+  regardless of what the picture actually depicts.
+
+Both elements' boxes were sized against a real rendered preview, not
+guessed: the native table's box is wide enough that its `Participant`
+header cell doesn't wrap to two lines (a narrower box left the rendered
+table taller than its own declared box, pushing real content down into
+the footer text below it), and the flextable's box roughly matches its
+own rendered aspect ratio (~3.26:1) so `fit: contain` doesn't leave a
+tall gap between the visible picture and its footer.
 
 ## Where the background and watermark come from
 

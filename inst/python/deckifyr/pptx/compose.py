@@ -48,6 +48,7 @@ from deckifyr.plan import (
     resolve_gradient,
     resolve_text_style,
 )
+from deckifyr.renderers.flextable import FlextableExecutionConfig, render_flextable_png
 from deckifyr.renderers.preview import PreviewRenderConfig, render_slide_previews
 from deckifyr.renderers.quarto import QuartoExecutionConfig
 from deckifyr.resolvers import (
@@ -182,6 +183,12 @@ class ReportifyrBuildContext:
     fail_on_missing_metadata: bool = True
     standard_footnotes: dict[str, Any] | None = None
     footer_style: ResolvedTextStyle = field(default_factory=lambda: _DEFAULT_FOOTER_STYLE)
+    # Rendering settings for `.rds` flextable artifacts (issue #57) --
+    # see `FlextableConfig`'s own docstring for why this rides along on
+    # the reportifyr context rather than its own separate parameter.
+    flextable_config: FlextableExecutionConfig = field(
+        default_factory=FlextableExecutionConfig
+    )
 
 
 def _resolve_footer_style(design: DesignDocument) -> ResolvedTextStyle:
@@ -219,11 +226,22 @@ def _build_reportifyr_context(
         if config.standard_footnotes
         else None
     )
+    flextable_config = (
+        FlextableExecutionConfig(
+            binary=config.flextable.binary,
+            timeout_seconds=config.flextable.timeout_seconds,
+            max_output_bytes=config.flextable.max_output_bytes,
+            dpi=config.flextable.dpi,
+        )
+        if config.flextable is not None
+        else FlextableExecutionConfig()
+    )
     return ReportifyrBuildContext(
         outputs_dir=config.outputs_dir,
         fail_on_missing_metadata=config.fail_on_missing_metadata,
         standard_footnotes=standard_footnotes,
         footer_style=footer_style,
+        flextable_config=flextable_config,
     )
 
 
@@ -704,11 +722,31 @@ def _add_reportifyr_shape(
     context = BuildContext(project_root=str(project_root))
     artifact: ReportifyrArtifact = resolver.resolve(str(element.value), context).value
 
-    shape = _place_picture(slide, element, artifact.path)
+    # A `.rds` reportifyr artifact is a flextable object (issue #57) --
+    # rich per-cell formatting a native PowerPoint table can't represent,
+    # so it's rendered to a picture instead, the same as any other
+    # reportifyr figure (including footer support below). Every other
+    # extension is assumed to already be a real image file, unchanged.
+    image_path = artifact.path
+    rendered_path: Path | None = None
+    warnings = list(artifact.warnings)
+    if artifact.path.suffix.lower() == ".rds":
+        rendered_path = render_flextable_png(
+            artifact.path, config=reportifyr_ctx.flextable_config
+        )
+        image_path = rendered_path
+        warnings.append(f"{artifact.path.name}: rendered flextable to PNG for placement")
+
+    try:
+        shape = _place_picture(slide, element, image_path)
+    finally:
+        if rendered_path is not None:
+            rendered_path.unlink(missing_ok=True)
+
     footer_note = _apply_footer(slide, element, "figure", artifact.metadata, reportifyr_ctx, design)
 
     source_manifest = {"resolved_path": str(artifact.path), "sha256": _sha256_file(artifact.path)}
-    return shape, source_manifest, list(artifact.warnings), footer_note
+    return shape, source_manifest, warnings, footer_note
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +843,21 @@ def _add_table_shape(
         metadata = artifact.metadata
         warnings.extend(artifact.warnings)
         relative_source = str(table_path.relative_to(project_root))
-        data: TableData = TableResolver().resolve(relative_source, context).value
+        try:
+            data: TableData = TableResolver().resolve(relative_source, context).value
+        except ContentValidationError as exc:
+            if table_path.suffix.lower() == ".rds":
+                # A `.rds` reportifyr artifact is a flextable object
+                # (issue #57), which `TableResolver` can never parse as
+                # tabular data -- point the author at the element type
+                # that actually renders it, rather than leaving them with
+                # only "unsupported table format '.rds'".
+                raise ContentValidationError(
+                    f"{exc} -- use a 'type: reportifyr' element instead "
+                    "for flextable/.rds artifacts, which render as a "
+                    "picture rather than a native table"
+                ) from exc
+            raise
     else:
         # Two resolves of the same `source`, deliberately: `LocalFileResolver`
         # gives the path this function needs for the manifest's

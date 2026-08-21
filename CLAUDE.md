@@ -39,6 +39,7 @@ learned while building the scaffold.
 | `deckifyr.pptx` (PowerPoint compositor, spec §10) | Real, tested for `text`/`markdown`/`image`/`shape`/`group`/`table`/`reportifyr`/`quarto` elements, `Slide.notes`, and reportifyr footers (§9.1) -- Phase 1 and Phase 2's Quarto slice (§18, issue #3) are done |
 | `deckifyr.resolvers` concrete resolvers (spec §9.2) | `LocalFileResolver`, `InlineResolver`, `TableResolver` (CSV always, Parquet via the optional `pyarrow` extra), `ReportifyrResolver` (magic-string + metadata sidecar resolution, spec §9.1), and `QuartoResolver` (fragment execution, spec §9.2/§8.1) are real |
 | `deckifyr.renderers.quarto` (Quarto integration, spec §8/§8.1, issue #3) | Real, tested against a live `quarto` install -- see this file's own "Quarto integration" section below |
+| `deckifyr.renderers.flextable` (reportifyr `.rds` flextable rendering, issue #57) | Real, tested against a live `Rscript`/`flextable` install -- see this file's own note above |
 | `deckifyr.web` (spec §12) | Real: FastAPI backend (`deckifyr.web.app`/`deckifyr.web.jobs`) + a built React/Konva frontend, CLI `serve`, R `deck_serve()`/`deck_stop_server()` -- see this file's own "Web application" section below |
 
 Concretely: `deckifyr validate presentation.yaml` does real schema and
@@ -301,7 +302,7 @@ without checking
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, `initialize_deck_project()`, ...) delegating to the bundled Python CLI via pyro. `R/run-python.R` is the single bridge point every other `R/*.R` file calls through. | R |
 | `inst/python/deckifyr/` | The canonical engine. Bundled unmodified into the R package (`inst/python`) and also the source directory for the standalone Python wheel (spec §5.3) -- never fork this tree for one facade or the other. | Python |
 | `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. Ships inside the R package/Python wheel (it's under `inst/`). | YAML |
-| `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a four-slide deck resolving a real `reportifyr`-produced figure via a real `{rpfy}:conc-time.png` reference (with a footer built from its metadata sidecar + this directory's own `standard_footnotes.yaml`), a `table` element, a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates. | YAML |
+| `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a six-slide deck resolving a real `reportifyr`-produced figure via a real `{rpfy}:conc-time.png` reference (with a footer built from its metadata sidecar + this directory's own `standard_footnotes.yaml`), a `table` element, a `{rpfy}:`-sourced native table next to a `{rpfy}:`-sourced `.rds` flextable rendered to a picture (issue #57), a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates. | YAML |
 | `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes, plan expansion, PPTX composition -- plus `test_demo_deck.py`, an end-to-end build of `examples/demo-deck/`. | Python |
 | `tests/testthat/` | R tests, including `test-wiring.R`, the only test that exercises the real R -> pyro -> Python round trip end-to-end (not just function signatures). Skips cleanly without `uv`/`pyro`. | R |
 | `.github/workflows/ci.yml` | `python-tests` (pytest matrix) + `full-pipeline` (the real R -> pyro -> Python integration proof, `tests/testthat/` run directly against the checkout). | YAML |
@@ -443,6 +444,100 @@ choices, not part of the contract). If reportifyr ever exports a
 docx-free "resolve this artifact's footer text" function, that's the
 real fix to revisit this against -- not a reason to guess at its
 internals in the meantime.
+
+**A `.rds` reportifyr table artifact is an R `flextable` object in this
+project's convention, not a plain data frame, and it renders as a
+picture, not a native table (issue #57).** `flextable` (produced via R's
+`format_flextable()`) carries rich per-cell formatting -- merged/spanned
+headers, per-cell fill/borders, highlighted rows -- that
+`deckifyr.pptx.compose`'s native-table path (`TableResolver` +
+`_add_table_shape`) has no vocabulary for; `TableResolver` itself only
+ever knows `.csv`/`.parquet` (`_SUPPORTED_SUFFIXES`), so a `.rds`
+reference reaching it already failed cleanly before this issue -- that
+error now also points the author at `type: reportifyr` instead of just
+saying "unsupported table format '.rds'". The actual fix lives in
+`_add_reportifyr_shape`: when the artifact `ReportifyrResolver` resolves
+has a `.rds` suffix, it's rendered to a transparent PNG by the new
+`deckifyr.renderers.flextable` module before `_place_picture` ever sees
+it -- same composition path (and footer support) as any other
+`reportifyr` figure, `artifact_type="figure"` unconditionally, so a
+`.rds` element's footer looks up `standard_footnotes.yaml`'s
+`figure_footnotes`, not `table_footnotes`, even though the picture
+depicts tabular data. `.csv`/`.parquet` reportifyr artifacts are
+unaffected -- they still resolve to real, native, editable tables via
+`type: table, source: "{rpfy}:..."` exactly as before (see
+`test_rpfy_sourced_table_builds_and_footers_from_table_footnotes`,
+predating this issue).
+
+`deckifyr.renderers.flextable` shells out to a real `Rscript` binary --
+mirroring `deckifyr.renderers.quarto`/`deckifyr.renderers.preview`'s own
+"shell out to an already-trusted external tool, raise
+`MissingDependencyError` if it's not on PATH" posture -- rather than
+adding a Python `.rds`-reading dependency (`pyreadr` would only recover
+raw cell data, not flextable's actual rendering) or piggybacking on
+Quarto's own R-chunk execution (which would pull in the Quarto binary
+too, for a feature that's conceptually pure-R). Confirmed against a real
+`flextable` 0.10.0 install before building this: `flextable::
+save_as_image(ft, path=..., res=...)` needs no headless-browser backend
+(no `webshot2`/`chromote`) -- only base R graphics -- and its PNG output
+is genuinely transparent by default (`PIL`-verified: background alpha
+0, content alpha 255), so no extra transparency plumbing was needed on
+either side, unlike `deckifyr.renderers.quarto`'s own PyMuPDF
+`alpha=True` workaround for a similar problem. The actual R source lives
+in a bundled sibling file, `render_flextable.R` (shipped as package data
+the same way `cli.py`'s `_skills_dir()` bundles `SKILL.md` files),
+invoked as `Rscript --vanilla render_flextable.R <input.rds>
+<output.png> <dpi>` -- **list-form subprocess args, never a
+string-interpolated/`shell=True` invocation**, so an artifact path can't
+affect how the R script itself is parsed; the script reads its three
+arguments via `commandArgs(trailingOnly = TRUE)` instead. It exits with
+a **reserved status 2** specifically when the `flextable` R package
+itself isn't installed (R's own default for an uncaught `stop()` is 1),
+so `render_flextable_png` can raise a distinct `MissingDependencyError`
+for that case (pointing at CRAN's `flextable` page) instead of a generic
+render-failure message -- tested deterministically by monkeypatching the
+module's bundled-script path to a tiny stub that always exits 2, not by
+requiring an environment that's actually missing the package.
+`FlextableConfig` (binary/timeout/max-output-bytes/dpi) is nested under
+`ReportifyrConfig` (`build.reportifyr.flextable`) rather than a
+`QuartoConfig`/`PreviewConfig`-style top-level `BuildConfig` sibling --
+unlike Quarto/preview rendering, each triggered by its own distinct
+element type, flextable rendering only ever exists to serve a
+`reportifyr` element whose resolved artifact happens to be `.rds`, so it
+rides along on `ReportifyrBuildContext` (a new `flextable_config` field)
+rather than needing its own parameter threaded through
+`_compose_element`. No Homebrew cask entry was added for it in
+`R/run-python.R`'s `.homebrew_cask_for_dependency()` -- R itself is
+already assumed present for the R facade this whole package is built
+around, so a missing-`Rscript` error here means "not on PATH for this
+subprocess environment," not "R isn't installed on this machine," and
+the existing `NULL`-fallback (print the install URL) is the right
+behavior for that case, same as it already is for any other
+unrecognized dependency name.
+
+The web editor's Add-element form surfaced the underlying UX problem
+that prompted this issue: `GET /api/project/files?type=reportifyr`
+(`list_reportifyr_artifacts`) returns every reportifyr artifact with a
+metadata sidecar regardless of format -- figures, `.csv`/`.parquet`
+tables, and `.rds` flextables all mixed into one dropdown -- and the
+form used to always submit whatever was picked as `type: reportifyr,
+value: "{rpfy}:<file>"`, which would either crash (`.rds`, before this
+issue) or build the wrong element type (`.csv`/`.parquet`, which
+`TableResolver` was already perfectly capable of composing correctly).
+`ElementList.tsx`'s `submit()` now branches on the picked file's
+extension when `type === "reportifyr"`: a `.csv`/`.parquet` pick
+silently becomes `type: "table", source: "{rpfy}:<file>"` (the same
+path a hand-typed local `table` source already uses), while everything
+else (including `.rds`) still becomes `type: "reportifyr", value:
+"{rpfy}:<file>"` -- no backend `app.py` route changes needed, since
+`POST .../elements` already accepted `type: "table"` with a `source`
+field via the same branch `image` elements already used. `examples/
+demo-deck`'s `table-formats` slide (issue #57) exercises both halves of
+this at once, side by side, each with its own footer -- see that
+project's own README.md for how its two boxes were sized (against a
+real rendered preview, not guessed) to keep each footer flush beneath
+its own content rather than overlapping a taller-than-declared native
+table or floating far below a short, wide rendered picture.
 
 **Quarto integration (spec §8/§8.1, issue #3) is real, built against a
 live `quarto`/Typst/PyMuPDF toolchain, not just designed against the

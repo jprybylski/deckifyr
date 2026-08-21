@@ -1,12 +1,17 @@
 # A minimal `standard_footnotes.yaml` (spec section 9.1) -- trimmed to
-# just the entries this deck's own reportifyr metadata sidecar
-# (OUTPUTS/figures/conc-time_png_metadata.json) actually references.
-# Both entries are copied verbatim from reportifyr's own bundled
-# standard_footnotes.yaml (a2-ai/reportifyr's `inst/extdata/`), not
-# invented for this demo.
+# just the entries this deck's own reportifyr metadata sidecars actually
+# reference. The `conc-time-trajectories` entry is copied verbatim from
+# reportifyr's own bundled standard_footnotes.yaml (a2-ai/reportifyr's
+# `inst/extdata/`), not invented for this demo; `pk-summary-statistics`
+# and `pk-summary-per-participant` (issue #57) are this deck's own.
 abbreviations:
   PK: pharmacokinetic
 
+# `pk-summary-statistics` (a rendered `.rds` flextable, issue #57) is
+# looked up here, not table_footnotes, even though it summarizes tabular
+# data: a rendered flextable composes as a picture (a `reportifyr`
+# element), and `_apply_footer` always passes `artifact_type="figure"`
+# for that element type regardless of what the picture actually depicts.
 figure_footnotes:
   conc-time-trajectories: >-
     This plot shows individual concentration-time trajectories for
@@ -17,5 +22,11 @@ figure_footnotes:
     concentration (Cmax) and time to peak (Tmax) can be identified
     visually. No aggregation or smoothing has been applied, preserving
     the raw individual data
+  pk-summary-statistics: >-
+    Population-level summary statistics (mean, median, min, max) across
+    all 12 participants; the mean row is highlighted.
 
-table_footnotes: {}
+table_footnotes:
+  pk-summary-per-participant: >-
+    Raw per-participant values, one row per participant, with no
+    aggregation or smoothing applied.
