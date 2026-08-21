@@ -177,7 +177,14 @@ plan and lets you:
   dropdown for `shape`, nothing extra for `group`, and for
   `reportifyr`/`quarto` a dropdown of real candidate files already found
   in the project (reportifyr artifacts with a matching metadata sidecar;
-  `.qmd` fragments), not a hand-typed path to get exactly right:
+  `.qmd` fragments), not a hand-typed path to get exactly right. Picking
+  a reportifyr artifact from that dropdown always creates an element
+  type that actually builds: a `.csv`/`.parquet` artifact becomes a
+  real, native, editable `table` element, while anything else --
+  including a `.rds` file, this project's convention for an R
+  `flextable` object with formatting (merged headers, highlighted rows)
+  a native table can't represent -- becomes a `reportifyr` picture
+  element instead, rendered to a transparent PNG at build time:
 
   <div style="margin: 1rem 0;">
   <img src="../man/figures/web-app-add-element.png" alt="The Elements sidebar's Add element form open on the title slide: a New element id field (callout), a Type dropdown (text), and a Value textarea containing sample text, with Add and Cancel buttons below the two existing markdown elements" width="700" loading="lazy">

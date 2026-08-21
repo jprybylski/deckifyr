@@ -1,5 +1,18 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* Reportifyr `.rds` table artifacts (R `flextable` objects, produced via
+  `format_flextable()`) now render as pictures instead of crashing the
+  build, and the web editor's reportifyr artifact picker correctly
+  routes `.csv`/`.parquet` picks to native tables instead of always
+  building a `reportifyr` element (issue #57). New
+  `deckifyr.renderers.flextable` shells out to `Rscript`/`flextable::
+  save_as_image()` to rasterize a `.rds` artifact to a transparent PNG,
+  composed exactly like any other `reportifyr` figure, footer included.
+
 # deckifyr 0.3.1
 
 ## Added

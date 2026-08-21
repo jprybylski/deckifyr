@@ -36,6 +36,32 @@ class Metadata(BaseModel):
     status: str | None = None
 
 
+class FlextableConfig(BaseModel):
+    """Execution settings for rendering a reportifyr `.rds` artifact --
+    an R `flextable` object (issue #57) -- to a picture via
+    `deckifyr.renderers.flextable`. Nested under `ReportifyrConfig`
+    rather than a `QuartoConfig`/`PreviewConfig`-style top-level
+    `BuildConfig` sibling: unlike Quarto/preview rendering (each
+    triggered by its own distinct element type), flextable rendering
+    only ever exists to serve a `reportifyr` element whose resolved
+    artifact happens to be `.rds`. `None` on `ReportifyrConfig.flextable`
+    (the default) means every setting below's own default -- read
+    lazily by `deckifyr.pptx.compose._build_reportifyr_context`, only
+    when a build actually resolves an `.rds` reportifyr artifact.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The `Rscript` binary to invoke -- a bare name resolved via PATH by
+    # default, or a full path for a non-PATH install.
+    binary: str = "Rscript"
+    timeout_seconds: float = 60
+    max_output_bytes: int = 5_000_000
+    # Maps to `flextable::save_as_image()`'s own `res=` (resolution in
+    # DPI) -- 200 matches that function's own default.
+    dpi: int = 200
+
+
 class ReportifyrConfig(BaseModel):
     """Where/how to resolve `{rpfy}:` magic strings (spec section 9.1),
     project-relative paths. `standard_footnotes` is required only
@@ -53,6 +79,10 @@ class ReportifyrConfig(BaseModel):
     # equivalent (it's a call-time argument there too), so this is
     # deckifyr's own project-level home for the same choice.
     fail_on_missing_metadata: bool = True
+    # Rendering settings for `.rds` flextable artifacts (issue #57) --
+    # see `FlextableConfig`'s own docstring for why this lives here
+    # rather than as a `BuildConfig` sibling.
+    flextable: FlextableConfig | None = None
 
 
 class QuartoConfig(BaseModel):

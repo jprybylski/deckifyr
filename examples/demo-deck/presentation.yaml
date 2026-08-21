@@ -35,6 +35,18 @@
 # for a fragment with a code chunk (`deckifyr.renderers.quarto
 # .select_auto_render_mode`'s heuristic) but this chunk's own output is
 # just a short computed sentence, better left as real editable text.
+#
+# The `table-formats` slide (issue #57) puts a `{rpfy}:`-sourced native
+# table and a `{rpfy}:`-sourced `.rds` flextable side by side, each with
+# its own footer, to make the two reportifyr table paths concrete:
+# `{rpfy}:pk-summary.csv` (`type: table`, `deckifyr.resolvers
+# .TableResolver`) resolves to a real, editable PowerPoint table, while
+# `{rpfy}:pk-flextable-summary.rds` (`type: reportifyr`) is an R
+# `flextable` object (see OUTPUTS/tables/pk-flextable-summary.rds and
+# scripts/generate_pk_flextable.R) with per-cell formatting -- a merged
+# header, a highlighted row -- that a native table can't represent, so
+# it's rendered to a transparent-background picture by
+# `deckifyr.renderers.flextable` instead.
 deckifyr: "0.1"
 design:
   base: design.yaml
@@ -154,6 +166,48 @@ slides:
           Table of weight, dose, peak concentration, and time to peak
           concentration for each of the 12 participants in the Theoph
           dataset.
+
+  - id: table-formats
+    layout: blank
+    elements:
+      - id: table-formats-title
+        type: text
+        value: "Reportifyr Table Formats: Native vs. Flextable"
+        box: {x: 0.9in, y: 0.5in, width: 11.5in, height: 0.65in}
+        style: title
+      - id: raw-table
+        type: table
+        source: "{rpfy}:pk-summary.csv"
+        # Wide enough that the "Participant" header cell doesn't wrap to
+        # two lines -- a narrower box left the rendered table taller than
+        # its own declared box (row heights auto-grow to fit wrapped
+        # text), which pushed real content down into the footer text
+        # below it. Verified against a real LibreOffice-rendered preview,
+        # not assumed.
+        box: {x: 0.6in, y: 1.35in, width: 7.6in, height: 4.3in}
+        style: table-body
+        table_style: pk-summary
+        footer_placement: below
+        alt_text: >-
+          Table of weight, dose, peak concentration, and time to peak
+          concentration for each of the 12 participants in the Theoph
+          dataset.
+      - id: flextable-summary
+        type: reportifyr
+        value: "{rpfy}:pk-flextable-summary.rds"
+        fit: contain
+        # The rendered flextable PNG is wide and short (~3.26:1) -- a box
+        # close to that aspect ratio keeps the footer right beneath the
+        # visible picture instead of `fit: contain` leaving a tall,
+        # mostly-empty gap above a footer anchored to the box's own
+        # (much taller) bottom edge.
+        box: {x: 8.5in, y: 1.35in, width: 4.2in, height: 1.45in}
+        footer_placement: below
+        alt_text: >-
+          A formatted summary table of mean, median, minimum, and maximum
+          weight, dose, peak concentration, and time to peak concentration
+          across all 12 participants, with a merged "Population Summary"
+          header and the mean row highlighted.
 
   - id: closing
     layout: null

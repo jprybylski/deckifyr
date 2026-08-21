@@ -1,26 +1,30 @@
 """End-to-end coverage for examples/demo-deck (see its README.md): a
-five-slide deck built from a real reportifyr-produced figure (resolved
+six-slide deck built from a real reportifyr-produced figure (resolved
 via a real `{rpfy}:` magic string, spec section 9), a derived CSV table,
-and a `quarto`-fragment slide (spec section 8.1, issue #3) -- not
-placeholder content. This is a regression test for the whole plan ->
-compose pipeline against a richer project than
-inst/examples/minimal-deck's text/markdown-only fixture -- in
-particular, it's the only test that builds a project with a multi-zone
-layout, `rotation`, `z_index`, a `table` element, and real `quarto`
-elements (one rendered `svg`/`png`-style as `render_mode: png`, one
-executing a real R code chunk as `render_mode: native`) all at once.
+a `quarto`-fragment slide (spec section 8.1, issue #3), and a
+reportifyr-table-formats slide (issue #57) -- not placeholder content.
+This is a regression test for the whole plan -> compose pipeline against
+a richer project than inst/examples/minimal-deck's text/markdown-only
+fixture -- in particular, it's the only test that builds a project with
+a multi-zone layout, `rotation`, `z_index`, a `table` element, real
+`quarto` elements (one rendered `svg`/`png`-style as `render_mode: png`,
+one executing a real R code chunk as `render_mode: native`), and a
+`.rds` flextable reportifyr artifact all at once.
 
 The whole deck now requires a real `quarto` binary to build (the
 `pk-interpretation` slide's two elements), so every test in this file
 skips cleanly when `quarto` isn't on `PATH` -- and the R-executing
-fragment additionally needs `Rscript` -- mirroring
-`tests/python/test_renderers_quarto.py`'s own skip pattern (see
-CLAUDE.md's "Quarto integration" architecture note). This is expected
-local/CI behavior: CI's `python-tests` job does not install Quarto or R,
-so this file's real pipeline coverage runs wherever both are available
-(this was run and verified locally against a live `quarto`/R install
-while adding the `pk-interpretation` slide) rather than showing up in
-CI-tracked coverage numbers.
+fragment additionally needs `Rscript`, and the `table-formats` slide's
+`.rds` flextable artifact additionally needs the R `flextable` package
+on top of that (`deckifyr.renderers.flextable` shells to `Rscript`
+directly for this slide, not just Quarto executing an R chunk) --
+mirroring `tests/python/test_renderers_quarto.py`'s own skip pattern
+(see CLAUDE.md's "Quarto integration" architecture note). This is
+expected local/CI behavior: CI's `python-tests` job does not install
+Quarto, R, or the `flextable` R package, so this file's real pipeline
+coverage runs wherever all three are available (this was run and
+verified locally against a live `quarto`/R/`flextable` install) rather
+than showing up in CI-tracked coverage numbers.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -42,7 +47,31 @@ requires_quarto = pytest.mark.skipif(
 requires_r = pytest.mark.skipif(
     shutil.which("Rscript") is None, reason="Rscript not found on PATH"
 )
-pytestmark = [requires_quarto, requires_r]
+
+
+def _rscript_has_flextable() -> bool:
+    if shutil.which("Rscript") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "Rscript",
+                "--vanilla",
+                "-e",
+                "quit(status = if (requireNamespace('flextable', quietly = TRUE)) 0 else 1)",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+requires_flextable = pytest.mark.skipif(
+    not _rscript_has_flextable(), reason="Rscript with the flextable package not found"
+)
+pytestmark = [requires_quarto, requires_r, requires_flextable]
 
 
 def _sha256(path: Path) -> str:
@@ -67,13 +96,13 @@ def _alt_text(picture_shape) -> str | None:
     return cnv_pr.get("descr")
 
 
-def test_demo_deck_builds_five_slides_with_expected_shapes(demo_deck_dir, tmp_path, capsys):
+def test_demo_deck_builds_six_slides_with_expected_shapes(demo_deck_dir, tmp_path, capsys):
     output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
-    assert output["slide_count"] == 5
+    assert output["slide_count"] == 6
 
     prs = Presentation(output["output"])
     slides = list(prs.slides)
-    assert len(slides) == 5
+    assert len(slides) == 6
 
     furniture = {
         "__furniture_background",
@@ -87,6 +116,14 @@ def test_demo_deck_builds_five_slides_with_expected_shapes(demo_deck_dir, tmp_pa
         {"title", "figure", "figure__footer", "note"} | furniture,
         {"title", "figure", "note"} | furniture,
         {"table-title", "pk-table"} | furniture,
+        {
+            "table-formats-title",
+            "raw-table",
+            "raw-table__footer",
+            "flextable-summary",
+            "flextable-summary__footer",
+        }
+        | furniture,
         {"closing-title", "closing-note", "logo"} | furniture,
     ]
 
@@ -134,7 +171,7 @@ def test_demo_deck_pk_table_is_a_native_table_from_csv(demo_deck_dir, tmp_path, 
 def test_demo_deck_logo_keeps_its_rotation(demo_deck_dir, tmp_path, capsys):
     output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
     prs = Presentation(output["output"])
-    closing_slide = list(prs.slides)[4]
+    closing_slide = list(prs.slides)[5]
 
     logo = next(shape for shape in closing_slide.shapes if shape.name == "logo")
     # presentation.yaml sets rotation: -3; python-pptx normalizes negative
@@ -148,7 +185,7 @@ def test_demo_deck_plot_slide_carries_its_speaker_notes(demo_deck_dir, tmp_path,
     prs = Presentation(output["output"])
     slides = list(prs.slides)
     plot_slide = slides[1]
-    closing_slide = slides[4]
+    closing_slide = slides[5]
 
     assert "absorption phase" in plot_slide.notes_slide.notes_text_frame.text
     assert closing_slide.has_notes_slide is False
@@ -158,16 +195,17 @@ def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path
     output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
     manifest = json.loads(Path(output["manifest"]).read_text())
 
-    assert manifest["slide_count"] == 5
-    # 2 + 3 + 3 + 2 + 3 elements across the five slides (title/
+    assert manifest["slide_count"] == 6
+    # 2 + 3 + 3 + 2 + 3 + 3 elements across the six slides (title/
     # deck-subtitle; title/figure/note; title/figure/note; table-title/
-    # pk-table; closing-title/closing-note/logo), plus background,
-    # status (watermark), branding, and page-number furniture (spec
-    # section 7.8) on each of them -- design.yaml sets a
-    # `background_image` and presentation.yaml's `status_indicator:
-    # watermark` (spec section 7.8) turns the status marker on for this
-    # build, with its text falling back to `metadata.status: demo`.
-    assert len(manifest["elements"]) == 13 + 4 * 5
+    # pk-table; table-formats-title/raw-table/flextable-summary;
+    # closing-title/closing-note/logo), plus background, status
+    # (watermark), branding, and page-number furniture (spec section
+    # 7.8) on each of them -- design.yaml sets a `background_image` and
+    # presentation.yaml's `status_indicator: watermark` (spec section
+    # 7.8) turns the status marker on for this build, with its text
+    # falling back to `metadata.status: demo`.
+    assert len(manifest["elements"]) == 16 + 4 * 6
 
     figure_entry = next(
         e for e in manifest["elements"] if e["slide_id"] == "concentration-time" and e["element_id"] == "figure"
@@ -192,6 +230,77 @@ def test_demo_deck_manifest_records_the_real_figure_hash(demo_deck_dir, tmp_path
     assert resolved_table_path.is_file()
     assert table_entry["sha256"] == _sha256(resolved_table_path)
     assert table_entry["sha256"] == _sha256(demo_deck_dir / "OUTPUTS" / "tables" / "pk-summary.csv")
+
+
+# ---------------------------------------------------------------------------
+# table-formats: a {rpfy}:-sourced native table next to a {rpfy}:-sourced
+# .rds flextable rendered to a picture (issue #57)
+# ---------------------------------------------------------------------------
+
+
+def test_demo_deck_table_formats_slide_has_a_native_table_and_a_rendered_picture(
+    demo_deck_dir, tmp_path, capsys
+):
+    output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
+    prs = Presentation(output["output"])
+    table_formats_slide = list(prs.slides)[4]
+
+    raw_table = next(
+        shape for shape in table_formats_slide.shapes if shape.name == "raw-table"
+    )
+    assert [cell.text for cell in raw_table.table.rows[0].cells] == [
+        "Participant", "Weight (kg)", "Dose (mg/kg)", "Cmax (mg/L)", "Tmax (hr)",
+    ]
+
+    flextable_picture = next(
+        shape for shape in table_formats_slide.shapes if shape.name == "flextable-summary"
+    )
+    assert flextable_picture.shape_type == 13  # MSO_SHAPE_TYPE.PICTURE
+
+
+def test_demo_deck_table_formats_slide_footers_reflect_their_own_meta_types(
+    demo_deck_dir, tmp_path, capsys
+):
+    output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
+    prs = Presentation(output["output"])
+    table_formats_slide = list(prs.slides)[4]
+
+    raw_table_footer = next(
+        shape for shape in table_formats_slide.shapes if shape.name == "raw-table__footer"
+    )
+    assert "Raw per-participant values" in raw_table_footer.text_frame.text
+
+    flextable_footer = next(
+        shape for shape in table_formats_slide.shapes if shape.name == "flextable-summary__footer"
+    )
+    flextable_footer_text = flextable_footer.text_frame.text
+    assert "Population-level summary statistics" in flextable_footer_text
+    assert "Abbreviations: PK: pharmacokinetic." in flextable_footer_text
+
+
+def test_demo_deck_manifest_records_the_flextable_source_not_the_rendered_png(
+    demo_deck_dir, tmp_path, capsys
+):
+    output = _build_demo_deck(demo_deck_dir, tmp_path, capsys)
+    manifest = json.loads(Path(output["manifest"]).read_text())
+
+    flextable_entry = next(
+        e for e in manifest["elements"]
+        if e["slide_id"] == "table-formats" and e["element_id"] == "flextable-summary"
+    )
+    assert flextable_entry["type"] == "reportifyr"
+    assert flextable_entry["editability"] == "rendered_graphic"
+    # The manifest records the original .rds source, not the rendered PNG.
+    resolved_path = Path(flextable_entry["resolved_path"])
+    assert resolved_path.suffix == ".rds"
+    assert resolved_path.is_file()
+    assert flextable_entry["sha256"] == _sha256(resolved_path)
+    assert flextable_entry["sha256"] == _sha256(
+        demo_deck_dir / "OUTPUTS" / "tables" / "pk-flextable-summary.rds"
+    )
+    assert any(
+        "rendered flextable to PNG" in warning for warning in manifest.get("warnings", [])
+    )
 
 
 # ---------------------------------------------------------------------------

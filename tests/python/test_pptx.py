@@ -1,5 +1,7 @@
 import importlib
 import json
+import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -7,6 +9,7 @@ from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_FILL
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 
@@ -49,6 +52,30 @@ from deckifyr.schema.presentation import (
 # `sys.modules` directly, sidestepping the shadowing -- the same fix
 # `test_pptx_quarto.py` already uses for this exact package.
 compose_module = importlib.import_module("deckifyr.pptx.compose")
+
+
+def _rscript_has_flextable() -> bool:
+    if shutil.which("Rscript") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "Rscript",
+                "--vanilla",
+                "-e",
+                "quit(status = if (requireNamespace('flextable', quietly = TRUE)) 0 else 1)",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+requires_flextable = pytest.mark.skipif(
+    not _rscript_has_flextable(), reason="Rscript with the flextable package not found"
+)
 
 
 def test_contain_letterboxes_and_centers():
@@ -655,6 +682,128 @@ def test_rpfy_sourced_table_builds_and_footers_from_table_footnotes(project):
     manifest = json.loads(result.manifest_path.read_text())
     (element_entry,) = manifest["elements"]
     assert element_entry["resolved_path"].endswith("pk-summary.csv")
+
+
+def test_rds_sourced_table_points_at_the_reportifyr_element_type(project):
+    # `.rds` reportifyr artifacts are flextable objects (issue #57) --
+    # `TableResolver` can never parse one as tabular data, so the error
+    # should point the author at the right element type rather than just
+    # "unsupported table format '.rds'".
+    tables = project / "OUTPUTS" / "tables"
+    tables.mkdir(parents=True)
+    (tables / "pk-flextable-summary.rds").write_bytes(b"not a real rds file")
+    (tables / "pk-flextable-summary_rds_metadata.json").write_text(
+        json.dumps({"object_meta": {"meta_type": "univariate", "footnotes": {}}})
+    )
+    (project / "standard_footnotes.yaml").write_text(
+        yaml.safe_dump({"table_footnotes": {}, "figure_footnotes": {}, "abbreviations": {}})
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(
+            output="build/out.pptx",
+            manifest="build/out.manifest.json",
+            reportifyr=ReportifyrConfig(standard_footnotes="standard_footnotes.yaml"),
+        ),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="tbl",
+                        type="table",
+                        source="{rpfy}:pk-flextable-summary.rds",
+                        box=Box(x="0in", y="0in", width="4in", height="2in"),
+                    )
+                ],
+            )
+        ],
+    )
+    with pytest.raises(ContentValidationError, match="type: reportifyr"):
+        _build(project, presentation, _design())
+
+
+def _write_reportifyr_flextable_fixture(project):
+    tables = project / "OUTPUTS" / "tables"
+    tables.mkdir(parents=True, exist_ok=True)
+    rds_path = tables / "pk-flextable-summary.rds"
+    r_code = (
+        "library(flextable); "
+        "df <- data.frame(name = c('Ada', 'Grace'), score = c(10, 9)); "
+        "ft <- flextable(df); "
+        f'saveRDS(ft, {str(rds_path)!r})'
+    )
+    subprocess.run(
+        ["Rscript", "--vanilla", "-e", r_code], check=True, capture_output=True, timeout=30
+    )
+    metadata = {
+        "object_meta": {
+            "meta_type": "univariate",
+            "footnotes": {"notes": [], "abbreviations": []},
+        },
+    }
+    (tables / "pk-flextable-summary_rds_metadata.json").write_text(json.dumps(metadata))
+    # `_apply_footer` always passes `artifact_type="figure"` for a
+    # `reportifyr` element -- a rendered flextable is still placed as a
+    # picture, so its footer looks up `figure_footnotes`, not
+    # `table_footnotes` (unlike a native `type: table` element).
+    standard_footnotes = {
+        "figure_footnotes": {"univariate": "The p-value is from the likelihood ratio test."},
+        "table_footnotes": {},
+        "abbreviations": {},
+    }
+    (project / "standard_footnotes.yaml").write_text(yaml.safe_dump(standard_footnotes))
+
+
+@requires_flextable
+def test_reportifyr_rds_artifact_renders_via_flextable_and_places_a_picture(project):
+    _write_reportifyr_flextable_fixture(project)
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design=DesignRef(base="design.yaml"),
+        layouts="layouts.yaml",
+        metadata=Metadata(title="Test"),
+        build=BuildConfig(
+            output="build/out.pptx",
+            manifest="build/out.manifest.json",
+            reportifyr=ReportifyrConfig(standard_footnotes="standard_footnotes.yaml"),
+        ),
+        slides=[
+            Slide(
+                id="s1",
+                layout=None,
+                elements=[
+                    Element(
+                        id="flex",
+                        type="reportifyr",
+                        value="{rpfy}:pk-flextable-summary.rds",
+                        alt_text="a summary table",
+                        footer_placement="below",
+                        box=Box(x="0in", y="0in", width="4in", height="2in"),
+                    )
+                ],
+            )
+        ],
+    )
+
+    result = _build(project, presentation, _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    picture, footer = list(slide.shapes)
+    assert picture.name == "flex"
+    assert picture.shape_type == MSO_SHAPE_TYPE.PICTURE
+    assert footer.text_frame.text == "Notes: The p-value is from the likelihood ratio test."
+
+    manifest = json.loads(result.manifest_path.read_text())
+    (element_entry,) = manifest["elements"]
+    assert element_entry["type"] == "reportifyr"
+    # The manifest records the original .rds source, not the rendered PNG.
+    assert element_entry["resolved_path"].endswith("pk-flextable-summary.rds")
 
 
 # ---------------------------------------------------------------------------

@@ -57,6 +57,15 @@ test_that("deck_build() builds the richer demo-deck example end to end", {
   # now requires the external `quarto` binary to build, same skip
   # convention tests/python/test_demo_deck.py uses on the Python side.
   skip_if_not(nzchar(Sys.which("quarto")), "quarto not on PATH")
+  # table-formats' flextable-summary element (issue #57) is a real .rds
+  # flextable artifact -- deckifyr.renderers.flextable shells out to
+  # Rscript/flextable::save_as_image() directly for it, so this needs
+  # the R flextable package installed too, same skip convention
+  # tests/python/test_demo_deck.py's own requires_flextable uses.
+  skip_if_not(
+    requireNamespace("flextable", quietly = TRUE),
+    "flextable R package not installed"
+  )
 
   # examples/demo-deck (see its README.md) exercises a multi-zone layout,
   # a real reportifyr-produced image, rotation, z_index, and two real
@@ -75,7 +84,7 @@ test_that("deck_build() builds the richer demo-deck example end to end", {
   result <- deck_build(file.path(project_dir, "presentation.yaml"))
   expect_true(file.exists(result$output))
   expect_true(file.exists(result$manifest))
-  expect_equal(result$slide_count, 5)
+  expect_equal(result$slide_count, 6)
 })
 
 test_that("deck_get_config()/deck_set_config()/slide editors round-trip a real file", {

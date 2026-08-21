@@ -76,6 +76,23 @@ const CONTENT_ELEMENT_TYPES = [
 // section 7.5) -- neither is meaningful as an ordinary slide element.
 const LAYOUT_ONLY_TYPES = ["slot", "footnotes"] as const;
 
+// `GET /api/project/files?type=reportifyr` (`list_reportifyr_artifacts`)
+// returns every reportifyr artifact with a metadata sidecar regardless
+// of format -- figures, .csv/.parquet tables, and .rds flextables all
+// mixed into one list (issue #57). `TableResolver` only ever parses
+// .csv/.parquet as tabular data (`deckifyr.resolvers.table
+// ._SUPPORTED_SUFFIXES`); everything else, including .rds flextables,
+// composes as a `reportifyr` picture element instead
+// (`deckifyr.pptx.compose._add_reportifyr_shape`'s own `.rds` render
+// branch). This mirrors that split so picking an artifact from the
+// dropdown always creates an element type that actually builds.
+const TABLE_ARTIFACT_EXTENSIONS = [".csv", ".parquet"];
+
+function isTableArtifact(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return TABLE_ARTIFACT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
 // `deckifyr.schema.layouts.ShapeKind`'s own small, named subset of
 // `MSO_SHAPE` -- kept in sync with that Python literal by hand (no
 // shared schema-to-TS generation exists yet for this one enum).
@@ -170,7 +187,19 @@ function AddElementForm({
       if (type === "text" || type === "markdown") body.value = value;
       if (type === "image" || type === "table") body.source = source;
       if (type === "shape") body.shape_kind = shapeKind;
-      if (type === "reportifyr") body.value = `{rpfy}:${source}`;
+      if (type === "reportifyr") {
+        if (isTableArtifact(source)) {
+          // A .csv/.parquet reportifyr artifact builds a real, editable
+          // native table -- the same `type: table, source: "{rpfy}:..."`
+          // path a hand-typed local source already uses -- rather than a
+          // `reportifyr` picture element `TableResolver` could never
+          // compose.
+          body.type = "table";
+          body.source = `{rpfy}:${source}`;
+        } else {
+          body.value = `{rpfy}:${source}`;
+        }
+      }
       if (type === "quarto") body.source = source;
       await onAdd(body);
       onDone();
@@ -222,21 +251,31 @@ function AddElementForm({
         </label>
       )}
       {(type === "reportifyr" || type === "quarto") && (
-        <label>
-          {type === "reportifyr" ? "Reportifyr artifact" : "Quarto fragment (.qmd)"}
-          <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            disabled={!projectFiles}
-          >
-            {(projectFiles ?? []).length === 0 && <option value="">No candidates found</option>}
-            {(projectFiles ?? []).map((file) => (
-              <option key={file} value={file}>
-                {file}
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label>
+            {type === "reportifyr" ? "Reportifyr artifact" : "Quarto fragment (.qmd)"}
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              disabled={!projectFiles}
+            >
+              {(projectFiles ?? []).length === 0 && (
+                <option value="">No candidates found</option>
+              )}
+              {(projectFiles ?? []).map((file) => (
+                <option key={file} value={file}>
+                  {file}
+                </option>
+              ))}
+            </select>
+          </label>
+          {type === "reportifyr" && (
+            <p className="element-list__hint">
+              .csv/.parquet artifacts are added as native tables; anything
+              else (including .rds flextables) as a picture.
+            </p>
+          )}
+        </>
       )}
       <div className="element-list__add-form-actions">
         <button
