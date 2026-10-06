@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from deckifyr.schema.colors import ColorDerivation
+from deckifyr.schema.fields import ColorRef, Length
 from deckifyr.schema.layouts import Box
 from deckifyr.schema.version import check_schema_version
 
@@ -28,8 +29,12 @@ class GradientStop(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    color: str
-    position: float
+    color: ColorRef = Field(
+        description="Stop color: a `colors:` token name or a literal hex value.",
+    )
+    position: float = Field(
+        description="Where along the gradient this stop sits, from 0.0 (start) to 1.0 (end).",
+    )
 
     @field_validator("position")
     @classmethod
@@ -50,8 +55,16 @@ class Gradient(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    stops: list[GradientStop]
-    angle: float = 90
+    stops: list[GradientStop] = Field(
+        description="Color stops along the gradient path (at least 2).",
+    )
+    angle: float = Field(
+        90,
+        description=(
+            "Direction in degrees: 0 runs left to right and 90 (the default) top to "
+            "bottom, increasing clockwise."
+        ),
+    )
 
     @field_validator("stops")
     @classmethod
@@ -64,38 +77,61 @@ class Gradient(BaseModel):
 class SlideSize(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    width: str
-    height: str
-    background: str = "#FFFFFF"
-    safe_area: str = "0in"
+    width: Length = Field(description="Slide width with an explicit unit, e.g. `13.333in`.")
+    height: Length = Field(description="Slide height with an explicit unit, e.g. `7.5in`.")
+    background: ColorRef = Field(
+        "#FFFFFF",
+        description=(
+            "Solid slide background color; also the fallback behind a non-covering "
+            "image or gradient."
+        ),
+    )
+    safe_area: Length = Field(
+        "0in",
+        description="Inset kept clear of content on every slide edge.",
+    )
     # Optional path/URI, rendered behind all slide content (spec section
     # 7.8's `furniture` design) -- composes with `background` above, which
     # remains the fallback/letterbox color behind a non-covering image.
-    background_image: str | None = None
+    background_image: str | None = Field(
+        None,
+        description="Optional project-relative image painted behind all slide content.",
+    )
     # Optional linear gradient painted as the slide's own native
     # background fill (spec section 7.4), in front of `background` (its
     # solid-fill fallback is simply unused once this is set) and behind
     # `background_image`/every other element -- the same "paint order"
     # `background_image`'s own docstring above describes.
-    background_gradient: Gradient | None = None
+    background_gradient: Gradient | None = Field(
+        None,
+        description=(
+            "Optional gradient painted as the slide's native background fill, in "
+            "front of `background`."
+        ),
+    )
 
 
 class Fonts(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    body: str
-    heading: str
-    monospace: str | None = None
+    body: str = Field(description="Default font family for body text.")
+    heading: str = Field(description="Default font family for headings.")
+    monospace: str | None = Field(
+        None,
+        description="Font family for code and other monospaced text.",
+    )
 
 
 class TextStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    font: str
-    size: str
-    bold: bool = False
-    italic: bool = False
-    color: str
+    font: str = Field(description="Font family name, or a `fonts:` token such as `body`.")
+    size: Length = Field(description="Font size with an explicit unit, e.g. `18pt`.")
+    bold: bool = Field(False, description="Render the text in bold.")
+    italic: bool = Field(False, description="Render the text in italics.")
+    color: ColorRef = Field(
+        description="Text color: a `colors:` token name or a literal hex value.",
+    )
     # Text fill opacity, 0.0 (fully transparent) to 1.0 (fully opaque,
     # the default when unset). `python-pptx` has no public API for run
     # color alpha, so `deckifyr.pptx.compose._apply_text_alpha` sets it
@@ -103,7 +139,13 @@ class TextStyle(BaseModel):
     # watermark-style `furniture.status` (spec section 7.8) that needs to
     # read consistently on top of arbitrary slide content, not a general
     # replacement for `color`.
-    opacity: float | None = None
+    opacity: float | None = Field(
+        None,
+        description=(
+            "Text opacity from 0.0 (transparent) to 1.0 (opaque, the default when "
+            "unset); mainly for watermark-style marks."
+        ),
+    )
     # Case transform applied to this style's own rendered text at compose
     # time (`deckifyr.pptx.compose._apply_text_transform`) -- `None` (the
     # default) leaves text exactly as authored. The main use case is a
@@ -112,7 +154,13 @@ class TextStyle(BaseModel):
     # value ("demo") into the all-caps convention a status/watermark mark
     # conventionally uses ("DEMO") without requiring the author to type
     # it that way themselves.
-    text_transform: Literal["none", "uppercase", "lowercase", "capitalize"] | None = None
+    text_transform: Literal["none", "uppercase", "lowercase", "capitalize"] | None = Field(
+        None,
+        description=(
+            "Case transform applied when the text is rendered; unset leaves it "
+            "exactly as authored."
+        ),
+    )
 
     @field_validator("opacity")
     @classmethod
@@ -133,9 +181,21 @@ class ShapeStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    fill: str | Gradient | None = None
-    line_color: str | None = None
-    line_width: str | None = None
+    fill: ColorRef | Gradient | None = Field(
+        None,
+        description=(
+            "Fill: a color token or hex value, or a gradient. Unset leaves the shape "
+            "unfilled."
+        ),
+    )
+    line_color: ColorRef | None = Field(
+        None,
+        description="Outline color: a `colors:` token name or a literal hex value.",
+    )
+    line_width: Length | None = Field(
+        None,
+        description="Outline thickness with an explicit unit, e.g. `1pt`.",
+    )
 
 
 class TableStyle(BaseModel):
@@ -156,36 +216,84 @@ class TableStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    header_fill: str | None = None
-    header_text_color: str | None = None
-    body_fill: str | None = None
+    header_fill: ColorRef | None = Field(
+        None,
+        description=(
+            "Fill color of the header row; unset keeps the default table template "
+            "look."
+        ),
+    )
+    header_text_color: ColorRef | None = Field(
+        None,
+        description=(
+            "Header text color; set it alongside `header_fill` when the new fill "
+            "would hide the default text."
+        ),
+    )
+    body_fill: ColorRef | None = Field(None, description="Fill color of body rows.")
     # Alternate-row fill for banding; unset means every body row uses
     # `body_fill` (or, if that's also unset, the template's own default).
-    band_fill: str | None = None
-    border_color: str | None = None
-    border_width: str | None = None
+    band_fill: ColorRef | None = Field(
+        None,
+        description=(
+            "Alternate-row fill for banding; unset means every body row uses "
+            "`body_fill`."
+        ),
+    )
+    border_color: ColorRef | None = Field(None, description="Cell border color.")
+    border_width: Length | None = Field(
+        None,
+        description="Cell border thickness with an explicit unit, e.g. `0.5pt`.",
+    )
 
 
 class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    overflow: Literal["error", "shrink", "clip", "continue"] = "error"
-    image_fit: Literal["contain", "cover", "stretch", "none"] = "contain"
-    rotation: float = 0
+    overflow: Literal["error", "shrink", "clip", "continue"] = Field(
+        "error",
+        description=(
+            "What to do when text does not fit its box: fail the build, shrink it, "
+            "clip it, or let it continue."
+        ),
+    )
+    image_fit: Literal["contain", "cover", "stretch", "none"] = Field(
+        "contain",
+        description="How an image fills its box when no `fit` is set on the element.",
+    )
+    rotation: float = Field(
+        0,
+        description="Rotation in degrees applied to elements that set none.",
+    )
     # A `reportifyr`/rpfy-sourced `table` element's `footer_placement:
     # below` box (spec section 9.1's footnote content), placed directly
     # beneath the element's own box.
-    footer_height: str = "0.4in"
+    footer_height: Length = Field(
+        "0.4in",
+        description="Height of a reportifyr footer box placed directly beneath its element.",
+    )
     # `text_styles` name the footer falls back to when the element itself
     # has no `style` set -- unset means `deckifyr.pptx.compose`'s own
     # small built-in default, same "token or bare literal" convention
     # `TextStyle`'s own fields use.
-    footer_style: str | None = None
+    footer_style: str | None = Field(
+        None,
+        description=(
+            "`text_styles` name used for footers when the element sets no `style`; "
+            "unset uses a small built-in style."
+        ),
+    )
     # `table_styles` name a `table` element falls back to when it sets no
     # `table_style` of its own -- unset means every table keeps
     # `python-pptx`'s bundled default template look, same "unset here is
     # not the same as unset on the element" precedent `footer_style` sets.
-    table_style: str | None = None
+    table_style: str | None = Field(
+        None,
+        description=(
+            "`table_styles` name used by tables that set no `table_style`; unset "
+            "keeps the default template look."
+        ),
+    )
 
 
 class StatusIndicatorStyle(BaseModel):
@@ -211,10 +319,24 @@ class StatusIndicatorStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    box: Box
-    style: str | None = None
-    rotation: float = 0
-    z_index: float | None = None
+    box: Box = Field(
+        description=(
+            "Where the mark is drawn. A rotated mark pivots around the centre of this "
+            "box."
+        ),
+    )
+    style: str | None = Field(None, description="`text_styles` name for the mark's text.")
+    rotation: float = Field(
+        0,
+        description="Rotation in degrees, e.g. -30 for a diagonal watermark.",
+    )
+    z_index: float | None = Field(
+        None,
+        description=(
+            "Stacking order. Unset paints behind content; a large positive value "
+            "paints on top, like a watermark."
+        ),
+    )
 
 
 class StatusFurniture(BaseModel):
@@ -242,11 +364,26 @@ class StatusFurniture(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    watermark: StatusIndicatorStyle | None = None
-    corner_tr: StatusIndicatorStyle | None = None
-    corner_tl: StatusIndicatorStyle | None = None
-    corner_bl: StatusIndicatorStyle | None = None
-    corner_br: StatusIndicatorStyle | None = None
+    watermark: StatusIndicatorStyle | None = Field(
+        None,
+        description="Full-page, usually diagonal, watermark placement.",
+    )
+    corner_tr: StatusIndicatorStyle | None = Field(
+        None,
+        description="Small label in the top-right corner.",
+    )
+    corner_tl: StatusIndicatorStyle | None = Field(
+        None,
+        description="Small label in the top-left corner.",
+    )
+    corner_bl: StatusIndicatorStyle | None = Field(
+        None,
+        description="Small label in the bottom-left corner.",
+    )
+    corner_br: StatusIndicatorStyle | None = Field(
+        None,
+        description="Small label in the bottom-right corner.",
+    )
 
 
 class BrandingFurniture(BaseModel):
@@ -260,9 +397,11 @@ class BrandingFurniture(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str
-    box: Box
-    style: str | None = None
+    text: str = Field(
+        description="Literal label text, such as an organization or department name.",
+    )
+    box: Box = Field(description="Where the label is drawn.")
+    style: str | None = Field(None, description="`text_styles` name for the label.")
 
 
 class PageNumberFurniture(BaseModel):
@@ -275,10 +414,16 @@ class PageNumberFurniture(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
-    format: str = "{page} / {total}"
-    box: Box
-    style: str | None = None
+    enabled: bool = Field(True, description="Show the page number on every slide.")
+    format: str = Field(
+        "{page} / {total}",
+        description=(
+            "Text pattern; `{page}` is the 1-indexed slide number and `{total}` the "
+            "slide count."
+        ),
+    )
+    box: Box = Field(description="Where the page number is drawn.")
+    style: str | None = Field(None, description="`text_styles` name for the page number.")
 
 
 class Furniture(BaseModel):
@@ -289,17 +434,26 @@ class Furniture(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: StatusFurniture | None = None
-    branding: BrandingFurniture | None = None
-    page_number: PageNumberFurniture | None = None
+    status: StatusFurniture | None = Field(
+        None,
+        description=(
+            "Draft/final status marks; a build selects one placement via "
+            "`status_indicator`."
+        ),
+    )
+    branding: BrandingFurniture | None = Field(
+        None,
+        description="Organization label; present means shown.",
+    )
+    page_number: PageNumberFurniture | None = Field(None, description="Running page number.")
 
 
 class DesignDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    deckifyr: str
-    slide: SlideSize
-    fonts: Fonts
+    deckifyr: str = Field(description="Schema version of this document.")
+    slide: SlideSize = Field(description="Slide dimensions and background.")
+    fonts: Fonts = Field(description="Font families used by text styles.")
     # Named color tokens (spec section 7.4's `colors:` block) -- an open
     # dict rather than fixed fields, since orgs define their own token
     # names beyond the example's text/muted/primary/accent. A value may
@@ -309,11 +463,35 @@ class DesignDocument(BaseModel):
     # resolve_color_tokens` before either `deckifyr.plan` or
     # `deckifyr.pptx.compose` ever reads this field, so nothing
     # downstream of that point needs to know derivations exist.
-    colors: dict[str, str | ColorDerivation] = {}
-    text_styles: dict[str, TextStyle] = {}
-    shape_styles: dict[str, ShapeStyle] = {}
-    table_styles: dict[str, TableStyle] = {}
-    defaults: Defaults = Defaults()
-    furniture: Furniture = Furniture()
+    colors: dict[str, ColorRef | ColorDerivation] = Field(
+        {},
+        description=(
+            "Named color tokens: a literal hex value, or a color derived from another "
+            "token."
+        ),
+    )
+    text_styles: dict[str, TextStyle] = Field(
+        {},
+        description="Named text styles that elements reference through `style`.",
+    )
+    shape_styles: dict[str, ShapeStyle] = Field(
+        {},
+        description="Named fill/outline styles for `shape` elements.",
+    )
+    table_styles: dict[str, TableStyle] = Field(
+        {},
+        description="Named fill/border styles for `table` elements.",
+    )
+    defaults: Defaults = Field(
+        Defaults(),
+        description="Project-wide fallbacks for settings an element leaves unset.",
+    )
+    furniture: Furniture = Field(
+        Furniture(),
+        description=(
+            "Per-slide extras such as the status mark, branding label and page "
+            "number."
+        ),
+    )
 
     _check_version = field_validator("deckifyr")(check_schema_version)

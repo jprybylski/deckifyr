@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from deckifyr.schema.fields import Length
 from deckifyr.schema.version import check_schema_version
 
 ElementType = Literal[
@@ -89,10 +90,10 @@ class Box(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    x: str
-    y: str
-    width: str
-    height: str
+    x: Length = Field(description="Distance from the slide's left edge, with an explicit unit.")
+    y: Length = Field(description="Distance from the slide's top edge, with an explicit unit.")
+    width: Length = Field(description="Box width with an explicit unit.")
+    height: Length = Field(description="Box height with an explicit unit.")
 
 
 class Element(BaseModel):
@@ -108,18 +109,42 @@ class Element(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str | None = None
-    type: ElementType | None = None
-    value: Any | None = None
-    source: str | None = None
-    box: Box | None = None
-    rotation: float | None = None
-    z_index: int | None = None
-    style: str | None = None
+    id: str | None = Field(
+        None,
+        description=(
+            "Element id; only needed in list-form `elements`, where there is no "
+            "mapping key."
+        ),
+    )
+    type: ElementType | None = Field(
+        None,
+        description="What kind of element this is. Required once, then optional on overrides.",
+    )
+    value: Any | None = Field(
+        None,
+        description=(
+            "The element's content: text, Markdown, a magic string, or a path, "
+            "depending on `type`."
+        ),
+    )
+    source: str | None = Field(
+        None,
+        description=(
+            "File the element reads from, such as an image path or a table "
+            "`.csv`/`.parquet`."
+        ),
+    )
+    box: Box | None = Field(None, description="Position and size on the slide.")
+    rotation: float | None = Field(
+        None,
+        description="Rotation in degrees, clockwise, around the box centre.",
+    )
+    z_index: int | None = Field(None, description="Stacking order; higher values paint on top.")
+    style: str | None = Field(None, description="`text_styles` name controlling typography.")
     # Anchors text vertically in the middle of `box`, rather than the
     # compositor's own default (top-anchored). `False` (the default)
     # leaves every existing text/markdown element untouched.
-    center: bool = False
+    center: bool = Field(False, description="Vertically centre text within the box.")
     # Horizontal alignment within `box`, independent of `center`'s
     # vertical anchoring -- `None` keeps the compositor's own default
     # (left-aligned) unless `center` is also `True`, in which case it
@@ -133,39 +158,71 @@ class Element(BaseModel):
     # which corner (`corner_tr`/`corner_br` -> `"right"`, `corner_tl`/
     # `corner_bl` -> `"left"`), not something a `design.yaml` author sets
     # directly on the placement itself.
-    align: Literal["left", "center", "right"] | None = None
+    align: Literal["left", "center", "right"] | None = Field(
+        None,
+        description="Horizontal text alignment within the box.",
+    )
     # `table`-only: a `design.yaml` `table_styles` name controlling fill/
     # border chrome, separate from `style` above (which still governs a
     # table's text_styles-driven typography). `deckifyr.plan` rejects it
     # set anywhere else, mirroring `footer_placement`'s own validation.
-    table_style: str | None = None
-    fit: FitMode | None = None
-    overflow: OverflowMode | None = None
-    render_mode: RenderMode | None = None
-    alt_text: str | None = None
-    remove: bool = False
-    required: bool = False
-    footer_placement: FooterPlacement | None = None
+    table_style: str | None = Field(
+        None,
+        description="`table` only: `table_styles` name controlling fill and borders.",
+    )
+    fit: FitMode | None = Field(None, description="`image` only: how the picture fills its box.")
+    overflow: OverflowMode | None = Field(
+        None,
+        description="What to do when content does not fit the box.",
+    )
+    render_mode: RenderMode | None = Field(
+        None,
+        description="`quarto` only: how a fragment is rendered (native text, or a picture).",
+    )
+    alt_text: str | None = Field(
+        None,
+        description="Accessible description for pictures and shapes.",
+    )
+    remove: bool = Field(
+        False,
+        description="On a slide override: drop this layout element from the slide.",
+    )
+    required: bool = Field(
+        False,
+        description="Fail the build if this element ends up without content.",
+    )
+    footer_placement: FooterPlacement | None = Field(
+        None,
+        description="`reportifyr` and `{rpfy}:` tables: where the source/notes footer goes.",
+    )
     # `shape`-only: which autoshape to draw (spec section 7.7).
-    shape_kind: ShapeKind | None = None
+    shape_kind: ShapeKind | None = Field(
+        None,
+        description="`shape` only: which autoshape to draw.",
+    )
     # `group`-only: child elements, keyed by id or listed with their own
     # `id` -- the same dict-vs-list choice `presentation.yaml`'s
     # `Slide.elements` offers (spec section 7.6), recursively, so a group
     # may itself contain a group.
-    elements: dict[str, Element] | list[Element] | None = None
+    elements: dict[str, Element] | list[Element] | None = Field(
+        None,
+        description="`group` only: child elements, keyed by id or listed with their own `id`.",
+    )
 
 
 class Layout(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    elements: dict[str, Element] = {}
+    elements: dict[str, Element] = Field({}, description="The layout's named zones, keyed by id.")
 
 
 class LayoutsDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    deckifyr: str
-    layouts: dict[str, Layout]
+    deckifyr: str = Field(description="Schema version of this document.")
+    layouts: dict[str, Layout] = Field(
+        description="Named layouts; a layout called `blank` is required.",
+    )
 
     _check_version = field_validator("deckifyr")(check_schema_version)
 

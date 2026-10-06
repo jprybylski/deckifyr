@@ -127,4 +127,44 @@ describe("ConfigEditor", () => {
       expect(body.deckifyr).toBe("0.2");
     });
   });
+
+  it("lists the document's sections in a rail and switches the pane", async () => {
+    stubFetch();
+    renderConfigEditor();
+    await screen.findByDisplayValue("0.1");
+
+    const rail = screen.getByRole("navigation", { name: "Sections" });
+    const items = Array.from(rail.querySelectorAll("button")).map((b) => b.textContent);
+    expect(items).toEqual(["General", "slide", "colors0"]);
+    expect(screen.getByRole("button", { name: "General" })).toHaveAttribute("aria-current", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: /^slide$/ }));
+    expect(screen.getByDisplayValue("13.333in")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("0.1")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^slide$/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("flags unapplied edits and Revert restores the loaded document", async () => {
+    stubFetch();
+    renderConfigEditor();
+    const input = await screen.findByDisplayValue("0.1");
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "0.2" } });
+    expect(screen.getByText("Unapplied changes")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+    expect(screen.getByDisplayValue("0.1")).toBeInTheDocument();
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+  });
+
+  it("clears the unapplied flag and confirms after Apply", async () => {
+    stubFetch();
+    renderConfigEditor();
+    const input = await screen.findByDisplayValue("0.1");
+    fireEvent.change(input, { target: { value: "0.2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText(/Applied to this session/);
+    expect(screen.queryByText("Unapplied changes")).not.toBeInTheDocument();
+  });
 });

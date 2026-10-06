@@ -1,5 +1,22 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Changed
+
+* The web editor's Config tab form is redesigned. Documents are split
+  into sections (a left rail, one pane at a time) instead of one long
+  scroll box; fields use styled inputs, switches and segmented controls,
+  collapsible cards, and show a per-field hint taken from the schema.
+  Colors are a swatch plus a text field with the document's own color
+  tokens as pick-able chips, lengths are a number plus a unit with
+  arrow-key stepping, and unions that used to fall back to raw JSON
+  (`colors:` entries that are literal or derived, `fill` as a color or a
+  gradient, `elements` as named or a list) are a segmented switch between
+  their forms. The three JSON Schema files (`deckifyr schema`) now carry
+  a `description` on every property and an `x-deckifyr-widget`
+  annotation on color/length strings; no document field changed.
+
 # deckifyr 0.3.2
 
 ## Added

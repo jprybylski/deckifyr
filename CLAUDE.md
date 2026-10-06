@@ -954,32 +954,84 @@ field is relabeled "Watermark override" and stays -- it's still the
 right field for the rarer case where the mark itself should say
 something different from the deck's own status.
 
-**The config editor's Form/Raw toggle (issue #22) is real:
-`ConfigEditor.tsx` now defaults to a schema-driven form
-(`SchemaForm.tsx`) instead of a JSON textarea, with a syntax-
-highlighted, live-validated raw view (`jsonHighlight.ts`) a toggle
-away.** Both are dependency-free, matching this repo's existing low-
-dependency precedent (`colorsys` over a color-math library) -- no
-CodeMirror/Monaco/ajv. `SchemaForm.tsx` is a recursive renderer driven
-by `GET /api/schemas/{doc}`'s real pydantic JSON Schema output
-(`$defs`/`$ref`, `X | None` as `anyOf` with a `"null"` branch): object/
-array/enum/scalar fields each get a typed input, and an open dict with
-no fixed `properties` (`colors`/`text_styles`/`shape_styles`/
-`table_styles`) gets an add/remove named-entry list. An `anyOf`/`oneOf`
-with more than one *non-null* branch -- `colors`' own `str |
-ColorDerivation` entry values are the real example -- can't be
-disambiguated generically, so that one leaf falls back to a small
-inline raw-JSON field instead of guessing wrong; this is a documented,
-intentional scope boundary (see `SchemaForm.tsx`'s own module
-docstring), the same kind this repo already keeps elsewhere (`render_mode:
-svg`, unset `table_style`). `jsonHighlight.ts` is a small regex
-tokenizer, not a real parser -- `JSON.parse` (now run live, on every
-keystroke, not only at Save) remains the actual validation authority;
-the highlighted view is the standard dependency-free trick, a
-`<pre>`-with-colored-spans behind a transparent-text `<textarea>`, kept
-scrolled together via `onScroll`. Switching Raw -> Form is blocked
-(with an inline error) while the current raw text doesn't parse, so the
-form is never handed a value that doesn't match what's on screen.
+**The config editor's Form/Raw toggle (issue #22) is real, and its form was
+redesigned afterward (see the end of this paragraph):** `ConfigEditor.tsx`
+defaults to a schema-driven form (`SchemaForm.tsx`) instead of a JSON
+textarea, with a syntax-highlighted, live-validated raw view
+(`jsonHighlight.ts`) a toggle away. Both are dependency-free, matching
+this repo's existing low-dependency precedent (`colorsys` over a color-math
+library) -- no CodeMirror/Monaco/ajv/UI kit. `SchemaForm.tsx` is a
+recursive renderer driven by `GET /api/schemas/{doc}`'s real pydantic JSON
+Schema output (`$defs`/`$ref`, `X | None` as `anyOf` with a `"null"`
+branch). `jsonHighlight.ts` is a small regex tokenizer, not a real parser
+-- `JSON.parse` (run live, on every keystroke, not only at Save) remains
+the actual validation authority; the highlighted view is the standard
+dependency-free trick, a `<pre>`-with-colored-spans behind a
+transparent-text `<textarea>`, kept scrolled together via `onScroll`.
+Switching Raw -> Form is blocked (with an inline error) while the current
+raw text doesn't parse, so the form is never handed a value that doesn't
+match what's on screen.
+
+The form was restyled and extended in a later pass (the original was bare
+browser-default inputs in a 720x480 scroll box). What exists now, and the
+non-obvious reasons:
+
+- **Layout**: `ConfigEditor` splits a document into *sections*
+  (`configSections.ts`, pure functions): every top-level scalar goes under
+  "General", each top-level object/dict/array gets its own entry in a left
+  rail (with an entry-count badge), and the pane shows one section at a
+  time. A sticky action bar carries Apply, a "Unapplied changes" pill
+  (current value vs. the JSON loaded/last applied) and Revert. Styling is
+  plain CSS in `App.css` with design tokens (`--sf-*`) scoped to
+  `.config-editor`, so nothing else in the app reads them. Native controls
+  are restyled rather than replaced: the on/off switch is still a real
+  `<input type=checkbox>` (`appearance: none`), the segmented control is
+  real radios -- so roles, keyboard handling and tests stay ordinary.
+- **Hints and widgets come from the schema, not from field names.** The
+  pydantic models carry `Field(description=...)` on every property (shown
+  as a hint under the key; a `$defs` entry's own description is its class
+  docstring, written for developers, and is deliberately *not* shown) and
+  `ColorRef`/`Length` (`schema/fields.py`) annotate color/length strings
+  with a vendor key, `x-deckifyr-widget: "color" | "length"`. It is an
+  `x-` annotation rather than a standard `format` value on purpose: the
+  JSON Schema files ship for editor/YAML-language-server use
+  (`schemas/*.schema.json`), and an invented `format` could trip a strict
+  validator. Both aliases are plain `str` to pydantic -- no behavior
+  change. Adding a property to a model now means giving it a description;
+  regenerate with `python scripts/generate_json_schemas.py` and the
+  vitest fixture `web/src/components/__fixtures__/design.schema.json`
+  (`test_json_schema_files.py` fails on stale schema files).
+- **Unions are no longer a raw-JSON fallback** when the branches differ in
+  JSON type (`str | ColorDerivation`, `str | Gradient | None`,
+  `dict | list`): the form shows a segmented switch between branches, the
+  active one inferred from the value's JSON type
+  (`schemaUtils.activeBranchIndex`), each branch's last value remembered so
+  an accidental switch is undoable, and a string carried into a new object
+  branch's first required string field (a color `"#2457A6"` becomes
+  `{base: "#2457A6"}`). Only branches sharing a JSON type (two objects)
+  fall back to raw JSON. **A union keeps one wrapper element whichever
+  branch is active** -- an early version switched between a compact row and
+  a collapsible card by branch, which remounted the field on every switch
+  and silently lost the branch memory and focus; only non-union schemas
+  become cards.
+- Color fields (`x-deckifyr-widget: color`) fuse a native swatch to a text
+  input and, while focused, offer the document's own literal `colors:`
+  tokens as chips (`ColorTokensContext`, supplied by `ConfigEditor`; empty
+  outside it, so `SchemaForm` stays usable alone). The chips are a
+  CSS `:focus-within` popover, with `onMouseDown` `preventDefault` so
+  Safari (which doesn't focus buttons on click) doesn't close it before the
+  click lands. A plain string that happens to hold a hex color still gets a
+  swatch, as a conditional *sibling before* the input so typing a hex never
+  remounts the input. Length fields split `0.75in` into a number and a
+  unit select (`in`/`pt`/`cm`/`mm`, the units `schema/units.py` accepts)
+  with ArrowUp/Down stepping; a value outside that grammar falls back to
+  one flagged text input and still writes through as typed -- server-side
+  validation stays authoritative. An untyped (`Any`) value such as an
+  element's `value` is edited as text when it is a string.
+- Known, accepted scope boundaries: no dedicated "exactly one of
+  lighten/darken/saturate/desaturate/mix" widget for `ColorDerivation` (its
+  six optional numbers are ordinary switches; the server enforces the rule),
+  no array reordering, and cross-field rules stay server-side.
 
 **The Layouts editor mode (issue #30) replaces issue #23's per-slide
 Content/Layout tab with a persistent, app-wide toggle: `SlideList.tsx`'s

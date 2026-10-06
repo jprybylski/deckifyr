@@ -5,20 +5,28 @@
       "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
       "properties": {
         "x": {
+          "description": "Distance from the slide's left edge, with an explicit unit.",
           "title": "X",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "y": {
+          "description": "Distance from the slide's top edge, with an explicit unit.",
           "title": "Y",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "width": {
+          "description": "Box width with an explicit unit.",
           "title": "Width",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "height": {
+          "description": "Box height with an explicit unit.",
           "title": "Height",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         }
       },
       "required": [
@@ -44,6 +52,7 @@
             }
           ],
           "default": null,
+          "description": "Element id; only needed in list-form `elements`, where there is no mapping key.",
           "title": "Id"
         },
         "type": {
@@ -68,6 +77,7 @@
             }
           ],
           "default": null,
+          "description": "What kind of element this is. Required once, then optional on overrides.",
           "title": "Type"
         },
         "value": {
@@ -78,6 +88,7 @@
             }
           ],
           "default": null,
+          "description": "The element's content: text, Markdown, a magic string, or a path, depending on `type`.",
           "title": "Value"
         },
         "source": {
@@ -90,6 +101,7 @@
             }
           ],
           "default": null,
+          "description": "File the element reads from, such as an image path or a table `.csv`/`.parquet`.",
           "title": "Source"
         },
         "box": {
@@ -101,7 +113,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Position and size on the slide."
         },
         "rotation": {
           "anyOf": [
@@ -113,6 +126,7 @@
             }
           ],
           "default": null,
+          "description": "Rotation in degrees, clockwise, around the box centre.",
           "title": "Rotation"
         },
         "z_index": {
@@ -125,6 +139,7 @@
             }
           ],
           "default": null,
+          "description": "Stacking order; higher values paint on top.",
           "title": "Z Index"
         },
         "style": {
@@ -137,10 +152,12 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name controlling typography.",
           "title": "Style"
         },
         "center": {
           "default": false,
+          "description": "Vertically centre text within the box.",
           "title": "Center",
           "type": "boolean"
         },
@@ -159,6 +176,7 @@
             }
           ],
           "default": null,
+          "description": "Horizontal text alignment within the box.",
           "title": "Align"
         },
         "table_style": {
@@ -171,6 +189,7 @@
             }
           ],
           "default": null,
+          "description": "`table` only: `table_styles` name controlling fill and borders.",
           "title": "Table Style"
         },
         "fit": {
@@ -189,6 +208,7 @@
             }
           ],
           "default": null,
+          "description": "`image` only: how the picture fills its box.",
           "title": "Fit"
         },
         "overflow": {
@@ -207,6 +227,7 @@
             }
           ],
           "default": null,
+          "description": "What to do when content does not fit the box.",
           "title": "Overflow"
         },
         "render_mode": {
@@ -225,6 +246,7 @@
             }
           ],
           "default": null,
+          "description": "`quarto` only: how a fragment is rendered (native text, or a picture).",
           "title": "Render Mode"
         },
         "alt_text": {
@@ -237,15 +259,18 @@
             }
           ],
           "default": null,
+          "description": "Accessible description for pictures and shapes.",
           "title": "Alt Text"
         },
         "remove": {
           "default": false,
+          "description": "On a slide override: drop this layout element from the slide.",
           "title": "Remove",
           "type": "boolean"
         },
         "required": {
           "default": false,
+          "description": "Fail the build if this element ends up without content.",
           "title": "Required",
           "type": "boolean"
         },
@@ -264,6 +289,7 @@
             }
           ],
           "default": null,
+          "description": "`reportifyr` and `{rpfy}:` tables: where the source/notes footer goes.",
           "title": "Footer Placement"
         },
         "shape_kind": {
@@ -291,6 +317,7 @@
             }
           ],
           "default": null,
+          "description": "`shape` only: which autoshape to draw.",
           "title": "Shape Kind"
         },
         "elements": {
@@ -312,6 +339,7 @@
             }
           ],
           "default": null,
+          "description": "`group` only: child elements, keyed by id or listed with their own `id`.",
           "title": "Elements"
         }
       },
@@ -326,6 +354,7 @@
             "$ref": "#/$defs/Element"
           },
           "default": {},
+          "description": "The layout's named zones, keyed by id.",
           "title": "Elements",
           "type": "object"
         }
@@ -337,6 +366,7 @@
   "additionalProperties": false,
   "properties": {
     "deckifyr": {
+      "description": "Schema version of this document.",
       "title": "Deckifyr",
       "type": "string"
     },
@@ -344,6 +374,7 @@
       "additionalProperties": {
         "$ref": "#/$defs/Layout"
       },
+      "description": "Named layouts; a layout called `blank` is required.",
       "title": "Layouts",
       "type": "object"
     }

@@ -5,20 +5,28 @@
       "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
       "properties": {
         "x": {
+          "description": "Distance from the slide's left edge, with an explicit unit.",
           "title": "X",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "y": {
+          "description": "Distance from the slide's top edge, with an explicit unit.",
           "title": "Y",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "width": {
+          "description": "Box width with an explicit unit.",
           "title": "Width",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "height": {
+          "description": "Box height with an explicit unit.",
           "title": "Height",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         }
       },
       "required": [
@@ -35,10 +43,12 @@
       "properties": {
         "strict": {
           "default": true,
+          "description": "Reject unitless geometry and other loosely specified values.",
           "title": "Strict",
           "type": "boolean"
         },
         "output": {
+          "description": "Where the built `.pptx` is written.",
           "title": "Output",
           "type": "string"
         },
@@ -52,15 +62,18 @@
             }
           ],
           "default": null,
+          "description": "Where the build manifest JSON is written.",
           "title": "Manifest"
         },
         "previews": {
           "default": false,
+          "description": "Also render a PNG per slide, plus a PDF, with every build.",
           "title": "Previews",
           "type": "boolean"
         },
         "autosave": {
           "default": false,
+          "description": "Web editor: write every edit to disk immediately instead of waiting for Save.",
           "title": "Autosave",
           "type": "boolean"
         },
@@ -73,7 +86,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Where and how `{rpfy}:` references are resolved."
         },
         "quarto": {
           "anyOf": [
@@ -84,7 +98,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "How `quarto` elements are executed."
         },
         "preview": {
           "anyOf": [
@@ -95,7 +110,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Tuning for slide preview rendering."
         }
       },
       "required": [
@@ -108,6 +124,7 @@
       "additionalProperties": false,
       "properties": {
         "base": {
+          "description": "Path to the `design.yaml` this deck uses.",
           "title": "Base",
           "type": "string"
         }
@@ -132,6 +149,7 @@
             }
           ],
           "default": null,
+          "description": "Element id; only needed in list-form `elements`, where there is no mapping key.",
           "title": "Id"
         },
         "type": {
@@ -156,6 +174,7 @@
             }
           ],
           "default": null,
+          "description": "What kind of element this is. Required once, then optional on overrides.",
           "title": "Type"
         },
         "value": {
@@ -166,6 +185,7 @@
             }
           ],
           "default": null,
+          "description": "The element's content: text, Markdown, a magic string, or a path, depending on `type`.",
           "title": "Value"
         },
         "source": {
@@ -178,6 +198,7 @@
             }
           ],
           "default": null,
+          "description": "File the element reads from, such as an image path or a table `.csv`/`.parquet`.",
           "title": "Source"
         },
         "box": {
@@ -189,7 +210,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Position and size on the slide."
         },
         "rotation": {
           "anyOf": [
@@ -201,6 +223,7 @@
             }
           ],
           "default": null,
+          "description": "Rotation in degrees, clockwise, around the box centre.",
           "title": "Rotation"
         },
         "z_index": {
@@ -213,6 +236,7 @@
             }
           ],
           "default": null,
+          "description": "Stacking order; higher values paint on top.",
           "title": "Z Index"
         },
         "style": {
@@ -225,10 +249,12 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name controlling typography.",
           "title": "Style"
         },
         "center": {
           "default": false,
+          "description": "Vertically centre text within the box.",
           "title": "Center",
           "type": "boolean"
         },
@@ -247,6 +273,7 @@
             }
           ],
           "default": null,
+          "description": "Horizontal text alignment within the box.",
           "title": "Align"
         },
         "table_style": {
@@ -259,6 +286,7 @@
             }
           ],
           "default": null,
+          "description": "`table` only: `table_styles` name controlling fill and borders.",
           "title": "Table Style"
         },
         "fit": {
@@ -277,6 +305,7 @@
             }
           ],
           "default": null,
+          "description": "`image` only: how the picture fills its box.",
           "title": "Fit"
         },
         "overflow": {
@@ -295,6 +324,7 @@
             }
           ],
           "default": null,
+          "description": "What to do when content does not fit the box.",
           "title": "Overflow"
         },
         "render_mode": {
@@ -313,6 +343,7 @@
             }
           ],
           "default": null,
+          "description": "`quarto` only: how a fragment is rendered (native text, or a picture).",
           "title": "Render Mode"
         },
         "alt_text": {
@@ -325,15 +356,18 @@
             }
           ],
           "default": null,
+          "description": "Accessible description for pictures and shapes.",
           "title": "Alt Text"
         },
         "remove": {
           "default": false,
+          "description": "On a slide override: drop this layout element from the slide.",
           "title": "Remove",
           "type": "boolean"
         },
         "required": {
           "default": false,
+          "description": "Fail the build if this element ends up without content.",
           "title": "Required",
           "type": "boolean"
         },
@@ -352,6 +386,7 @@
             }
           ],
           "default": null,
+          "description": "`reportifyr` and `{rpfy}:` tables: where the source/notes footer goes.",
           "title": "Footer Placement"
         },
         "shape_kind": {
@@ -379,6 +414,7 @@
             }
           ],
           "default": null,
+          "description": "`shape` only: which autoshape to draw.",
           "title": "Shape Kind"
         },
         "elements": {
@@ -400,6 +436,7 @@
             }
           ],
           "default": null,
+          "description": "`group` only: child elements, keyed by id or listed with their own `id`.",
           "title": "Elements"
         }
       },
@@ -412,21 +449,25 @@
       "properties": {
         "binary": {
           "default": "Rscript",
+          "description": "The `Rscript` binary: a bare name looked up on PATH, or a full path.",
           "title": "Binary",
           "type": "string"
         },
         "timeout_seconds": {
           "default": 60,
+          "description": "Give up on a render after this many seconds.",
           "title": "Timeout Seconds",
           "type": "number"
         },
         "max_output_bytes": {
           "default": 5000000,
+          "description": "Reject a rendered picture larger than this.",
           "title": "Max Output Bytes",
           "type": "integer"
         },
         "dpi": {
           "default": 200,
+          "description": "Render resolution in dots per inch.",
           "title": "Dpi",
           "type": "integer"
         }
@@ -438,6 +479,7 @@
       "additionalProperties": true,
       "properties": {
         "title": {
+          "description": "Presentation title.",
           "title": "Title",
           "type": "string"
         },
@@ -451,6 +493,7 @@
             }
           ],
           "default": null,
+          "description": "Presentation author.",
           "title": "Author"
         },
         "status": {
@@ -463,6 +506,7 @@
             }
           ],
           "default": null,
+          "description": "Free-text status such as draft or final; also the default status-mark text.",
           "title": "Status"
         }
       },
@@ -478,16 +522,19 @@
       "properties": {
         "binary": {
           "default": "soffice",
+          "description": "The LibreOffice `soffice` binary: a bare name looked up on PATH, or a full path.",
           "title": "Binary",
           "type": "string"
         },
         "dpi": {
           "default": 110,
+          "description": "Preview image resolution in dots per inch.",
           "title": "Dpi",
           "type": "integer"
         },
         "timeout_seconds": {
           "default": 120,
+          "description": "Give up on a preview render after this many seconds.",
           "title": "Timeout Seconds",
           "type": "number"
         }
@@ -501,16 +548,19 @@
       "properties": {
         "binary": {
           "default": "quarto",
+          "description": "The `quarto` binary: a bare name looked up on PATH, or a full path.",
           "title": "Binary",
           "type": "string"
         },
         "timeout_seconds": {
           "default": 60,
+          "description": "Give up on a render after this many seconds.",
           "title": "Timeout Seconds",
           "type": "number"
         },
         "max_output_bytes": {
           "default": 5000000,
+          "description": "Reject rendered output larger than this.",
           "title": "Max Output Bytes",
           "type": "integer"
         }
@@ -524,6 +574,7 @@
       "properties": {
         "outputs_dir": {
           "default": "OUTPUTS",
+          "description": "Project-relative folder searched recursively for `{rpfy}:` artifacts.",
           "title": "Outputs Dir",
           "type": "string"
         },
@@ -537,10 +588,12 @@
             }
           ],
           "default": null,
+          "description": "Project-relative `standard_footnotes.yaml`; only read once an element needs a footer.",
           "title": "Standard Footnotes"
         },
         "fail_on_missing_metadata": {
           "default": true,
+          "description": "Fail the build when an artifact has no metadata sidecar.",
           "title": "Fail On Missing Metadata",
           "type": "boolean"
         },
@@ -553,7 +606,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Settings for rendering `.rds` flextable artifacts; unset uses the defaults."
         }
       },
       "title": "ReportifyrConfig",
@@ -563,6 +617,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {
+          "description": "Unique slide id.",
           "title": "Id",
           "type": "string"
         },
@@ -575,6 +630,7 @@
               "type": "null"
             }
           ],
+          "description": "Layout name from `layouts.yaml`, or null for a freeform slide.",
           "title": "Layout"
         },
         "elements": {
@@ -593,6 +649,7 @@
             }
           ],
           "default": {},
+          "description": "Content and overrides, keyed by the layout's element ids, or a list for freeform slides.",
           "title": "Elements"
         },
         "notes": {
@@ -605,6 +662,7 @@
             }
           ],
           "default": null,
+          "description": "Speaker notes for this slide.",
           "title": "Notes"
         }
       },
@@ -619,21 +677,26 @@
   "additionalProperties": false,
   "properties": {
     "deckifyr": {
+      "description": "Schema version of this document.",
       "title": "Deckifyr",
       "type": "string"
     },
     "design": {
-      "$ref": "#/$defs/DesignRef"
+      "$ref": "#/$defs/DesignRef",
+      "description": "Which design document the deck uses."
     },
     "layouts": {
+      "description": "Path to the `layouts.yaml` this deck uses.",
       "title": "Layouts",
       "type": "string"
     },
     "metadata": {
-      "$ref": "#/$defs/Metadata"
+      "$ref": "#/$defs/Metadata",
+      "description": "Title, author and status."
     },
     "build": {
-      "$ref": "#/$defs/BuildConfig"
+      "$ref": "#/$defs/BuildConfig",
+      "description": "Output paths and build options."
     },
     "status_indicator": {
       "anyOf": [
@@ -653,6 +716,7 @@
         }
       ],
       "default": null,
+      "description": "Which status mark placement this build shows; none or unset shows nothing.",
       "title": "Status Indicator"
     },
     "watermark": {
@@ -665,9 +729,11 @@
         }
       ],
       "default": null,
+      "description": "Status mark text; falls back to `metadata.status` when unset.",
       "title": "Watermark"
     },
     "slides": {
+      "description": "The slides, in order.",
       "items": {
         "$ref": "#/$defs/Slide"
       },

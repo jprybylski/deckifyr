@@ -1,207 +1,170 @@
 /**
- * A recursive form renderer driven by `GET /api/schemas/{doc}`'s JSON
- * Schema output (issue #22's "form-based editor... similar to what is
- * achieved in the slide editor") -- `ConfigEditor.tsx`'s own module
- * docstring previously flagged this as explicit future scope; this is
- * that scope, now built. Confirmed the schema shape against a real
- * `uv run deckifyr schema design` dump before writing this (standard
- * pydantic output: a top-level `$defs` map, `$ref`s pointing into it,
- * and `X | None` fields as `anyOf: [{...}, {"type": "null"}]`).
+ * Schema-driven form for `design.yaml`/`layouts.yaml`/`presentation.yaml`
+ * (issue #22, restyled and extended in the config-form redesign).
+ * Renders a JSON Schema as typed, labelled fields, so `ConfigEditor.tsx`
+ * can offer something friendlier than a JSON textarea while the
+ * server's own schema (`GET /api/schemas/{doc}`) stays the single source
+ * of truth for what exists.
  *
- * Deliberately not a full JSON-Schema-draft implementation. It handles
- * the shapes this repo's own schemas actually use: `$ref`/`$defs`,
- * `type: "object"` with fixed `properties` (a labeled field per
- * property, `anyOf`-with-null unwrapped into a set/unset checkbox),
- * `type: "object"` with `additionalProperties` and no fixed properties
- * (open dicts like `colors`/`text_styles`/`shape_styles`/`table_styles`
- * -- an add/remove named-entry list), `enum` (`<select>`), plain
- * `string`/`number`/`integer`/`boolean`, and `type: "array"` (repeatable
- * `items`-schema rows, add/remove only, no reordering). An `anyOf`/
- * `oneOf` with more than one *non-null* branch (e.g. `colors`' own
- * `str | ColorDerivation` entry values) can't be disambiguated
- * generically, so it -- and anything else this renderer doesn't
- * recognize -- falls back to a small inline raw-JSON field for just
- * that one leaf value, rather than guessing wrong. This is the same
- * kind of honest, narrow scope boundary this repo already keeps
- * elsewhere (CLAUDE.md: `render_mode: svg`, unset `table_style`).
+ * Deliberately not a full JSON-Schema-draft implementation -- it handles
+ * the shapes pydantic emits for these three models:
  *
- * Server-side `model_validate` (already wired in `deckifyr.web.app`'s
- * `put_config`) remains the authoritative validator -- this renderer
- * only tracks types/shape, not cross-field business rules (e.g.
- * `PresentationDocument`'s `status_indicator`/`watermark` interaction),
- * the same division of responsibility `ConfigEditor.tsx`'s Raw view has
- * with the server today.
+ * - `$ref`/`$defs`.
+ * - Objects with fixed `properties`: one row per property -- the raw key
+ *   as a monospace tag (the same spelling the YAML uses), the schema's
+ *   own `description` as a hint, its `default` as a placeholder. A
+ *   scalar sits inline; an object/dict/array becomes a collapsible card.
+ * - `X | None` (`anyOf` with a null branch): an on/off switch in the
+ *   field's own row, revealing the field when set.
+ * - Unions of differently-typed branches (`str | ColorDerivation`,
+ *   `str | Gradient`, `dict | list`): a segmented switch between the
+ *   branches, the active one inferred from the value. Branches sharing a
+ *   JSON type cannot be told apart generically and fall back to raw JSON.
+ * - Open dicts (`additionalProperties`, no `properties`): named entries
+ *   with add/remove. Arrays: add/remove, no reordering.
+ * - Enums: a segmented control when short (<= 4 short options), else a
+ *   select. Strings annotated `x-deckifyr-widget: color|length` (see
+ *   `schema/fields.py`) get a color picker with token chips or a
+ *   unit-aware number input; any string already holding a hex color
+ *   also gets a swatch.
+ * - Anything unrecognised: the raw-JSON field, as the escape hatch.
+ *
+ * The server's `model_validate` stays authoritative: the form tracks
+ * types and shape, not cross-field rules (e.g. "exactly one of
+ * lighten/darken/..." on a color derivation).
  */
-import { useEffect, useState } from "react";
+import { useId, useRef, useState } from "react";
+import {
+  Disclosure,
+  Hint,
+  RawJsonField,
+  RemoveButton,
+  Required,
+  ColorField,
+  LengthField,
+  Segmented,
+  Switch,
+} from "./schemaWidgets";
+import {
+  HEX_COLOR_RE,
+  WIDGET_KEY,
+  activeBranchIndex,
+  branchLabel,
+  branchesAreDistinguishable,
+  defaultForSchema,
+  expandHex,
+  hasNullBranch,
+  isUntyped,
+  layoutKind,
+  nonNullBranches,
+  placeholderFor,
+  resolveRef,
+  seedBranch,
+  unwrapNullable,
+  type Defs,
+  type JSONSchema,
+} from "./schemaUtils";
 
-export type JSONSchema = Record<string, unknown>;
+export type { JSONSchema } from "./schemaUtils";
 
 interface Props {
   schema: JSONSchema;
-  defs: Record<string, JSONSchema>;
+  defs: Defs;
   value: unknown;
   onChange: (value: unknown) => void;
+  /** Id for the primary control, so a field's `<label htmlFor>` works. */
+  id?: string;
+  /** Nesting depth; deeper cards start collapsed. */
+  depth?: number;
+  placeholder?: string;
 }
 
-function resolveRef(schema: JSONSchema, defs: Record<string, JSONSchema>): JSONSchema {
-  let current = schema;
-  for (let guard = 0; guard < 10 && typeof current.$ref === "string"; guard += 1) {
-    const name = (current.$ref as string).replace(/^#\/\$defs\//, "");
-    const next = defs[name];
-    if (!next) break;
-    current = next;
-  }
-  return current;
-}
+const MaybeMuted = ({ children }: { children: string }) => <span className="sf-muted">{children}</span>;
 
-function isNullSchema(schema: JSONSchema): boolean {
-  return schema.type === "null";
-}
+// ---- containers -----------------------------------------------------
 
-/** Unwraps an `anyOf` with exactly one non-null branch (pydantic's
- * `X | None` shape) into that branch plus a `nullable` flag. Returns
- * `inner: null` when there isn't exactly one non-null branch (0, or 2+
- * -- a real union this renderer can't disambiguate), signaling the
- * caller to fall back to a raw-JSON field.
- */
-function unwrapNullable(
-  schema: JSONSchema,
-  defs: Record<string, JSONSchema>
-): { inner: JSONSchema | null; nullable: boolean } {
-  const anyOf = schema.anyOf;
-  if (!Array.isArray(anyOf)) return { inner: schema, nullable: false };
-  const branches = anyOf as JSONSchema[];
-  const nullable = branches.some((branch) => isNullSchema(resolveRef(branch, defs)));
-  const nonNull = branches.filter((branch) => !isNullSchema(resolveRef(branch, defs)));
-  if (nonNull.length === 1) {
-    return { inner: nonNull[0], nullable };
-  }
-  return { inner: null, nullable };
-}
-
-const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-
-/** `<input type="color">` requires a full 6-digit hex -- expands a
- * 3-digit shorthand (`#abc` -> `#aabbcc`) purely for that input's own
- * `value`; the paired text field always keeps whatever the document
- * actually holds, shorthand or not. */
-function _expandHexShorthand(hex: string): string {
-  const [, r, g, b] = hex;
-  return `#${r}${r}${g}${g}${b}${b}`;
-}
-
-function defaultForSchema(schema: JSONSchema): unknown {
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-    return (schema.enum as unknown[])[0];
-  }
-  switch (schema.type) {
-    case "object":
-      return {};
-    case "array":
-      return [];
-    case "string":
-      return "";
-    case "number":
-    case "integer":
-      return 0;
-    case "boolean":
-      return false;
-    default:
-      return null;
-  }
-}
-
-/** The documented escape hatch: a plain JSON textarea for one leaf
- * value, used whenever this renderer can't confidently model a
- * schema shape. Re-syncs its local text from `value` whenever `value`
- * changes from outside (including its own successful `onChange` calls,
- * which is harmless -- it just re-serializes to the same content).
- *
- * Also gets its own color swatch (issue #23) whenever the *current
- * value* is a literal hex string, independent of the schema-shape
- * fallback that put it here in the first place -- `colors:`'s own entry
- * schema is exactly this ambiguous-anyOf case (`str | ColorDerivation`)
- * for every project, including one that only ever uses plain hex
- * literals, so without this the swatch from the plain-`string`-schema
- * branch below would never actually reach the one field (`colors:`)
- * issue #23's own "a little box showing the color" ask was most likely
- * about. Confirmed against a real `deckifyr serve` session, not assumed
- * from the schema alone -- `examples/demo-deck/design.yaml`'s `colors:`
- * block renders through this exact fallback. */
-function RawJsonField({ value, onChange }: { value: unknown; onChange: (next: unknown) => void }) {
-  const [text, setText] = useState(() => JSON.stringify(value ?? null, null, 2));
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setText(JSON.stringify(value ?? null, null, 2));
-    setError(null);
-  }, [value]);
-
-  function handleChange(next: string) {
-    setText(next);
-    try {
-      const parsed = JSON.parse(next);
-      setError(null);
-      onChange(parsed);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  const isHexColor = typeof value === "string" && HEX_COLOR_RE.test(value);
-
-  return (
-    <div className="schema-form__raw">
-      {isHexColor && (
-        <input
-          type="color"
-          className="schema-form__color-swatch"
-          aria-label="color picker"
-          value={(value as string).length === 4 ? _expandHexShorthand(value as string) : value}
-          onChange={(e) => handleChange(JSON.stringify(e.target.value))}
-        />
-      )}
-      <textarea
-        className="schema-form__raw-textarea"
-        value={text}
-        spellCheck={false}
-        rows={Math.min(6, Math.max(2, text.split("\n").length))}
-        onChange={(e) => handleChange(e.target.value)}
-      />
-      {error && <span className="schema-form__raw-error">{error}</span>}
-    </div>
-  );
-}
-
-function NullableField({
-  inner,
+function FieldRow({
+  name,
+  propSchema,
+  required,
   defs,
   value,
   onChange,
+  depth,
 }: {
-  inner: JSONSchema;
-  defs: Record<string, JSONSchema>;
+  name: string;
+  propSchema: JSONSchema;
+  required: boolean;
+  defs: Defs;
   value: unknown;
-  onChange: (value: unknown) => void;
+  onChange: (next: unknown) => void;
+  depth: number;
 }) {
-  const isSet = value !== null && value !== undefined;
+  const id = useId();
+  const resolved = resolveRef(propSchema, defs);
+  const { inner, nullable } = unwrapNullable(resolved, defs);
+  const target = inner ?? resolved;
+  const isSet = !nullable || (value !== null && value !== undefined);
+  // Only a property's *own* description is a hint -- a `$defs` entry's
+  // description is its class docstring, written for developers.
+  const hint = propSchema.description;
+  const toggle = (on: boolean) => onChange(on ? defaultForSchema(target, defs) : null);
+  const kind = layoutKind(target, defs, value);
+  // A union keeps one wrapper whichever branch is active: switching to a
+  // card-shaped branch must not remount the field (it would drop the
+  // branch memory and collapse state), so only non-unions become cards.
+  const isUnion = Array.isArray(target.anyOf);
+
+  if (kind === "block" && !isUnion) {
+    const collection =
+      isSet && target.type === "object" && !target.properties
+        ? Object.keys((value as Record<string, unknown>) ?? {}).length
+        : isSet && Array.isArray(value)
+          ? value.length
+          : undefined;
+    return (
+      <Disclosure
+        label={name}
+        required={required}
+        hint={hint}
+        count={collection}
+        summary={isSet ? undefined : "Not set"}
+        collapsible={isSet}
+        defaultOpen={depth < 2}
+        actions={nullable && <Switch checked={isSet} onChange={toggle} label={`Set ${name}`} />}
+      >
+        <SchemaForm schema={target} defs={defs} value={value} onChange={onChange} depth={depth + 1} />
+      </Disclosure>
+    );
+  }
+
   return (
-    <div className="schema-form__nullable">
-      <label className="schema-form__nullable-toggle">
-        <input
-          type="checkbox"
-          checked={isSet}
-          onChange={(e) => {
-            if (e.target.checked) {
-              onChange(defaultForSchema(resolveRef(inner, defs)));
-            } else {
-              onChange(null);
-            }
-          }}
-        />
-        set
-      </label>
-      {isSet && <SchemaForm schema={inner} defs={defs} value={value} onChange={onChange} />}
+    <div className="sf-row" data-set={isSet} data-kind={kind}>
+      <div className="sf-row__label">
+        <label htmlFor={id}>
+          <span className="sf-key">{name}</span>
+        </label>
+        {required && <Required />}
+      </div>
+      <div className="sf-row__main">
+        <div className="sf-row__control">
+          {nullable && <Switch checked={isSet} onChange={toggle} label={`Set ${name}`} />}
+          {isSet ? (
+            <SchemaForm
+              id={id}
+              schema={target}
+              defs={defs}
+              value={value}
+              onChange={onChange}
+              depth={depth + 1}
+              placeholder={placeholderFor(propSchema)}
+            />
+          ) : (
+            <MaybeMuted>Not set</MaybeMuted>
+          )}
+        </div>
+        <Hint text={hint} />
+      </div>
     </div>
   );
 }
@@ -211,29 +174,29 @@ function ObjectFields({
   defs,
   value,
   onChange,
+  depth,
 }: {
   schema: JSONSchema;
-  defs: Record<string, JSONSchema>;
+  defs: Defs;
   value: Record<string, unknown>;
   onChange: (value: Record<string, unknown>) => void;
+  depth: number;
 }) {
   const properties = (schema.properties as Record<string, JSONSchema> | undefined) ?? {};
   const required = new Set((schema.required as string[] | undefined) ?? []);
   return (
-    <div className="schema-form__object">
+    <div className="sf-object">
       {Object.entries(properties).map(([key, propSchema]) => (
-        <div className="schema-form__field" key={key}>
-          <label className="schema-form__field-label">
-            {key}
-            {required.has(key) && <span className="schema-form__required"> *</span>}
-          </label>
-          <SchemaForm
-            schema={propSchema}
-            defs={defs}
-            value={value[key]}
-            onChange={(next) => onChange({ ...value, [key]: next })}
-          />
-        </div>
+        <FieldRow
+          key={key}
+          name={key}
+          propSchema={propSchema}
+          required={required.has(key)}
+          defs={defs}
+          value={value[key]}
+          depth={depth}
+          onChange={(next) => onChange({ ...value, [key]: next })}
+        />
       ))}
     </div>
   );
@@ -244,54 +207,84 @@ function OpenDictFields({
   defs,
   value,
   onChange,
+  depth,
 }: {
   itemSchema: JSONSchema;
-  defs: Record<string, JSONSchema>;
+  defs: Defs;
   value: Record<string, unknown>;
   onChange: (value: Record<string, unknown>) => void;
+  depth: number;
 }) {
   const [newKey, setNewKey] = useState("");
   const entries = Object.entries(value);
+  const canAdd = newKey !== "" && !(newKey in value);
+
+  function add() {
+    if (!canAdd) return;
+    onChange({ ...value, [newKey]: defaultForSchema(itemSchema, defs) });
+    setNewKey("");
+  }
 
   return (
-    <div className="schema-form__dict">
-      {entries.map(([key, entryValue]) => (
-        <div className="schema-form__dict-entry" key={key}>
-          <div className="schema-form__dict-entry-header">
-            <strong>{key}</strong>
-            <button
-              type="button"
-              onClick={() => {
-                const next = { ...value };
-                delete next[key];
-                onChange(next);
-              }}
-            >
-              Remove
-            </button>
-          </div>
-          <SchemaForm
-            schema={itemSchema}
-            defs={defs}
-            value={entryValue}
-            onChange={(next) => onChange({ ...value, [key]: next })}
-          />
-        </div>
-      ))}
-      <div className="schema-form__dict-add">
+    <div className="sf-dict">
+      {entries.length === 0 && <p className="sf-empty">No entries yet.</p>}
+      {entries.map(([key, entryValue]) => {
+        const remove = () => {
+          const next = { ...value };
+          delete next[key];
+          onChange(next);
+        };
+        const setEntry = (next: unknown) => onChange({ ...value, [key]: next });
+        const kind = layoutKind(itemSchema, defs, entryValue);
+        if (kind === "inline" || Array.isArray(resolveRef(itemSchema, defs).anyOf)) {
+          return (
+            <div className="sf-entry" key={key} data-kind={kind}>
+              <span className="sf-key sf-entry__key">{key}</span>
+              <div className="sf-entry__control">
+                <SchemaForm
+                  schema={itemSchema}
+                  defs={defs}
+                  value={entryValue}
+                  onChange={setEntry}
+                  depth={depth + 1}
+                />
+              </div>
+              <RemoveButton label={`Remove ${key}`} onClick={remove} />
+            </div>
+          );
+        }
+        return (
+          <Disclosure
+            key={key}
+            label={key}
+            defaultOpen={entries.length <= 3}
+            actions={<RemoveButton label={`Remove ${key}`} onClick={remove} />}
+          >
+            <SchemaForm
+              schema={itemSchema}
+              defs={defs}
+              value={entryValue}
+              onChange={setEntry}
+              depth={depth + 1}
+            />
+          </Disclosure>
+        );
+      })}
+      <div className="sf-add">
         <input
+          className="sf-control"
           placeholder="new key"
+          aria-label="new key"
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
-        />
-        <button
-          type="button"
-          disabled={!newKey || newKey in value}
-          onClick={() => {
-            onChange({ ...value, [newKey]: defaultForSchema(resolveRef(itemSchema, defs)) });
-            setNewKey("");
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
           }}
-        >
+        />
+        <button type="button" className="sf-btn sf-btn--soft sf-btn--add" disabled={!canAdd} onClick={add}>
           Add
         </button>
       </div>
@@ -304,36 +297,53 @@ function ArrayFields({
   defs,
   value,
   onChange,
+  depth,
 }: {
   itemSchema: JSONSchema;
-  defs: Record<string, JSONSchema>;
+  defs: Defs;
   value: unknown[];
   onChange: (value: unknown[]) => void;
+  depth: number;
 }) {
   return (
-    <div className="schema-form__array">
-      {value.map((item, index) => (
+    <div className="sf-array">
+      {value.length === 0 && <p className="sf-empty">No items yet.</p>}
+      {value.map((item, index) => {
+        const remove = () => onChange(value.filter((_, i) => i !== index));
+        const setItem = (next: unknown) => {
+          const copy = [...value];
+          copy[index] = next;
+          onChange(copy);
+        };
         // No stable id for a plain array item -- add/remove-only (no
         // reorder) makes index-as-key safe here.
-        <div className="schema-form__array-item" key={index}>
-          <SchemaForm
-            schema={itemSchema}
-            defs={defs}
-            value={item}
-            onChange={(next) => {
-              const copy = [...value];
-              copy[index] = next;
-              onChange(copy);
-            }}
-          />
-          <button type="button" onClick={() => onChange(value.filter((_, i) => i !== index))}>
-            Remove
-          </button>
-        </div>
-      ))}
+        const kind = layoutKind(itemSchema, defs, item);
+        if (kind === "inline" || Array.isArray(resolveRef(itemSchema, defs).anyOf)) {
+          return (
+            <div className="sf-entry" key={index} data-kind={kind}>
+              <span className="sf-key sf-entry__key">#{index + 1}</span>
+              <div className="sf-entry__control">
+                <SchemaForm schema={itemSchema} defs={defs} value={item} onChange={setItem} depth={depth + 1} />
+              </div>
+              <RemoveButton label={`Remove item ${index + 1}`} onClick={remove} />
+            </div>
+          );
+        }
+        return (
+          <Disclosure
+            key={index}
+            label={`#${index + 1}`}
+            defaultOpen={value.length <= 3}
+            actions={<RemoveButton label={`Remove item ${index + 1}`} onClick={remove} />}
+          >
+            <SchemaForm schema={itemSchema} defs={defs} value={item} onChange={setItem} depth={depth + 1} />
+          </Disclosure>
+        );
+      })}
       <button
         type="button"
-        onClick={() => onChange([...value, defaultForSchema(resolveRef(itemSchema, defs))])}
+        className="sf-btn sf-btn--dashed sf-btn--add"
+        onClick={() => onChange([...value, defaultForSchema(itemSchema, defs)])}
       >
         Add item
       </button>
@@ -341,44 +351,141 @@ function ArrayFields({
   );
 }
 
+// ---- optional and union values --------------------------------------
+
+/** Toggle + inner form, for an optional value outside an object row
+ * (array items, dict entries, the root). Object properties handle their
+ * own optionality in `FieldRow`, in the field's own row. */
+function NullableField({
+  inner,
+  defs,
+  value,
+  onChange,
+  depth,
+}: {
+  inner: JSONSchema;
+  defs: Defs;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  depth: number;
+}) {
+  const isSet = value !== null && value !== undefined;
+  return (
+    <div className="sf-nullable">
+      <div className="sf-nullable__bar">
+        <Switch
+          checked={isSet}
+          label="set"
+          onChange={(on) => onChange(on ? defaultForSchema(inner, defs) : null)}
+        />
+        {!isSet && <MaybeMuted>Not set</MaybeMuted>}
+      </div>
+      {isSet && <SchemaForm schema={inner} defs={defs} value={value} onChange={onChange} depth={depth} />}
+    </div>
+  );
+}
+
+function UnionField({
+  branches,
+  defs,
+  value,
+  onChange,
+  depth,
+  id,
+}: {
+  branches: JSONSchema[];
+  defs: Defs;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  depth: number;
+  id?: string;
+}) {
+  // Each branch's last value, so an accidental switch is undoable.
+  const remembered = useRef<Record<number, unknown>>({});
+  if (!branchesAreDistinguishable(branches, defs)) {
+    return <RawJsonField value={value} onChange={onChange} />;
+  }
+  const active = activeBranchIndex(branches, defs, value);
+  const options = branches.map((branch, i) => ({ value: String(i), label: branchLabel(branch, defs) }));
+
+  function switchTo(next: number) {
+    remembered.current[active] = value;
+    onChange(next in remembered.current ? remembered.current[next] : seedBranch(branches[next], defs, value));
+  }
+
+  const kind = layoutKind(branches[active], defs, value);
+  return (
+    <div className={`sf-union sf-union--${kind}`}>
+      <Segmented
+        small
+        label="Value type"
+        options={options}
+        value={String(active)}
+        onChange={(v) => switchTo(Number(v))}
+      />
+      <div className="sf-union__body">
+        <SchemaForm id={id} schema={branches[active]} defs={defs} value={value} onChange={onChange} depth={depth} />
+      </div>
+    </div>
+  );
+}
+
 function EnumField({
+  id,
   options,
   value,
   onChange,
 }: {
+  id?: string;
   options: unknown[];
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const labels = options.map(String);
+  const current = value === null || value === undefined ? "" : String(value);
+  if (labels.length <= 4 && labels.join("").length <= 40) {
+    return (
+      <Segmented
+        id={id}
+        label="Options"
+        options={labels.map((l) => ({ value: l, label: l }))}
+        value={current}
+        onChange={onChange}
+      />
+    );
+  }
   return (
-    <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
-      {options.map((opt) => (
-        <option key={String(opt)} value={String(opt)}>
-          {String(opt)}
+    <select id={id} className="sf-control sf-select" value={current} onChange={(e) => onChange(e.target.value)}>
+      {!labels.includes(current) && <option value="">—</option>}
+      {labels.map((opt) => (
+        <option key={opt} value={opt}>
+          {opt}
         </option>
       ))}
     </select>
   );
 }
 
-export default function SchemaForm({ schema, defs, value, onChange }: Props) {
+// ---- entry point ----------------------------------------------------
+
+export default function SchemaForm({ schema, defs, value, onChange, id, depth = 0, placeholder }: Props) {
   const resolved = resolveRef(schema, defs);
 
   if (Array.isArray(resolved.anyOf)) {
-    const { inner, nullable } = unwrapNullable(resolved, defs);
-    if (inner && nullable) {
-      return <NullableField inner={inner} defs={defs} value={value} onChange={onChange} />;
+    const branches = nonNullBranches(resolved, defs);
+    if (branches.length === 0) return <RawJsonField value={value} onChange={onChange} />;
+    if (hasNullBranch(resolved, defs)) {
+      const inner = branches.length === 1 ? branches[0] : { anyOf: branches };
+      return <NullableField inner={inner} defs={defs} value={value} onChange={onChange} depth={depth} />;
     }
-    if (inner) {
-      // A non-nullable anyOf with exactly one real branch (unusual, but
-      // handled the same as if it were the branch itself).
-      return <SchemaForm schema={inner} defs={defs} value={value} onChange={onChange} />;
+    if (branches.length === 1) {
+      return <SchemaForm id={id} schema={branches[0]} defs={defs} value={value} onChange={onChange} depth={depth} />;
     }
-    return <RawJsonField value={value} onChange={onChange} />;
+    return <UnionField id={id} branches={branches} defs={defs} value={value} onChange={onChange} depth={depth} />;
   }
 
   if (Array.isArray(resolved.enum)) {
-    return <EnumField options={resolved.enum as unknown[]} value={value} onChange={onChange} />;
+    return <EnumField id={id} options={resolved.enum as unknown[]} value={value} onChange={onChange} />;
   }
 
   if (resolved.type === "object") {
@@ -389,6 +496,7 @@ export default function SchemaForm({ schema, defs, value, onChange }: Props) {
           defs={defs}
           value={(value as Record<string, unknown>) ?? {}}
           onChange={onChange as (value: Record<string, unknown>) => void}
+          depth={depth}
         />
       );
     }
@@ -399,6 +507,7 @@ export default function SchemaForm({ schema, defs, value, onChange }: Props) {
           defs={defs}
           value={(value as Record<string, unknown>) ?? {}}
           onChange={onChange as (value: Record<string, unknown>) => void}
+          depth={depth}
         />
       );
     }
@@ -412,35 +521,45 @@ export default function SchemaForm({ schema, defs, value, onChange }: Props) {
         defs={defs}
         value={(value as unknown[]) ?? []}
         onChange={onChange as (value: unknown[]) => void}
+        depth={depth}
       />
     );
   }
 
   if (resolved.type === "string") {
     const text = typeof value === "string" ? value : "";
-    // A small swatch + native color picker (issue #23) whenever the
-    // field's *current value* is already a literal hex color -- no
-    // field-name heuristic (a `colors:` entry's key is an arbitrary
-    // token name, not necessarily containing "color"), so this works
-    // generically for `colors:` entries, gradient stops, table-style
-    // colors, anywhere a literal hex is already stored. A token string
-    // (e.g. "primary", used elsewhere via `design.colors.get(token,
-    // token)`'s own "token or bare literal" fallback) just shows the
-    // plain text input, same as before this existed, until it holds a
-    // real hex value.
-    const isHexColor = HEX_COLOR_RE.test(text);
+    const widget = resolved[WIDGET_KEY];
+    if (widget === "color") {
+      return <ColorField id={id} value={text} onChange={onChange} placeholder={placeholder} />;
+    }
+    if (widget === "length") {
+      return <LengthField id={id} value={text} onChange={onChange} placeholder={placeholder} />;
+    }
+    // A plain string already holding a literal hex color still gets a
+    // swatch (no field-name heuristic -- `colors:` entries, gradient
+    // stops, anywhere a hex is stored). The swatch is a conditional
+    // *sibling before* the input, so the input keeps its place in the
+    // tree (and its focus) the moment typing turns the text into a hex.
+    const isHex = HEX_COLOR_RE.test(text);
     return (
-      <span className="schema-form__string">
-        <input type="text" value={text} onChange={(e) => onChange(e.target.value)} />
-        {isHexColor && (
+      <span className="sf-string">
+        {isHex && (
           <input
             type="color"
-            className="schema-form__color-swatch"
+            className="sf-color__swatch"
             aria-label="color picker"
-            value={text.length === 4 ? _expandHexShorthand(text) : text}
+            value={expandHex(text)}
             onChange={(e) => onChange(e.target.value)}
           />
         )}
+        <input
+          id={id}
+          type="text"
+          className="sf-control"
+          value={text}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
       </span>
     );
   }
@@ -448,19 +567,32 @@ export default function SchemaForm({ schema, defs, value, onChange }: Props) {
   if (resolved.type === "number" || resolved.type === "integer") {
     return (
       <input
+        id={id}
         type="number"
+        className="sf-control sf-control--number"
+        step={resolved.type === "integer" ? 1 : "any"}
         value={typeof value === "number" ? value : ""}
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
       />
     );
   }
 
   if (resolved.type === "boolean") {
+    return <Switch id={id} checked={Boolean(value)} onChange={onChange} />;
+  }
+
+  if (isUntyped(resolved) && typeof value === "string") {
+    // Always a textarea (never swapping input kinds on a keystroke), so
+    // multi-line Markdown stays editable without losing focus.
     return (
-      <input
-        type="checkbox"
-        checked={Boolean(value)}
-        onChange={(e) => onChange(e.target.checked)}
+      <textarea
+        id={id}
+        className="sf-control sf-control--text"
+        rows={Math.min(8, Math.max(2, value.split("\n").length))}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
       />
     );
   }

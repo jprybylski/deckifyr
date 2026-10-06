@@ -619,53 +619,209 @@ body {
   font-size: 0.8rem;
 }
 
+/* ---------------------------------------------------------------------
+   Config editor + schema-driven form (SchemaForm.tsx, ConfigEditor.tsx).
+
+   Design tokens are scoped to `.config-editor` on purpose: nothing else
+   in this stylesheet reads them, so the rest of the app is untouched and
+   can adopt them later. Plain CSS -- no framework, no new dependency.
+   --------------------------------------------------------------------- */
+.config-editor {
+  --sf-bg: #ffffff;
+  --sf-surface: #f6f7f9;
+  --sf-surface-2: #eceff3;
+  --sf-border: #e3e6ea;
+  --sf-border-strong: #c8cdd4;
+  --sf-text: #202124;
+  --sf-muted: #5f6368;
+  --sf-faint: #8a9099;
+  --sf-primary: #2457a6;
+  --sf-primary-strong: #1c4685;
+  --sf-primary-soft: #e8eff9;
+  --sf-ring: rgba(36, 87, 166, 0.28);
+  --sf-danger: #b3261e;
+  --sf-danger-soft: #fdecea;
+  --sf-radius: 10px;
+  --sf-radius-sm: 6px;
+  --sf-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sf-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  color: var(--sf-text);
+}
+
+/* -- toolbar --------------------------------------------------------- */
 .config-editor__header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
+  gap: 0.75rem 1.25rem;
+}
+
+.config-editor__doc {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--sf-muted);
+}
+
+.config-editor__doc .sf-select {
+  width: auto;
+  min-width: 9rem;
 }
 
 .config-editor__view-toggle {
-  display: flex;
-  border: 1px solid #cccccc;
-  border-radius: 4px;
-  overflow: hidden;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--sf-surface-2);
+  border-radius: 8px;
 }
 
 .config-editor__view-toggle button {
-  border: none;
-  background: #ffffff;
-  padding: 0.3rem 0.75rem;
+  border: 0;
+  background: transparent;
+  padding: 0.25rem 0.9rem;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--sf-muted);
   cursor: pointer;
 }
 
-.config-editor__view-toggle button:first-child {
-  border-right: 1px solid #cccccc;
-}
-
 .config-editor__view-toggle button.config-editor__view-btn--active {
-  background: #2457a6;
-  color: #ffffff;
+  background: #ffffff;
+  color: var(--sf-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.15);
 }
 
+.config-editor__note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--sf-muted);
+}
+
+/* -- two-pane body: section rail + form ------------------------------ */
+.config-editor__body {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.config-editor__rail {
+  position: sticky;
+  top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 11rem);
+  overflow: auto;
+}
+
+.config-editor__rail-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: var(--sf-radius-sm);
+  background: transparent;
+  font: inherit;
+  font-family: var(--sf-mono);
+  font-size: 0.8rem;
+  text-align: left;
+  color: var(--sf-muted);
+  cursor: pointer;
+}
+
+.config-editor__rail-item:hover {
+  background: var(--sf-surface-2);
+}
+
+.config-editor__rail-item[aria-current="true"] {
+  background: var(--sf-primary-soft);
+  color: var(--sf-primary);
+  font-weight: 600;
+}
+
+.config-editor__form {
+  min-width: 0;
+  max-width: 56rem;
+  padding: 1rem 1.25rem 1.25rem;
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  box-shadow: var(--sf-shadow);
+}
+
+.config-editor__section-head {
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.config-editor__section-head h2 {
+  display: inline-block;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* -- action bar ------------------------------------------------------ */
+.config-editor__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.7rem 0 0.3rem;
+  background: linear-gradient(to top, #f5f5f5 75%, rgba(245, 245, 245, 0));
+}
+
+.config-editor__modified {
+  padding: 0.1rem 0.6rem;
+  border: 1px solid #e3c874;
+  border-radius: 999px;
+  background: #fdf3d9;
+  font-size: 0.78rem;
+  color: #6b5300;
+}
+
+.config-editor__saved {
+  font-size: 0.82rem;
+  color: #1a7f37;
+}
+
+pre.config-editor__error {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #f5c6c2;
+  border-radius: var(--sf-radius-sm);
+  background: var(--sf-danger-soft);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+/* -- raw JSON view (highlighted <pre> behind a transparent <textarea>;
+   see ConfigEditor.tsx / jsonHighlight.ts) ----------------------------- */
 .config-editor__textarea {
   width: 100%;
-  font-family: Consolas, monospace;
+  font-family: var(--sf-mono);
   font-size: 0.85rem;
 }
 
-/* Highlighted-<pre>-behind-a-transparent-<textarea> overlay for the Raw
-   view (issue #22) -- both children share font/padding/line-height and
-   are absolutely positioned over the same box, `<textarea>` on top with
-   its text made transparent so only its caret/selection paint, and the
-   syntax-colored `<pre>` shows through underneath. `onScroll` in
-   ConfigEditor.tsx keeps the two scrolled together. */
 .config-editor__raw-wrap {
   position: relative;
   width: 100%;
-  height: 480px;
+  height: min(68vh, 640px);
 }
 
 .config-editor__raw-highlight,
@@ -673,10 +829,10 @@ body {
   position: absolute;
   inset: 0;
   margin: 0;
-  padding: 0.5rem;
-  font-family: Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  padding: 0.75rem;
+  font-family: var(--sf-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
@@ -684,19 +840,25 @@ body {
 }
 
 .config-editor__raw-highlight {
-  border: 1px solid #cccccc;
-  border-radius: 4px;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius);
   background: #ffffff;
-  color: #202124;
+  color: var(--sf-text);
   pointer-events: none;
 }
 
 .config-editor__textarea--overlay {
   border: 1px solid transparent;
+  border-radius: var(--sf-radius);
   background: transparent;
   color: transparent;
-  caret-color: #202124;
+  caret-color: var(--sf-text);
   resize: none;
+}
+
+.config-editor__textarea--overlay:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring);
 }
 
 .json-key {
@@ -717,161 +879,715 @@ body {
   color: #b3261e;
 }
 
-.config-editor__form {
-  border: 1px solid #dddddd;
-  border-radius: 4px;
-  padding: 0.75rem;
-  max-height: 480px;
-  max-width: 720px;
-  overflow: auto;
-}
-
-.schema-form__object,
-.schema-form__dict,
-.schema-form__array {
-  /* Explicit, not relied-on-by-default: `.schema-form__nullable`'s own
-     `align-items: flex-start` (needed so a *scalar* nullable field's
-     input doesn't stretch full-width) would otherwise shrink-fit a
-     nested container placed inside it down to its content's natural
-     width instead of the space actually available. */
+/* -- form primitives ------------------------------------------------- */
+.config-editor .sf-control {
+  box-sizing: border-box;
   width: 100%;
-}
-
-.schema-form__object {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-/* A scalar field (string/number/boolean/enum) lays out label+control on
-   one row with a capped control width -- an unconstrained flex-column
-   with default `align-items: stretch` was the actual cause of every
-   text input filling the entire (very wide) form container edge to
-   edge, confirmed against a real screenshot, not just a guess. A field
-   whose value is a nested container (object/dict/array/nullable/raw
-   fallback) switches back to a stacked column below via `:has()`, since
-   those need their own full-width block, not a same-row layout. */
-.schema-form__field {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  border-left: 2px solid #eeeeee;
-}
-
-.schema-form__field:has(> .schema-form__object),
-.schema-form__field:has(> .schema-form__dict),
-.schema-form__field:has(> .schema-form__array),
-.schema-form__field:has(> .schema-form__nullable),
-.schema-form__field:has(> .schema-form__raw) {
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.schema-form__field-label {
-  font-size: 0.8rem;
-  font-weight: bold;
-  color: #5f6368;
-  flex: 0 0 auto;
-  min-width: 110px;
-}
-
-.schema-form__field > input[type="text"],
-.schema-form__field > input[type="number"],
-.schema-form__field > select {
-  flex: 0 1 260px;
   min-width: 0;
+  height: 32px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius-sm);
+  background-color: #ffffff;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--sf-text);
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
 }
 
-.schema-form__required {
-  color: #b3261e;
+.config-editor .sf-control:hover {
+  border-color: #a9afb8;
 }
 
-.schema-form__nullable {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.3rem;
+.config-editor .sf-control:focus-visible {
+  outline: none;
+  border-color: var(--sf-primary);
+  box-shadow: 0 0 0 3px var(--sf-ring);
 }
 
-.schema-form__nullable > input[type="text"],
-.schema-form__nullable > input[type="number"],
-.schema-form__nullable > select {
-  /* `width`, not `flex: 0 1 260px` -- `.schema-form__nullable` is a
-     *column* flex container, where a flex-basis controls the main axis
-     (height), not width, unlike `.schema-form__field`'s own row-context
-     use of the same-looking rule below. Reusing that row-context value
-     here was the actual, confirmed (not assumed) cause of every
-     optional scalar field rendering as a ~260px-tall, narrow box
-     instead of an ordinary single-line input -- exactly the
-     "input turned into a giant textarea" bug this comment exists to
-     prevent regressing back to. */
-  width: 260px;
-  max-width: 100%;
+.config-editor .sf-control[aria-invalid="true"] {
+  border-color: var(--sf-danger);
+  background-color: #fffafa;
 }
 
-.schema-form__nullable-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.8rem;
-  color: #5f6368;
+.config-editor .sf-control::placeholder {
+  color: var(--sf-faint);
 }
 
-.schema-form__dict-entry {
-  border: 1px solid #eeeeee;
-  border-radius: 4px;
-  padding: 0.4rem 0.5rem;
-  margin-bottom: 0.4rem;
+.config-editor textarea.sf-control {
+  height: auto;
+  padding: 0.45rem 0.65rem;
+  line-height: 1.4;
 }
 
-.schema-form__dict-entry-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.3rem;
+.config-editor textarea.sf-control--text {
+  resize: vertical;
 }
 
-.schema-form__dict-add,
-.schema-form__array-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
-}
-
-.schema-form__raw-textarea {
-  width: 100%;
-  font-family: Consolas, monospace;
+.config-editor .sf-control--mono {
+  font-family: var(--sf-mono);
   font-size: 0.8rem;
 }
 
-.schema-form__raw-error {
-  display: block;
-  color: #b3261e;
-  font-size: 0.75rem;
+.config-editor .sf-control--number {
+  width: 8rem;
 }
 
-.schema-form__string {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.schema-form__color-swatch {
-  width: 1.6rem;
-  height: 1.6rem;
-  padding: 0;
-  border: 1px solid #cccccc;
-  border-radius: 4px;
+.config-editor .sf-select {
+  padding-right: 1.9rem;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%235f6368' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
   cursor: pointer;
 }
 
-.config-editor__note {
+.config-editor .sf-key {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  background: var(--sf-surface);
+  font-family: var(--sf-mono);
+  font-size: 0.78rem;
+  color: #3c4043;
+  overflow-wrap: anywhere;
+}
+
+.config-editor .sf-muted {
+  font-size: 0.82rem;
+  color: var(--sf-faint);
+}
+
+.config-editor .sf-required {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sf-danger);
+  flex: none;
+}
+
+.config-editor .sf-count {
+  min-width: 1.2rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--sf-surface-2);
+  font-family: system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-align: center;
+  color: var(--sf-muted);
+}
+
+.config-editor__rail-item[aria-current="true"] .sf-count {
+  background: #ffffff;
+  color: var(--sf-primary);
+}
+
+.config-editor .sf-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--sf-muted);
+}
+
+.config-editor .sf-hint--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.config-editor .sf-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--sf-primary);
+  cursor: pointer;
+}
+
+.config-editor .sf-empty {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--sf-faint);
+}
+
+/* switch: a real checkbox, restyled */
+.config-editor .sf-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--sf-border-strong);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.config-editor .sf-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+
+.config-editor .sf-switch:checked {
+  background: var(--sf-primary);
+}
+
+.config-editor .sf-switch:checked::before {
+  transform: translateX(14px);
+}
+
+.config-editor .sf-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+/* segmented control: radios restyled */
+.config-editor .sf-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--sf-surface-2);
+}
+
+.config-editor .sf-seg__opt {
+  position: relative;
+  cursor: pointer;
+}
+
+.config-editor .sf-seg__opt input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.config-editor .sf-seg__opt span {
+  display: block;
+  padding: 0.22rem 0.7rem;
+  border-radius: 6px;
   font-size: 0.8rem;
-  color: #5f6368;
+  color: var(--sf-muted);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.config-editor .sf-seg__opt:hover span {
+  color: var(--sf-text);
+}
+
+.config-editor .sf-seg__opt input:checked + span {
+  background: #ffffff;
+  color: var(--sf-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.18);
+}
+
+.config-editor .sf-seg__opt input:focus-visible + span {
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+.config-editor .sf-seg--small .sf-seg__opt span {
+  padding: 0.12rem 0.55rem;
+  font-size: 0.74rem;
+}
+
+/* buttons */
+.config-editor .sf-btn {
+  height: 32px;
+  padding: 0 0.85rem;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius-sm);
+  background: #ffffff;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--sf-text);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.config-editor .sf-btn:hover:not(:disabled) {
+  background: var(--sf-surface);
+}
+
+.config-editor .sf-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+.config-editor .sf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config-editor .sf-btn--primary {
+  border-color: var(--sf-primary);
+  background: var(--sf-primary);
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.config-editor .sf-btn--primary:hover:not(:disabled) {
+  background: var(--sf-primary-strong);
+}
+
+.config-editor .sf-btn--soft {
+  border-color: transparent;
+  background: var(--sf-primary-soft);
+  color: var(--sf-primary);
+}
+
+.config-editor .sf-btn--soft:hover:not(:disabled) {
+  background: #dbe6f6;
+}
+
+.config-editor .sf-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--sf-muted);
+}
+
+.config-editor .sf-btn--dashed {
+  width: 100%;
+  margin-top: 0.4rem;
+  border-style: dashed;
+  color: var(--sf-muted);
+}
+
+.config-editor .sf-btn--add::before {
+  content: "+";
+  margin-right: 0.35rem;
+  font-weight: 700;
+}
+
+.config-editor .sf-icon-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sf-radius-sm);
+  background: transparent;
+  color: var(--sf-faint);
+  cursor: pointer;
+}
+
+.config-editor .sf-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+.config-editor .sf-icon-btn--danger:hover {
+  background: var(--sf-danger-soft);
+  color: var(--sf-danger);
+}
+
+/* -- field layout ---------------------------------------------------- */
+.config-editor .sf-object {
+  display: flex;
+  flex-direction: column;
+}
+
+.config-editor .sf-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 11rem) minmax(0, 1fr);
+  gap: 0.15rem 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.config-editor .sf-object > .sf-row:last-child {
+  border-bottom: 0;
+}
+
+.config-editor .sf-row__label {
+  display: flex;
+  align-items: center;
+  align-self: start;
+  gap: 0.4rem;
+  min-height: 32px;
+}
+
+.config-editor .sf-row__label label {
+  cursor: pointer;
+}
+
+.config-editor .sf-row__control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 32px;
+}
+
+.config-editor .sf-row__control > .sf-string,
+.config-editor .sf-row__control > .sf-color,
+.config-editor .sf-row__control > .sf-select,
+.config-editor .sf-row__control > input.sf-control,
+.config-editor .sf-row__control > .sf-union {
+  flex: 1 1 14rem;
+  max-width: 26rem;
+}
+
+.config-editor .sf-row__control > input.sf-control.sf-control--number {
+  flex: 0 0 8rem;
+  max-width: 8rem;
+}
+
+.config-editor .sf-row[data-kind="block"] .sf-row__control > .sf-union {
+  flex: 1 1 100%;
+  max-width: none;
+}
+
+.config-editor .sf-entry[data-kind="block"] {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.config-editor .sf-entry[data-kind="block"] .sf-entry__key {
+  flex: 0 0 auto;
+  margin-right: auto;
+}
+
+.config-editor .sf-entry[data-kind="block"] .sf-entry__control {
+  order: 3;
+  flex: 1 1 100%;
+  padding: 0.25rem 0 0.4rem;
+}
+
+.config-editor .sf-string {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* cards */
+.config-editor .sf-card {
+  margin: 0.5rem 0;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  background: #ffffff;
+  box-shadow: var(--sf-shadow);
+}
+
+.config-editor .sf-card .sf-card {
+  background: #fcfcfd;
+  box-shadow: none;
+}
+
+.config-editor .sf-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.config-editor .sf-card__toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: var(--sf-radius);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-editor button.sf-card__toggle:hover {
+  background: var(--sf-surface);
+}
+
+.config-editor button.sf-card__toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+.config-editor .sf-card__toggle--static {
+  cursor: default;
+}
+
+.config-editor .sf-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.config-editor .sf-card__body {
+  padding: 0.35rem 0.9rem 0.8rem;
+  border-top: 1px solid var(--sf-border);
+}
+
+.config-editor .sf-chevron {
+  flex: none;
+  color: var(--sf-muted);
+  transition: transform 0.12s;
+}
+
+.config-editor .sf-card[data-open="true"] > .sf-card__head .sf-chevron {
+  transform: rotate(90deg);
+}
+
+/* dict / array entries */
+.config-editor .sf-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.config-editor .sf-entry__key {
+  flex: 0 0 9rem;
+  max-width: 9rem;
+}
+
+.config-editor .sf-entry__control {
+  flex: 1;
+  min-width: 0;
+}
+
+.config-editor .sf-add {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.config-editor .sf-add .sf-control {
+  max-width: 16rem;
+}
+
+.config-editor .sf-nullable__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.config-editor .sf-union {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.config-editor .sf-union--block {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.config-editor .sf-union--block > .sf-union__body {
+  width: 100%;
+}
+
+.config-editor .sf-union__body {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* color: swatch fused to the text field, token chips as a popover */
+.config-editor .sf-color {
+  position: relative;
+  width: 100%;
+}
+
+.config-editor .sf-color__field {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius-sm);
+  background: #ffffff;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.config-editor .sf-color__field:focus-within {
+  border-color: var(--sf-primary);
+  box-shadow: 0 0 0 3px var(--sf-ring);
+}
+
+.config-editor .sf-color__field .sf-control {
+  flex: 1;
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.config-editor .sf-color__swatch {
+  flex: none;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.config-editor .sf-color__swatch::-webkit-color-swatch-wrapper {
+  padding: 6px;
+}
+
+.config-editor .sf-color__swatch::-webkit-color-swatch {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+}
+
+.config-editor .sf-color__swatch::-moz-color-swatch {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+}
+
+.config-editor .sf-color__swatch[data-empty="true"]::-webkit-color-swatch {
+  background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, #e3e6ea 3px, #e3e6ea 6px);
+}
+
+.config-editor .sf-string > .sf-color__swatch {
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius-sm);
+}
+
+.config-editor .sf-chips {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 20;
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.45rem;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+}
+
+.config-editor .sf-color:focus-within .sf-chips {
+  display: flex;
+}
+
+.config-editor .sf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem 0.15rem 0.3rem;
+  border: 1px solid var(--sf-border);
+  border-radius: 999px;
+  background: #ffffff;
+  font-family: var(--sf-mono);
+  font-size: 0.74rem;
+  color: var(--sf-text);
+  cursor: pointer;
+}
+
+.config-editor .sf-chip:hover {
+  background: var(--sf-surface);
+}
+
+.config-editor .sf-chip[data-active="true"] {
+  border-color: var(--sf-primary);
+  background: var(--sf-primary-soft);
+}
+
+.config-editor .sf-chip__dot {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 50%;
+}
+
+/* length: number + unit */
+.config-editor .sf-length {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.config-editor .sf-length__num {
+  width: 6.5rem;
+}
+
+.config-editor .sf-length__unit {
+  width: 4.75rem;
+}
+
+/* raw JSON escape hatch */
+.config-editor .sf-raw {
+  width: 100%;
+}
+
+.config-editor .sf-raw__textarea {
+  resize: vertical;
+}
+
+.config-editor .sf-raw__error {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--sf-danger);
+}
+
+@media (max-width: 760px) {
+  .config-editor__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-editor__rail {
+    position: static;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+  }
+
+  .config-editor__rail-item {
+    width: auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 560px) {
+  .config-editor .sf-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-editor .sf-entry {
+    flex-wrap: wrap;
+  }
 }
 
 .build-panel__artifacts {
