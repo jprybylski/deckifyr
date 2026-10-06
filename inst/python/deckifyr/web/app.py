@@ -212,8 +212,16 @@ def _resolve_layout_zone(
     build-time concerns, checked once a slide actually uses this layout
     (`expand_slide`, unchanged).
     """
+    zone_children = _layout_children(element) if element.type == "group" else []
     box = element.box
-    if box is not None:
+    if zone_children:
+        # A group's extent is the union of its children's (issue #55),
+        # exactly as `deckifyr.plan` derives it for a real slide.
+        tree = _zone_tree(element_id, element, design_data)
+        box_json = {
+            key: format_length(tree[key]) for key in ("x", "y", "width", "height")
+        }
+    elif box is not None:
         box_json = {
             "x": format_length(parse_length(box.x, strict=True)),
             "y": format_length(parse_length(box.y, strict=True)),
@@ -223,6 +231,11 @@ def _resolve_layout_zone(
     else:
         width_in, height_in = _slide_size_in(design_data)
         box_json = _default_box(0.5, 0.5, min(3.0, width_in * 0.3), 0.4)
+    children = [
+        _resolve_layout_zone(child_id, child, design_data, child_order)
+        for child_order, (child_id, child) in enumerate(zone_children)
+    ]
+    children.sort(key=lambda e: (e["z_index"], e["order"]))
     return {
         "id": element_id,
         "type": element.type or "text",
@@ -244,8 +257,114 @@ def _resolve_layout_zone(
         "table_style": element.table_style,
         "center": element.center,
         "align": element.align,
-        "children": [],
+        "children": children,
     }
+
+
+def _layout_children(element: Element) -> list[tuple[str, Element]]:
+    """A `group` zone's children as `(id, Element)` pairs, whichever of the
+    dict-/list-keyed forms it was written in (spec section 7.6)."""
+    children = element.elements
+    if isinstance(children, dict):
+        return list(children.items())
+    return [(child.id, child) for child in children or [] if child.id]
+
+
+def _zone_tree(
+    element_id: str, element: Element, design_data: dict[str, Any]
+) -> dict[str, Any]:
+    """A layout zone as `deckifyr.editor.GroupNode` data (EMU), with a
+    group's own box replaced by the union of its children's -- the
+    layout-side twin of `_resolved_tree` for a real slide's element."""
+    children = (
+        [_zone_tree(cid, child, design_data) for cid, child in _layout_children(element)]
+        if element.type == "group"
+        else []
+    )
+    if children:
+        left = min(c["x"] for c in children)
+        top = min(c["y"] for c in children)
+        x, y = left, top
+        width = max(c["x"] + c["width"] for c in children) - left
+        height = max(c["y"] + c["height"] for c in children) - top
+    elif element.box is not None:
+        x, y, width, height = (
+            parse_length(getattr(element.box, key), strict=True)
+            for key in ("x", "y", "width", "height")
+        )
+    else:
+        width_in, _height_in = _slide_size_in(design_data)
+        default = _default_box(0.5, 0.5, min(3.0, width_in * 0.3), 0.4)
+        x, y, width, height = (
+            parse_length(default[key], strict=True) for key in ("x", "y", "width", "height")
+        )
+    return {"id": element_id, "x": x, "y": y, "width": width, "height": height, "children": children}
+
+
+def _resolved_tree(element: ResolvedElement) -> dict[str, Any]:
+    """A `ResolvedElement` as `deckifyr.editor.GroupNode` data (EMU)."""
+    return {
+        "id": element.id,
+        "x": element.x,
+        "y": element.y,
+        "width": element.width,
+        "height": element.height,
+        "children": [_resolved_tree(child) for child in element.children],
+    }
+
+
+def _target_group_box(
+    patch_box: dict[str, Any], current: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """The union box a group PATCH asks for: the request's inch values
+    (`x`/`y`/`width`/`height`, any subset) laid over the group's current
+    derived one."""
+    merged = list(current)
+    for index, key in enumerate(("x", "y", "width", "height")):
+        if key in patch_box and patch_box[key] is not None:
+            merged[index] = round(float(patch_box[key]) * EMU_PER_INCH)
+    return (merged[0], merged[1], merged[2], merged[3])
+
+
+def _group_child_changes(
+    root: dict[str, Any], patch_box: dict[str, Any]
+) -> list[tuple[tuple[str, ...], tuple[int, int, int, int]]]:
+    """`deckifyr.editor.transform_group_boxes` for a group `root` tree
+    (`_resolved_tree`/`_zone_tree` output), `ValueError` -> `DeckifyrError`."""
+    old = (root["x"], root["y"], root["width"], root["height"])
+    try:
+        return editor.transform_group_boxes(
+            root["children"], old, _target_group_box(patch_box, old)
+        )
+    except ValueError as exc:
+        raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
+
+
+def _layout_zone_raw(
+    layouts_data: Any, layout_name: Any, element_id: str
+) -> dict[str, Any] | None:
+    """A layout zone's raw `layouts.yaml` dict, or `None` (no such layout/
+    zone, or a freeform slide with no layout)."""
+    if not isinstance(layouts_data, dict) or not isinstance(layout_name, str):
+        return None
+    layout = (layouts_data.get("layouts") or {}).get(layout_name)
+    zone = ((layout or {}).get("elements") or {}).get(element_id)
+    return zone if isinstance(zone, dict) else None
+
+
+def _ensure_slide_override(slide_data: dict[str, Any], element_id: str) -> None:
+    """Give a slide an (empty) override entry for `element_id` if it has
+    none -- `{id: {}}` or `[{id: ...}]` to match however the slide's
+    `elements` is already written. Lets a layout-inherited group be moved
+    without the slide ever having overridden it."""
+    elements = slide_data.get("elements")
+    if isinstance(elements, list):
+        if not any(isinstance(e, dict) and e.get("id") == element_id for e in elements):
+            elements.append({"id": element_id})
+    elif isinstance(elements, dict):
+        elements.setdefault(element_id, {})
+    else:
+        slide_data["elements"] = {element_id: {}}
 
 
 def _resolved_layout(layout_name: str, layout: Layout, design_data: dict[str, Any]) -> dict[str, Any]:
@@ -683,6 +802,12 @@ def create_app(
         if slide_index is None:
             raise HTTPException(status_code=404, detail=f"no slide with id {slide_id!r}")
 
+        slide_layout_zone = _layout_zone_raw(
+            working_copy.get("layouts"), slides[slide_index].get("layout"), element_id
+        )
+        if slide_layout_zone is not None and slide_layout_zone.get("type") == "group":
+            _ensure_slide_override(slides[slide_index], element_id)
+
         elements = slides[slide_index].get("elements")
         if isinstance(elements, dict):
             if element_id not in elements:
@@ -712,7 +837,44 @@ def create_app(
                 detail=f"no element with id {element_id!r} on slide {slide_id!r}",
             )
 
-        if "box" in body and body["box"]:
+        group_moved = False
+        if body.get("box"):
+            node = editor.get_value(edited, prefix)
+            node_type = (node.get("type") if isinstance(node, dict) else None) or (
+                (slide_layout_zone or {}).get("type")
+            )
+            if node_type == "group":
+                # A group's own `box` is derived from its children (issue
+                # #55), so a box edit moves/scales every descendant leaf
+                # instead of writing a field the compositor would ignore.
+                presentation_doc, design_doc, layouts_doc = _load_working_project()
+                resolved_slide = next(
+                    (
+                        resolved
+                        for resolved in expand_presentation(
+                            presentation_doc, design_doc, layouts_doc, strict=True
+                        )
+                        if resolved.id == slide_id
+                    ),
+                    None,
+                )
+                group = next(
+                    (e for e in (resolved_slide.elements if resolved_slide else []) if e.id == element_id),
+                    None,
+                )
+                if group is None or not group.children:
+                    raise DeckifyrError(
+                        f"group {element_id!r} on slide {slide_id!r} has no "
+                        "resolved children to move",
+                        code=ErrorCode.CONTENT_VALIDATION,
+                    )
+                editor.set_group_child_boxes(
+                    node,
+                    _group_child_changes(_resolved_tree(group), body["box"]),
+                    inherited=slide_layout_zone,
+                )
+                group_moved = True
+        if body.get("box") and not group_moved:
             for field_name, raw_value in body["box"].items():
                 if field_name not in ("x", "y", "width", "height"):
                     continue
@@ -843,14 +1005,25 @@ def create_app(
         edited = copy.deepcopy(working_copy.get("layouts"))
         prefix = f"layouts.{layout_name}.elements.{element_id}"
         try:
-            editor.get_value(edited, prefix)
+            zone_node = editor.get_value(edited, prefix)
         except editor.PathError as exc:
             raise DeckifyrError(
                 f"no zone {element_id!r} on layout {layout_name!r}",
                 code=ErrorCode.PATH_NOT_FOUND,
             ) from exc
 
-        if "box" in body and body["box"]:
+        group_moved = False
+        if body.get("box") and isinstance(zone_node, dict) and zone_node.get("type") == "group":
+            # Same as `patch_element`: a group zone's box is derived from
+            # its children (issue #55), so move/scale those instead.
+            _presentation, _design, layouts_doc = _load_working_project()
+            zone = layouts_doc.layouts[layout_name].elements[element_id]
+            tree = _zone_tree(element_id, zone, working_copy.get("design") or {})
+            if tree["children"]:
+                editor.set_group_child_boxes(zone_node, _group_child_changes(tree, body["box"]))
+                group_moved = True
+
+        if body.get("box") and not group_moved:
             for field_name, raw_value in body["box"].items():
                 if field_name not in ("x", "y", "width", "height"):
                     continue

@@ -456,7 +456,7 @@ Common element fields should include:
 | Field | Meaning |
 |---|---|
 | `id` | Stable name for override, diagnostics, and synchronization |
-| `type` | `text`, `markdown`, `quarto`, `image`, `table`, `shape`, `group`, `slot`, `footnotes`, or `reportifyr` |
+| `type` | `text`, `markdown`, `quarto`, `image`, `table`, `shape`, `group`, `slot`, `footnotes`, or `reportifyr`. A `group`'s extent is derived from its children's boxes (the union), so its own `box` is optional and ignored. |
 | `value` / `source` | Inline content or content reference |
 | `box` | `x`, `y`, `width`, and `height` |
 | `rotation` | Clockwise degrees |
@@ -1154,7 +1154,7 @@ This section is a project-planning summary, not legal advice.
 
 - More complete table formatting.
 - Charts.
-- Groups and connectors.
+- Connectors. (Groups are supported -- see the `group` element type and issue #55.)
 - Optional OOXML extensions.
 - Investigation of native master/layout generation.
 - Synchronization or round-trip features, if justified.

@@ -17,7 +17,7 @@ from deckifyr.schema.design import (
 from deckifyr.schema.errors import ContentValidationError
 from deckifyr.schema.layouts import Box, Element, Layout
 from deckifyr.schema.presentation import Slide
-from deckifyr.schema.units import parse_length
+from deckifyr.schema.units import EMU_PER_INCH, parse_length
 
 
 def _design(**overrides):
@@ -1111,3 +1111,75 @@ def test_shape_style_gradient_fill_resolves_to_a_resolved_gradient():
     (element,) = resolved.elements
     assert isinstance(element.shape_style.fill, ResolvedGradient)
     assert [stop.color for stop in element.shape_style.fill.stops] == ["#111111", "#000000"]
+
+
+def test_group_box_is_derived_from_its_children_not_its_own_box():
+    # The compositor never read a group's own `box` (issue #55) -- the plan
+    # now reports the same extent python-pptx computes: the union of the
+    # children's boxes, here deliberately different from the authored box.
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="card",
+                type="group",
+                box=_box(x="9in", y="9in", width="1in", height="1in"),
+                elements=[
+                    Element(id="a", type="text", value="a", box=_box(x="1in", y="1in", width="2in", height="1in")),
+                    Element(id="b", type="text", value="b", box=_box(x="4in", y="2in", width="1in", height="3in")),
+                ],
+            )
+        ],
+    )
+    (group,) = expand_slide(slide, None, design, strict=True).elements
+    assert (group.x, group.y, group.width, group.height) == (
+        1 * EMU_PER_INCH,
+        1 * EMU_PER_INCH,
+        4 * EMU_PER_INCH,
+        4 * EMU_PER_INCH,
+    )
+
+
+def test_group_without_a_box_resolves_from_its_children():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="card",
+                type="group",
+                elements=[Element(id="a", type="text", value="a", box=_box(x="1in", y="1in", width="2in", height="1in"))],
+            )
+        ],
+    )
+    (group,) = expand_slide(slide, None, design, strict=True).elements
+    assert group.width == 2 * EMU_PER_INCH
+
+
+def test_nested_group_box_is_derived_through_both_levels():
+    design = _design()
+    slide = Slide(
+        id="s1",
+        layout=None,
+        elements=[
+            Element(
+                id="outer",
+                type="group",
+                elements=[
+                    Element(id="a", type="text", value="a", box=_box(x="0in", y="0in", width="1in", height="1in")),
+                    Element(
+                        id="inner",
+                        type="group",
+                        elements=[Element(id="c", type="text", value="c", box=_box(x="3in", y="3in", width="1in", height="1in"))],
+                    ),
+                ],
+            )
+        ],
+    )
+    (outer,) = expand_slide(slide, None, design, strict=True).elements
+    inner = next(child for child in outer.children if child.id == "inner")
+    assert (inner.x, inner.width) == (3 * EMU_PER_INCH, 1 * EMU_PER_INCH)
+    assert (outer.x, outer.width, outer.height) == (0, 4 * EMU_PER_INCH, 4 * EMU_PER_INCH)

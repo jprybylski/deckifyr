@@ -812,7 +812,7 @@ paragraph below), while `shape`/`group`/`table`/`reportifyr`/`quarto`
 elements rendered as a static, labeled, dashed placeholder box. Issue
 #54 (0.3.1) extended `DRAGGABLE_TYPES` to also cover `shape`/`table`/
 `reportifyr`/`quarto` -- see this section's own later paragraph on that
-change for what's now different and why `group` alone stays excluded.
+change, and the following one for how `group` was added afterward (issue #55).
 `image` is draggable/resizable/rotatable like text, but still
 renders as a labeled placeholder rather than the real picture --
 confirmed against both the component and the API it calls: `GET
@@ -1202,39 +1202,48 @@ staleness reminder exists to catch, caught here by re-deriving the
 helper from the specific five-type list instead, with a regression test
 (`SlideCanvas.logic.test.ts`) pinning `slot`/`footnotes` to `false`.
 
-**`group` was deliberately left out of issue #54, not overlooked --
-its own `box` field is functionally vestigial, a real, confirmed
-discovery, not a hypothetical concern.** Tracing
-`deckifyr.pptx.compose._compose_element`'s `group` branch
-(`elif element.type == "group":`) shows it never reads `element.box` at
-all: a group's on-slide position is entirely the union of its own
-children's independently-placed, slide-absolute boxes (spec section
-7.3 -- group children were never given a group-relative coordinate
-system), reparented under a synthetic `add_group_shape` afterward; only
-`element.rotation` is applied post-hoc, rotating that auto-computed
-bounding box. `deckifyr.plan` still requires every element, `group`
-included, to resolve a `box` (`plan.py`'s own "no box/geometry
-resolved" check has no `group` exception), so the field exists,
-validates, and was already editable through `ElementInspector`'s
-numeric form before this issue touched anything -- silently writing a
-value the compositor has always ignored. Making `group` draggable on
-the canvas the same way as the other four would have compounded rather
-than fixed this: dragging it would look like it worked (the PATCH
-succeeds, the box persists) while doing nothing to the built deck,
-exactly the kind of silent-no-op this codebase otherwise refuses to
-ship (spec section 20 warning 7 -- see the furniture rotation/z_index
-422-rejection precedent elsewhere in this file). `SlideCanvas.tsx`'s
-`DRAGGABLE_TYPES` therefore still excludes `group`, and
-`ElementInspector.tsx`'s note for a selected `group` element was
-rewritten to explain the real mechanism ("a group's position comes
-entirely from its own children's boxes -- edit a child element's
-geometry instead") rather than the previous, now-inaccurate-for-four-
-of-five-types "elements aren't draggable on the canvas yet." Making
-`group` genuinely repositionable needs a real geometry feature --
-translating a canvas drag/resize/rotate into a delta applied to every
-descendant element's own box, recursively for nested groups -- tracked
-as its own, separate follow-up (issue #55) rather than folded into this
-one, since it's meaningfully bigger than a `DRAGGABLE_TYPES` entry.
+**`group` repositioning on the canvas (issue #55, follow-up to #54) works
+by making a group's box *derived*, not authored.** `deckifyr.pptx.compose`'s
+`group` branch never read `element.box` -- a group's on-slide extent is
+the union of its children's own slide-absolute boxes (python-pptx's
+`add_group_shape` computes it), and only `rotation` is applied to the
+group afterward. So `deckifyr.plan._resolve_element` now *derives* a
+group's `x/y/width/height` as that same union (the unrotated child
+boxes; `test_a_groups_planned_box_matches_the_built_group_shapes_extent`
+pins it against a real built `.pptx`), and `box` stopped being required
+for `group` (an authored one is still accepted and ignored -- no schema
+change or version bump). `GET /api/plan` therefore reports where a group
+really lands, with no client-side math. Writing is the other half: a
+`box` PATCH on a group element (`patch_element`, and
+`patch_layout_element` for a layout's group zone) is interpreted as "the
+new union box" and turned into an affine rewrite of every descendant
+*leaf* box (`deckifyr.editor.transform_group_boxes`: translate, plus
+scale about the old union origin when width/height change; a zero-size
+old axis falls back to translate-only, a non-positive new size is a
+422). Nested groups are recursed into, never written themselves.
+`deckifyr.editor.set_group_child_boxes` writes the result, creating only
+the overrides a slide needs: children inline in the slide are edited in
+place; a layout-inherited group with dict-keyed children gets minimal
+`{id: {box}}` overrides (the rest keeps inheriting); a layout group
+whose `elements` is a *list* gets deep-copied into the slide first,
+because a list replaces on merge (spec §7.2) and a partial override
+would drop the layout's other children. A layout-inherited group the
+slide never overrode gets an empty override entry created, rather than
+the 404 other element types still return. Because the API shape is
+unchanged, drag/resize/rotate, `ElementInspector`'s numeric form, and
+undo/redo (`inverseForBoxPatch` reads the now-truthful derived box) all
+work with no new route and no new history-entry type; the canvas just
+adds `group` to `DRAGGABLE_TYPES`/`isContentPlaceholderElement` and
+draws the children as faint outlines. `rotation` still writes the
+group's own field, and Konva's center pivot matches PowerPoint's pivot
+for a group (the center of the union box). `_resolve_layout_zone` now
+populates `children` for group zones too (Layouts mode). Verified live
+in a browser against a scratch project (drag, corner-resize, numeric
+rotate, undo x3, and a layout-inherited drag), not just by the unit
+tests. Known gaps, deliberately not folded in: individual children are
+still not selectable/editable in the UI, and `ElementList`'s Add-element
+form still offers `group`, which creates a childless group that
+`_has_content` silently drops from the plan.
 
 **`processx::process$kill()` only kills the top-level tracked PID, not
 its children -- a real bug this caused in `deck_stop_server()`, found

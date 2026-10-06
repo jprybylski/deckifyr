@@ -27,12 +27,16 @@
  * so all five render as a labeled placeholder box (`elementLabel`)
  * while still fully participating in drag/resize/rotate.
  *
- * `group` is the one element type that stays a static, non-draggable
- * placeholder -- not an oversight, see `isDraggableElement`'s own
- * comment below and issue #55: a group's on-slide position is derived
- * entirely from its own children's boxes at build time, not its own
- * `box` field, so dragging it here would silently write a value the
- * compositor ignores.
+ * `group` is draggable/resizable/rotatable too (issue #55), but it is
+ * not an ordinary box: the compositor never reads a group's own `box`,
+ * so `deckifyr.plan` *derives* it as the union of the group's children's
+ * boxes, and the backend treats a `box` PATCH on a group as "move/scale
+ * every descendant to fit this new union box" (`deckifyr.editor
+ * .transform_group_boxes`). That is why nothing here needs group-specific
+ * geometry: the group's `box` from `GET /api/plan` is already the real
+ * extent, and undo/redo (`inverseForBoxPatch`) round-trips through the
+ * same PATCH. Its children are drawn as faint, non-interactive outlines
+ * so it's visible what a drag will move.
  */
 import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text as KonvaText, Transformer, Group } from "react-konva";
@@ -48,11 +52,16 @@ import {
 } from "../geometry";
 import type { ElementPatchBody, ResolvedElement } from "../types";
 
-// `group` is deliberately excluded -- see the module docstring above
-// and issue #55: its own `box` field is ignored by the compositor, so
-// dragging it would silently write a value that never affects the
-// built deck.
-const DRAGGABLE_TYPES = new Set(["text", "markdown", "image", "shape", "table", "reportifyr", "quarto"]);
+const DRAGGABLE_TYPES = new Set([
+  "text",
+  "markdown",
+  "image",
+  "shape",
+  "table",
+  "reportifyr",
+  "quarto",
+  "group",
+]);
 
 // `__furniture_background`/`__furniture_status`/`__furniture_branding`/
 // `__furniture_page_number` (`inst/python/deckifyr/plan.py`'s own
@@ -77,12 +86,6 @@ export function isFurnitureElement(element: ResolvedElement): boolean {
   return element.id.startsWith(FURNITURE_PREFIX);
 }
 
-// `group` is not in `DRAGGABLE_TYPES` (issue #55): `deckifyr.pptx
-// .compose`'s `group` branch never reads a group element's own `box` --
-// its on-slide position is the union of its own children's independent
-// boxes, reparented under a synthetic group shape at build time. So a
-// group element still renders through the static-placeholder branch
-// below, same as before.
 export function isDraggableElement(element: ResolvedElement): boolean {
   return DRAGGABLE_TYPES.has(element.type) && !isFurnitureElement(element);
 }
@@ -94,7 +97,11 @@ export function isDraggableElement(element: ResolvedElement): boolean {
 // (`StatusIndicatorStyle`/`BrandingFurniture`/`PageNumberFurniture`) and
 // become draggable there.
 export function isDraggableFurnitureElement(element: ResolvedElement): boolean {
-  return DRAGGABLE_TYPES.has(element.type) && element.id !== "__furniture_background";
+  return (
+    DRAGGABLE_TYPES.has(element.type) &&
+    element.type !== "group" &&
+    element.id !== "__furniture_background"
+  );
 }
 
 // Only `StatusIndicatorStyle` (the `__furniture_status` element) has a
@@ -131,7 +138,7 @@ export function furnitureElementSupportsValue(elementId: string): boolean {
 // Layouts editor mode (issue #30, originally issue #23's since-
 // superseded per-slide Content/Layout tab): every zone is draggable
 // regardless of its `type` -- unlike `isDraggableElement`, which
-// excludes `group` (issue #55). A layout zone is a pure position
+// is gated on `DRAGGABLE_TYPES`. A layout zone is a pure position
 // slot (`layouts.yaml`'s own `slot`/`footnotes` types have no content of
 // their own at all, spec section 7.5), so gating on `DRAGGABLE_TYPES`
 // the way ordinary slide content is would make most of a typical
@@ -168,7 +175,21 @@ export function isContentPlaceholderElement(element: ResolvedElement): boolean {
     element.type === "shape" ||
     element.type === "table" ||
     element.type === "reportifyr" ||
-    element.type === "quarto"
+    element.type === "quarto" ||
+    element.type === "group"
+  );
+}
+
+/** A group's descendant leaf boxes (inches), slide-absolute -- what the
+ * compositor actually places (spec section 7.3), flattened through any
+ * nested groups. Drawn as outlines so a group drag shows what moves. */
+export function groupLeafBoxes(
+  element: ResolvedElement
+): Array<{ id: string; x: number; y: number; width: number; height: number }> {
+  return (element.children ?? []).flatMap((child) =>
+    child.children && child.children.length > 0
+      ? groupLeafBoxes(child)
+      : [{ id: child.id, ...boxToInches(child.box) }]
   );
 }
 
@@ -572,6 +593,20 @@ export default function SlideCanvas({ plan }: Props) {
                     stroke={isSelected ? "#2457a6" : "#dddddd"}
                     strokeWidth={isSelected ? 2 : 1}
                   />
+                  {element.type === "group" &&
+                    groupLeafBoxes(element).map((leaf) => (
+                      <Rect
+                        key={leaf.id}
+                        x={inchesToPixels(leaf.x, 1) - x}
+                        y={inchesToPixels(leaf.y, 1) - y}
+                        width={inchesToPixels(leaf.width, 1)}
+                        height={inchesToPixels(leaf.height, 1)}
+                        stroke="#7a93b8"
+                        strokeWidth={1}
+                        dash={[3, 3]}
+                        listening={false}
+                      />
+                    ))}
                   <KonvaText
                     text={isContentPlaceholderElement(element) ? elementLabel(element) : displayText(element)}
                     width={width}

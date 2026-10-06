@@ -365,3 +365,96 @@ def test_remove_element_raises_for_unknown_id_dict_form():
 def test_remove_element_raises_for_unknown_id_list_form():
     with pytest.raises(editor.ElementNotFoundError):
         editor.remove_element([{"id": "title"}], "does-not-exist")
+
+
+# --- group transforms (issue #55) ----------------------------------------
+
+_IN = 914_400
+
+
+def _leaf(id, x, y, w, h):
+    return {"id": id, "x": x * _IN, "y": y * _IN, "width": w * _IN, "height": h * _IN, "children": []}
+
+
+def test_transform_group_boxes_translates_every_leaf():
+    children = [_leaf("a", 1, 1, 2, 1), _leaf("b", 4, 2, 1, 1)]
+    old = (1 * _IN, 1 * _IN, 4 * _IN, 2 * _IN)
+    new = (3 * _IN, 5 * _IN, 4 * _IN, 2 * _IN)
+    changes = dict(editor.transform_group_boxes(children, old, new))
+    assert changes[("a",)] == (3 * _IN, 5 * _IN, 2 * _IN, 1 * _IN)
+    assert changes[("b",)] == (6 * _IN, 6 * _IN, 1 * _IN, 1 * _IN)
+
+
+def test_transform_group_boxes_scales_about_the_union_origin():
+    children = [_leaf("a", 1, 1, 2, 1), _leaf("b", 4, 2, 1, 1)]
+    old = (1 * _IN, 1 * _IN, 4 * _IN, 2 * _IN)
+    new = (1 * _IN, 1 * _IN, 8 * _IN, 4 * _IN)  # 2x on both axes
+    changes = dict(editor.transform_group_boxes(children, old, new))
+    assert changes[("a",)] == (1 * _IN, 1 * _IN, 4 * _IN, 2 * _IN)
+    assert changes[("b",)] == (7 * _IN, 3 * _IN, 2 * _IN, 2 * _IN)
+
+
+def test_transform_group_boxes_recurses_into_nested_groups_and_skips_their_own_box():
+    inner = {"id": "inner", "x": 0, "y": 0, "width": 0, "height": 0,
+             "children": [_leaf("c", 2, 2, 1, 1)]}
+    children = [_leaf("a", 1, 1, 1, 1), inner]
+    old = (1 * _IN, 1 * _IN, 2 * _IN, 2 * _IN)
+    new = (2 * _IN, 2 * _IN, 2 * _IN, 2 * _IN)
+    changes = dict(editor.transform_group_boxes(children, old, new))
+    assert set(changes) == {("a",), ("inner", "c")}
+    assert changes[("inner", "c")] == (3 * _IN, 3 * _IN, 1 * _IN, 1 * _IN)
+
+
+def test_transform_group_boxes_zero_old_axis_translates_only():
+    children = [_leaf("a", 1, 1, 0, 1)]
+    old = (1 * _IN, 1 * _IN, 0, 1 * _IN)
+    new = (2 * _IN, 1 * _IN, 5 * _IN, 1 * _IN)
+    ((_, box),) = editor.transform_group_boxes(children, old, new)
+    assert box == (2 * _IN, 1 * _IN, 0, 1 * _IN)
+
+
+@pytest.mark.parametrize("new", [(0, 0, 0, _IN), (0, 0, _IN, -1)])
+def test_transform_group_boxes_rejects_a_non_positive_new_size(new):
+    with pytest.raises(ValueError):
+        editor.transform_group_boxes([_leaf("a", 0, 0, 1, 1)], (0, 0, _IN, _IN), new)
+
+
+def test_set_group_child_boxes_edits_a_dict_form_group_in_place():
+    group = {"type": "group", "elements": {"a": {"type": "text", "box": {"x": "0in"}}}}
+    editor.set_group_child_boxes(group, [(("a",), (_IN, 2 * _IN, 3 * _IN, 4 * _IN))])
+    assert group["elements"]["a"]["box"] == {
+        "x": "1in", "y": "2in", "width": "3in", "height": "4in"
+    }
+    assert group["elements"]["a"]["type"] == "text"
+
+
+def test_set_group_child_boxes_edits_a_list_form_group_in_place():
+    group = {"elements": [{"id": "a", "type": "text"}, {"id": "b", "type": "text"}]}
+    editor.set_group_child_boxes(group, [(("b",), (_IN // 2, 0, _IN, _IN))])
+    assert "box" not in group["elements"][0]
+    assert group["elements"][1]["box"]["x"] == "0.5in"
+
+
+def test_set_group_child_boxes_overrides_a_dict_form_layout_zone_minimally():
+    inherited = {"type": "group", "elements": {"a": {"type": "text"}, "b": {"type": "text"}}}
+    override: dict = {}
+    editor.set_group_child_boxes(override, [(("a",), (0, 0, _IN, _IN))], inherited=inherited)
+    # Only the moved child is written; `b` keeps inheriting from the layout.
+    assert set(override["elements"]) == {"a"}
+    assert set(override["elements"]["a"]) == {"box"}
+
+
+def test_set_group_child_boxes_copies_a_list_form_layout_zone_before_editing():
+    inherited = {"elements": [{"id": "a", "type": "text"}, {"id": "b", "type": "text"}]}
+    override: dict = {}
+    editor.set_group_child_boxes(override, [(("a",), (0, 0, _IN, _IN))], inherited=inherited)
+    assert [child["id"] for child in override["elements"]] == ["a", "b"]
+    assert "box" in override["elements"][0] and "box" not in override["elements"][1]
+    # The layout's own list is untouched.
+    assert "box" not in inherited["elements"][0]
+
+
+def test_set_group_child_boxes_walks_nested_groups():
+    group = {"elements": {"inner": {"type": "group", "elements": {"c": {"type": "text"}}}}}
+    editor.set_group_child_boxes(group, [(("inner", "c"), (_IN, _IN, _IN, _IN))])
+    assert group["elements"]["inner"]["elements"]["c"]["box"]["x"] == "1in"

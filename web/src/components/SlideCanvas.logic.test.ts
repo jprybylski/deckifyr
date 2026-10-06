@@ -7,6 +7,7 @@ import {
   furnitureElementSupportsRotation,
   furnitureElementSupportsValue,
   furnitureElementSupportsZIndex,
+  groupLeafBoxes,
   isContentPlaceholderElement,
   isDraggableElement,
   isDraggableFurnitureElement,
@@ -62,7 +63,7 @@ describe("isFurnitureElement", () => {
 });
 
 describe("isDraggableElement", () => {
-  it("is draggable for text/markdown/image/shape/table/reportifyr/quarto elements", () => {
+  it("is draggable for text/markdown/image/shape/table/reportifyr/quarto/group elements", () => {
     for (const type of [
       "text",
       "markdown",
@@ -71,19 +72,53 @@ describe("isDraggableElement", () => {
       "table",
       "reportifyr",
       "quarto",
+      "group",
     ] as const) {
       expect(isDraggableElement(element({ id: "x", type }))).toBe(true);
     }
   });
 
-  it("is never draggable for group elements (issue #55 -- its box is ignored by the compositor)", () => {
-    expect(isDraggableElement(element({ id: "x", type: "group" }))).toBe(false);
+  it("is never draggable for synthesized furniture elements on an ordinary slide", () => {
+    expect(isDraggableElement(element({ id: "__furniture_status", type: "text" }))).toBe(false);
+  });
+});
+
+describe("groupLeafBoxes", () => {
+  const box = (x: number, y: number, w: number, h: number) => ({
+    x: `${x}in`,
+    y: `${y}in`,
+    width: `${w}in`,
+    height: `${h}in`,
+  });
+
+  it("flattens nested groups down to their leaf boxes, in inches", () => {
+    const group = element({
+      id: "outer",
+      type: "group",
+      children: [
+        element({ id: "a", type: "shape", box: box(1, 1, 2, 1) }),
+        element({
+          id: "inner",
+          type: "group",
+          box: box(0, 0, 0, 0),
+          children: [element({ id: "c", type: "text", box: box(3, 4, 1, 1) })],
+        }),
+      ],
+    });
+    expect(groupLeafBoxes(group)).toEqual([
+      { id: "a", x: 1, y: 1, width: 2, height: 1 },
+      { id: "c", x: 3, y: 4, width: 1, height: 1 },
+    ]);
+  });
+
+  it("is empty for a group with no children", () => {
+    expect(groupLeafBoxes(element({ id: "g", type: "group" }))).toEqual([]);
   });
 });
 
 describe("isContentPlaceholderElement", () => {
-  it("is true for image/shape/table/reportifyr/quarto -- no real content preview on this canvas", () => {
-    for (const type of ["image", "shape", "table", "reportifyr", "quarto"] as const) {
+  it("is true for image/shape/table/reportifyr/quarto/group -- no real content preview on this canvas", () => {
+    for (const type of ["image", "shape", "table", "reportifyr", "quarto", "group"] as const) {
       expect(isContentPlaceholderElement(element({ id: "x", type }))).toBe(true);
     }
   });
@@ -152,7 +187,7 @@ describe("isDraggableFurnitureElement", () => {
     ).toBe(false);
   });
 
-  it("still respects the ordinary draggable-type set", () => {
+  it("never offers a group on the furniture pseudo-slide (it has no design.yaml box to patch)", () => {
     expect(isDraggableFurnitureElement(element({ id: "x", type: "group" }))).toBe(false);
   });
 });

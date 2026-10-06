@@ -1154,3 +1154,178 @@ def test_schema_presentation_matches_model(client):
 def test_schema_unknown_doc_is_404(client):
     response = client.get("/api/schemas/nope")
     assert response.status_code == 404
+
+
+# --- group PATCH (issue #55) -------------------------------------------
+
+_GROUP_LAYOUTS = """\
+deckifyr: "0.1"
+layouts:
+  blank:
+    elements: {}
+  cards:
+    elements:
+      card:
+        type: group
+        elements:
+          a: {type: shape, shape_kind: rectangle, box: {x: 1in, y: 1in, width: 2in, height: 1in}}
+          b: {type: shape, shape_kind: rectangle, box: {x: 4in, y: 2in, width: 1in, height: 1in}}
+  listy:
+    elements:
+      card:
+        type: group
+        elements:
+          - {id: a, type: shape, shape_kind: rectangle, box: {x: 1in, y: 1in, width: 2in, height: 1in}}
+          - {id: b, type: shape, shape_kind: rectangle, box: {x: 4in, y: 2in, width: 1in, height: 1in}}
+"""
+
+_GROUP_PRESENTATION = """\
+deckifyr: "0.1"
+design: {base: design.yaml}
+layouts: layouts.yaml
+metadata: {title: Groups}
+build: {output: build/g.pptx, manifest: build/g.manifest.json}
+slides:
+  - id: inline-dict
+    layout: blank
+    elements:
+      grp:
+        type: group
+        elements:
+          a: {type: shape, shape_kind: rectangle, box: {x: 1in, y: 1in, width: 2in, height: 1in}}
+          b: {type: shape, shape_kind: rectangle, box: {x: 4in, y: 2in, width: 1in, height: 1in}}
+  - id: inline-list
+    layout: blank
+    elements:
+      - id: grp
+        type: group
+        elements:
+          - {id: a, type: shape, shape_kind: rectangle, box: {x: 1in, y: 1in, width: 2in, height: 1in}}
+          - {id: b, type: shape, shape_kind: rectangle, box: {x: 4in, y: 2in, width: 1in, height: 1in}}
+  - id: inherit-dict
+    layout: cards
+  - id: inherit-list
+    layout: listy
+"""
+
+
+@pytest.fixture
+def group_client(project_dir):
+    (project_dir / "layouts.yaml").write_text(_GROUP_LAYOUTS)
+    (project_dir / "presentation.yaml").write_text(_GROUP_PRESENTATION)
+    return TestClient(create_app(project_dir))
+
+
+def _boxes(client, slide_id, element_id):
+    slides = client.get("/api/plan").json()["slides"]
+    slide = next(s for s in slides if s["id"] == slide_id)
+    group = next(e for e in slide["elements"] if e["id"] == element_id)
+
+    def inches(box):
+        return tuple(float(box[k].removesuffix("in")) for k in ("x", "y", "width", "height"))
+
+    return inches(group["box"]), {c["id"]: inches(c["box"]) for c in group["children"]}
+
+
+@pytest.mark.parametrize(
+    ("slide_id", "element_id"),
+    [
+        ("inline-dict", "grp"),
+        ("inline-list", "grp"),
+        ("inherit-dict", "card"),
+        ("inherit-list", "card"),
+    ],
+)
+def test_patch_group_box_moves_every_child(group_client, slide_id, element_id):
+    group_box, children = _boxes(group_client, slide_id, element_id)
+    assert group_box == (1, 1, 4, 2)  # union of a and b, not any authored box
+
+    response = group_client.patch(
+        f"/api/slides/{slide_id}/elements/{element_id}", json={"box": {"x": 3, "y": 5}}
+    )
+    assert response.status_code == 200, response.text
+
+    group_box, children = _boxes(group_client, slide_id, element_id)
+    assert group_box == (3, 5, 4, 2)
+    assert children["a"] == (3, 5, 2, 1)
+    assert children["b"] == (6, 6, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("slide_id", "element_id"),
+    [("inline-dict", "grp"), ("inherit-dict", "card"), ("inherit-list", "card")],
+)
+def test_patch_group_box_resize_scales_children_about_the_group_origin(
+    group_client, slide_id, element_id
+):
+    response = group_client.patch(
+        f"/api/slides/{slide_id}/elements/{element_id}",
+        json={"box": {"x": 1, "y": 1, "width": 8, "height": 4}},
+    )
+    assert response.status_code == 200, response.text
+
+    group_box, children = _boxes(group_client, slide_id, element_id)
+    assert group_box == (1, 1, 8, 4)
+    assert children["a"] == (1, 1, 4, 2)
+    assert children["b"] == (7, 3, 2, 2)
+
+
+def test_patch_layout_inherited_dict_group_writes_minimal_overrides(group_client):
+    group_client.patch("/api/slides/inherit-dict/elements/card", json={"box": {"x": 2}})
+    presentation = group_client.get("/api/config/presentation").json()
+    slide = next(s for s in presentation["slides"] if s["id"] == "inherit-dict")
+    # Only boxes are overridden; `type`/`shape_kind` keep coming from the layout.
+    assert set(slide["elements"]["card"]["elements"]["a"]) == {"box"}
+    # The layout itself is untouched.
+    layouts = group_client.get("/api/config/layouts").json()
+    assert layouts["layouts"]["cards"]["elements"]["card"]["elements"]["a"]["box"]["x"] == "1in"
+
+
+def test_patch_layout_inherited_list_group_copies_the_list_into_the_slide(group_client):
+    group_client.patch("/api/slides/inherit-list/elements/card", json={"box": {"x": 2}})
+    presentation = group_client.get("/api/config/presentation").json()
+    slide = next(s for s in presentation["slides"] if s["id"] == "inherit-list")
+    ids = [child["id"] for child in slide["elements"]["card"]["elements"]]
+    assert ids == ["a", "b"]  # nothing the layout defined was dropped
+
+
+def test_patch_group_rotation_and_box_together(group_client):
+    group_client.patch(
+        "/api/slides/inline-dict/elements/grp", json={"box": {"x": 2}, "rotation": 30}
+    )
+    slides = group_client.get("/api/plan").json()["slides"]
+    group = next(e for e in slides[0]["elements"] if e["id"] == "grp")
+    assert group["rotation"] == 30
+    assert group["box"]["x"] == "2in"
+
+
+def test_patch_group_rejects_a_non_positive_size_and_changes_nothing(group_client):
+    response = group_client.patch(
+        "/api/slides/inline-dict/elements/grp", json={"box": {"width": 0}}
+    )
+    assert response.status_code == 422
+    assert _boxes(group_client, "inline-dict", "grp")[0] == (1, 1, 4, 2)
+    assert group_client.get("/api/plan").json()["dirty"] is False
+
+
+def test_layout_zone_group_exposes_children_and_a_derived_box(group_client):
+    layout = next(
+        l for l in group_client.get("/api/layouts").json()["layouts"] if l["id"] == "__layout__cards"
+    )
+    (card,) = layout["elements"]
+    assert card["box"] == {"x": "1in", "y": "1in", "width": "4in", "height": "2in"}
+    assert [child["id"] for child in card["children"]] == ["a", "b"]
+
+
+def test_patch_layout_group_zone_moves_its_children_in_layouts_yaml(group_client):
+    response = group_client.patch(
+        "/api/layouts/cards/elements/card", json={"box": {"x": 3, "width": 8}}
+    )
+    assert response.status_code == 200, response.text
+    layouts = group_client.get("/api/config/layouts").json()
+    elements = layouts["layouts"]["cards"]["elements"]["card"]["elements"]
+    assert elements["a"]["box"]["x"] == "3in"
+    assert elements["a"]["box"]["width"] == "4in"  # 2in scaled by 8/4
+    assert elements["b"]["box"]["x"] == "9in"
+    # And a slide using that layout sees the new geometry.
+    assert _boxes(group_client, "inherit-dict", "card")[0] == (3, 1, 8, 2)

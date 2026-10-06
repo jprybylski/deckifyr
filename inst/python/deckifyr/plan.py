@@ -417,6 +417,9 @@ def _iter_child_entries(
         yield child_id, child
 
 
+_BOX_KEYS = ("x", "y", "width", "height")
+
+
 def _resolve_element(
     slide_id: str,
     element_id: str,
@@ -478,7 +481,10 @@ def _resolve_element(
             )
 
     box = merged.get("box")
-    if box is None:
+    # A `group`'s on-slide extent is derived from its children (below), not
+    # authored -- the compositor never read a group's own `box`, so it is
+    # optional for `group` only (issue #55).
+    if box is None and element_type != "group":
         raise ContentValidationError(
             f"slide {slide_id!r}, element {element_id!r}: no box/"
             "geometry resolved for this element"
@@ -518,6 +524,27 @@ def _resolve_element(
                 children.append(resolved_child)
         children.sort(key=lambda e: (e.z_index, e.order))
 
+    if element_type == "group" and children:
+        # Same extent python-pptx computes for `add_group_shape`: the union
+        # of the children's own (unrotated) boxes. Deriving it here keeps
+        # `GET /api/plan` truthful about where a group actually lands, so
+        # the web editor can move/scale it (issue #55).
+        left = min(child.x for child in children)
+        top = min(child.y for child in children)
+        geometry = (
+            left,
+            top,
+            max(child.x + child.width for child in children) - left,
+            max(child.y + child.height for child in children) - top,
+        )
+    elif box is not None:
+        geometry = tuple(parse_length(box[key], strict=strict) for key in _BOX_KEYS)
+    else:
+        raise ContentValidationError(
+            f"slide {slide_id!r}, group {element_id!r}: none of its children "
+            "resolved to anything, and it has no box of its own to fall back on"
+        )
+
     rotation = merged.get("rotation")
     z_index = merged.get("z_index")
     fit = merged.get("fit")
@@ -548,10 +575,10 @@ def _resolve_element(
         type=element_type,
         value=merged.get("value"),
         source=merged.get("source"),
-        x=parse_length(box["x"], strict=strict),
-        y=parse_length(box["y"], strict=strict),
-        width=parse_length(box["width"], strict=strict),
-        height=parse_length(box["height"], strict=strict),
+        x=geometry[0],
+        y=geometry[1],
+        width=geometry[2],
+        height=geometry[3],
         rotation=rotation if rotation is not None else design.defaults.rotation,
         z_index=z_index if z_index is not None else 0,
         order=order,

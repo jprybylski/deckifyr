@@ -13,7 +13,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 
-from deckifyr.plan import expand_presentation
+from deckifyr.plan import expand_presentation, expand_slide
 from deckifyr.pptx.compose import _compute_image_placement, compose_and_write
 from deckifyr.schema.design import (
     BrandingFurniture,
@@ -1193,3 +1193,22 @@ def test_preview_command_missing_libreoffice_still_raises(project, monkeypatch):
             layouts_path=project / "layouts.yaml",
             force_previews=True,
         )
+
+
+def test_a_groups_planned_box_matches_the_built_group_shapes_extent(project):
+    # The plan derives a group's box from its children (issue #55); that
+    # must be exactly what python-pptx's `add_group_shape` computes, since
+    # the web editor moves/scales groups by that box.
+    presentation = _shape_group_presentation()
+    presentation.slides[0].elements[0].box = Box(x="9in", y="9in", width="1in", height="1in")
+    result = _build(project, presentation, _design())
+
+    prs = Presentation(str(result.output_path))
+    (group,) = list(list(prs.slides)[0].shapes)
+    resolved = expand_slide(presentation.slides[0], None, _design(), strict=True).elements[0]
+    assert (group.left, group.top, group.width, group.height) == (
+        resolved.x,
+        resolved.y,
+        resolved.width,
+        resolved.height,
+    )

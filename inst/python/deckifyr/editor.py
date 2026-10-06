@@ -65,14 +65,24 @@ parses to:
   is still a `set_value` call against that element's own path (e.g.
   `slides[0].elements.title.value`), not something `add_element`/
   `remove_element` do.
+- **Group transforms** (`transform_group_boxes`/`set_group_child_boxes`,
+  issue #55). A `group`'s on-slide extent is derived from its children
+  (the compositor never read the group's own `box`), so moving or
+  scaling one means rewriting every descendant leaf's own box:
+  `transform_group_boxes` is the pure geometry (a resolved children tree
+  and old/new union boxes in, new leaf boxes out), `set_group_child_boxes`
+  writes the result into a raw slide-override/layout-zone dict, creating
+  only the override entries a slide actually needs.
 """
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
 from deckifyr.schema.layouts import BLANK_LAYOUT_ID
+from deckifyr.schema.units import EMU_PER_INCH
 
 _PATH_TOKEN_RE = re.compile(r"([^.\[\]]+)|\[(-?\d+)\]")
 
@@ -475,3 +485,121 @@ def remove_element(
         raise ElementNotFoundError(f"no element with id {id!r}")
     del elements[id]
     return elements
+
+
+# --- group transforms (issue #55) ----------------------------------------
+
+# One resolved group child, as plain data: `{"id", "x", "y", "width",
+# "height", "children"}` with EMU ints -- the shape `deckifyr.web.app`
+# builds from either a `ResolvedElement` (a slide) or a layout zone's
+# `Element`, so this module stays free of both.
+GroupNode = dict[str, Any]
+BoxEmu = tuple[int, int, int, int]
+
+
+def transform_group_boxes(
+    children: list[GroupNode], old: BoxEmu, new: BoxEmu
+) -> list[tuple[tuple[str, ...], BoxEmu]]:
+    """Map every descendant *leaf* of a group from the group's `old` union
+    box onto `new`, as `(id_path, (x, y, width, height))` pairs in EMU.
+
+    The map is affine per axis: `x' = new_x + (x - old_x) * sx` with
+    `sx = new_width / old_width`. A zero-width/-height `old` axis can't
+    define a scale, so it falls back to translation only (`sx = 1`). A
+    non-positive `new` width/height is rejected (`ValueError`) -- it would
+    collapse or mirror the children. Nested groups are recursed into, not
+    emitted themselves: a group's own box is derived, never written.
+    """
+    old_x, old_y, old_w, old_h = old
+    new_x, new_y, new_w, new_h = new
+    if new_w <= 0 or new_h <= 0:
+        raise ValueError("a group's width and height must be greater than zero")
+    sx = new_w / old_w if old_w > 0 else 1.0
+    sy = new_h / old_h if old_h > 0 else 1.0
+
+    changes: list[tuple[tuple[str, ...], BoxEmu]] = []
+
+    def walk(nodes: list[GroupNode], prefix: tuple[str, ...]) -> None:
+        for node in nodes:
+            path = (*prefix, node["id"])
+            if node.get("children"):
+                walk(node["children"], path)
+                continue
+            changes.append(
+                (
+                    path,
+                    (
+                        round(new_x + (node["x"] - old_x) * sx),
+                        round(new_y + (node["y"] - old_y) * sy),
+                        round(node["width"] * sx),
+                        round(node["height"] * sy),
+                    ),
+                )
+            )
+
+    walk(children, ())
+    return changes
+
+
+def _find_child(container: Any, child_id: str) -> Any:
+    """The entry for `child_id` in a dict- or list-keyed `elements` value,
+    or `None`."""
+    if isinstance(container, dict):
+        return container.get(child_id)
+    if isinstance(container, list):
+        return next(
+            (e for e in container if isinstance(e, dict) and e.get("id") == child_id), None
+        )
+    return None
+
+
+def set_group_child_boxes(
+    group: dict[str, Any],
+    changes: list[tuple[tuple[str, ...], BoxEmu]],
+    *,
+    inherited: dict[str, Any] | None = None,
+) -> None:
+    """Write `changes` (from `transform_group_boxes`) into `group`, a raw
+    `elements`-bearing element dict (a slide's override of a group, or a
+    layout's group zone), in place.
+
+    `inherited` is the layout zone the slide's group overrides, when
+    there is one. A dict-keyed `elements` merges per child id, so a missing
+    entry is just created (`{id: {"box": ...}}`) and the rest of the
+    layout's children keep inheriting. A list-keyed one *replaces* on merge
+    (spec section 7.2), so a slide with no `elements` of its own for a
+    list-keyed layout group first gets a deep copy of that list -- a
+    partial override there would silently drop the layout's other
+    children.
+    """
+
+    def formatted(emu: int) -> str:
+        text = f"{emu / EMU_PER_INCH:.5f}".rstrip("0").rstrip(".")
+        return f"{'0' if text in ('', '-0') else text}in"
+
+    for path, (x, y, width, height) in changes:
+        node, inherited_node = group, inherited
+        for child_id in path:
+            if "elements" not in node:
+                inherited_children = (inherited_node or {}).get("elements")
+                node["elements"] = (
+                    copy.deepcopy(inherited_children)
+                    if isinstance(inherited_children, list)
+                    else {}
+                )
+            container = node["elements"]
+            child = _find_child(container, child_id)
+            if child is None:
+                if isinstance(container, list):
+                    child = {"id": child_id}
+                    container.append(child)
+                else:
+                    child = container.setdefault(child_id, {})
+            inherited_node = _find_child((inherited_node or {}).get("elements"), child_id)
+            node = child
+        node["box"] = {
+            "x": formatted(x),
+            "y": formatted(y),
+            "width": formatted(width),
+            "height": formatted(height),
+        }

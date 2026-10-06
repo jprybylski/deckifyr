@@ -1,5 +1,17 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `group` elements can now be dragged, resized, and rotated on the web
+  editor's canvas, in both slide and Layouts mode (issue #55). A group's
+  box is now derived from its children's boxes (what the compositor
+  always actually used), and moving or resizing it rewrites every child's
+  own box -- creating only the slide overrides needed for children a
+  layout supplies. A group's own `box` is now optional in `presentation.yaml`/
+  `layouts.yaml`.
+
 # deckifyr 0.3.2
 
 ## Added
