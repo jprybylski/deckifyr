@@ -61,3 +61,32 @@ test("editing Deck status via Raw and Apply round-trips through the API", async 
   await page.getByRole("button", { name: "Editor" }).click();
   await expect(page.getByLabel("Deck status")).toHaveValue("e2e-test-status");
 });
+
+test("the sections rail switches panes", async ({ page }) => {
+  const rail = page.getByRole("navigation", { name: "Sections" });
+  await expect(rail.getByRole("button", { name: "General" })).toHaveAttribute("aria-current", "true");
+  await rail.getByRole("button", { name: /^slide$/ }).click();
+  await expect(rail.getByRole("button", { name: /^slide$/ })).toHaveAttribute("aria-current", "true");
+  // A length field is a number plus a unit select.
+  await expect(page.getByLabel("unit").first()).toBeVisible();
+});
+
+test("a length edited in the Form round-trips through Apply", async ({ page }) => {
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: /^slide$/ }).click();
+  await page.getByLabel("width", { exact: true }).fill("12");
+  await expect(page.getByText("Unapplied changes")).toBeVisible();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByText(/Applied to this session/)).toBeVisible();
+
+  const design = await (await page.request.get("/api/config/design")).json();
+  expect(design.slide.width).toMatch(/^12(in|pt|cm|mm)$/);
+  await expect(page.getByText("Unapplied changes")).toHaveCount(0);
+});
+
+test("a color entry can be switched between a literal and a derived color", async ({ page }) => {
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: /^colors/ }).click();
+  const derived = page.getByRole("radio", { name: "Derived" }).first();
+  await derived.check({ force: true });
+  // The derived form exposes the base color field.
+  await expect(page.getByLabel("base", { exact: true }).first()).toBeVisible();
+});

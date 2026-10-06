@@ -217,13 +217,23 @@ plan and lets you:
   syntax-highlighted, live-validated raw JSON -- toggle between the two
   at any time. Either way, nothing is written back to disk until it
   passes the same server-side schema validation `deck_set_config()`
-  uses. Any field whose current value is a literal hex color -- most
-  visibly `design.yaml`'s own `colors:` palette -- gets a small color
-  swatch next to it, backed by the browser's native color picker:
+  uses. The form lists the document's sections down the left (one pane
+  at a time; the badge counts a section's entries), shows each field's
+  YAML key with a short description from the schema, and picks a control
+  to match: switches for on/off values, segmented buttons for short
+  choices, a number plus a unit for lengths (the arrow keys step it), and
+  for colors a swatch -- backed by the browser's native color picker --
+  fused to a text field that also offers the document's own color tokens
+  while it has focus. An entry that can take more than one shape, such
+  as a `colors:` entry that is either a literal color or derived from
+  another, shows a switch between them. Edits stay local, flagged
+  "Unapplied changes", until **Apply** (or **Revert**) -- and, as
+  everywhere in this editor, nothing reaches disk until the header's
+  Save.
 
   <div style="margin: 1rem 0;">
-  <img src="../man/figures/web-app-color-swatch.png" alt="The Config tab's Form view on design.yaml's colors block: text, muted, primary, and accent entries, each with a small color swatch (black, gray, blue, red respectively) next to its hex value" width="700" loading="lazy">
-  <p style="font-size:0.85em;">Color swatches on design.yaml's colors palette</p>
+  <img src="../man/figures/web-app-color-swatch.png" alt="The Config tab's Form view on design.yaml with the colors section selected: text, muted, primary and accent entries, each with a Color/Derived switch and a swatch beside its hex value, and a derived primary-tint entry showing its base and lighten fields" width="700" loading="lazy">
+  <p style="font-size:0.85em;">The Config tab's form on design.yaml's colors section</p>
   </div>
 * On the Build tab, see and edit where the built `.pptx` will go
   (`presentation.yaml`'s `build.output`) right there, instead of only

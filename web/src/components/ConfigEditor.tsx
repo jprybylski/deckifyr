@@ -42,10 +42,13 @@
  * `usePlan`'s own mutations pick this up for free via `refetch()`
  * (`GET /api/plan` carries `dirty` too), but this component has no
  * `usePlan` access, so it dispatches directly. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getConfig, getSchema, putConfig } from "../api/client";
 import { highlightJson } from "../jsonHighlight";
 import SchemaForm, { type JSONSchema } from "./SchemaForm";
+import { ColorTokensContext, Hint } from "./schemaWidgets";
+import { HEX_COLOR_RE } from "./schemaUtils";
+import { applySection, buildSections, sectionSchema, sectionValue } from "../configSections";
 import { useAppContext } from "../state/AppContext";
 import type { ConfigDocName } from "../types";
 
@@ -64,6 +67,9 @@ export default function ConfigEditor() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // JSON of the last loaded/applied document -- what "modified" and Revert compare against.
+  const [baseline, setBaseline] = useState("");
+  const [activeSection, setActiveSection] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
@@ -79,6 +85,9 @@ export default function ConfigEditor() {
         setValue(data);
         setSchema(docSchema);
         setText(JSON.stringify(data, null, 2));
+        setBaseline(JSON.stringify(data));
+        setActiveSection(null);
+        setSavedAt(null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -150,6 +159,7 @@ export default function ConfigEditor() {
       const fresh = await getConfig(doc);
       setValue(fresh);
       setText(JSON.stringify(fresh, null, 2));
+      setBaseline(JSON.stringify(fresh));
       setRawError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -158,12 +168,44 @@ export default function ConfigEditor() {
     }
   }
 
+  const defs = (schema?.$defs as Record<string, JSONSchema> | undefined) ?? {};
+  const modified = value !== null && JSON.stringify(value) !== baseline;
+  const sections = useMemo(
+    () => (schema && value ? buildSections(schema, defs, value) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [schema, value]
+  );
+  const section = sections.find((sec) => sec.id === activeSection) ?? sections[0];
+
+  // The document's own literal color tokens, offered as chips on any
+  // color field -- only `design.yaml` has a `colors:` block.
+  const colorTokens = useMemo(() => {
+    const colors = (value?.colors ?? {}) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(colors).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string" && HEX_COLOR_RE.test(entry[1])
+      )
+    );
+  }, [value]);
+
+  function handleRevert() {
+    const original = JSON.parse(baseline) as Record<string, unknown>;
+    setValue(original);
+    setText(JSON.stringify(original, null, 2));
+    setRawError(null);
+    setError(null);
+  }
+
   return (
     <div className="config-editor">
       <div className="config-editor__header">
-        <label>
+        <label className="config-editor__doc">
           Document
-          <select value={doc} onChange={(e) => setDoc(e.target.value as ConfigDocName)}>
+          <select
+            className="sf-control sf-select"
+            value={doc}
+            onChange={(e) => setDoc(e.target.value as ConfigDocName)}
+          >
             {DOCS.map((d) => (
               <option key={d} value={d}>
                 {d}
@@ -189,9 +231,7 @@ export default function ConfigEditor() {
         </div>
         <p className="config-editor__note">
           {view === "form"
-            ? "Typed fields generated from the document's own schema. Some values (e.g. colors' " +
-              "derived-vs-literal entries) fall back to a small raw-JSON field this form can't " +
-              "model generically."
+            ? "Fields are generated from the document's own schema."
             : "Editing as JSON (the API's own wire format) -- not the on-disk YAML syntax. " +
               "Comments and formatting in the YAML file itself aren't preserved."}
         </p>
@@ -202,13 +242,42 @@ export default function ConfigEditor() {
       ) : view === "form" ? (
         schema &&
         value !== null && (
-          <div className="config-editor__form">
-            <SchemaForm
-              schema={schema}
-              defs={(schema.$defs as Record<string, JSONSchema>) ?? {}}
-              value={value}
-              onChange={(next) => setValue(next as Record<string, unknown>)}
-            />
+          <div className="config-editor__body">
+            <nav className="config-editor__rail" aria-label="Sections">
+              {sections.map((sec) => (
+                <button
+                  key={sec.id}
+                  type="button"
+                  className="config-editor__rail-item"
+                  aria-current={sec.id === section?.id ? "true" : undefined}
+                  onClick={() => setActiveSection(sec.id)}
+                >
+                  <span className="config-editor__rail-label">{sec.label}</span>
+                  {sec.count !== undefined && <span className="sf-count">{sec.count}</span>}
+                </button>
+              ))}
+            </nav>
+            <div className="config-editor__form">
+              {section && (
+                <>
+                  {section.keys.length === 1 && (
+                    <header className="config-editor__section-head">
+                      <h2 className="sf-key">{section.label}</h2>
+                      <Hint text={sectionSchema(schema, section).description} />
+                    </header>
+                  )}
+                  <ColorTokensContext.Provider value={colorTokens}>
+                    <SchemaForm
+                      key={`${doc}:${section.id}`}
+                      schema={sectionSchema(schema, section)}
+                      defs={defs}
+                      value={sectionValue(value, section)}
+                      onChange={(next) => setValue(applySection(value, section, next))}
+                    />
+                  </ColorTokensContext.Provider>
+                </>
+              )}
+            </div>
           </div>
         )
       ) : (
@@ -231,21 +300,6 @@ export default function ConfigEditor() {
         </div>
       )}
 
-      <div className="config-editor__actions">
-        <button
-          type="button"
-          disabled={saving || loading || (view === "raw" && !!rawError)}
-          onClick={() => void handleApply()}
-        >
-          {saving ? "Applying…" : "Apply"}
-        </button>
-        {savedAt && !error && (
-          <span className="config-editor__saved">
-            Applied to this session -- use the header's Save to write it to disk.
-          </span>
-        )}
-      </div>
-
       {view === "raw" && rawError && (
         <pre className="config-editor__error" role="alert">
           invalid JSON: {rawError}
@@ -256,6 +310,30 @@ export default function ConfigEditor() {
           {error}
         </pre>
       )}
+
+      <div className="config-editor__actions">
+        <button
+          type="button"
+          className="sf-btn sf-btn--primary"
+          disabled={saving || loading || (view === "raw" && !!rawError)}
+          onClick={() => void handleApply()}
+        >
+          {saving ? "Applying…" : "Apply"}
+        </button>
+        {modified && (
+          <>
+            <button type="button" className="sf-btn sf-btn--ghost" onClick={handleRevert}>
+              Revert
+            </button>
+            <span className="config-editor__modified">Unapplied changes</span>
+          </>
+        )}
+        {savedAt && !error && !modified && (
+          <span className="config-editor__saved">
+            Applied to this session -- use the header's Save to write it to disk.
+          </span>
+        )}
+      </div>
     </div>
   );
 }

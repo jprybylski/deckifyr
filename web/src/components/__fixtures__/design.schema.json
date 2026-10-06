@@ -5,20 +5,28 @@
       "description": "Explicit geometry: origin top-left, +x right, +y down (spec section 7.3).\n\nFields keep their raw unit strings; `deckifyr.schema.units.parse_length`\nconverts them to EMUs during plan resolution, not here.",
       "properties": {
         "x": {
+          "description": "Distance from the slide's left edge, with an explicit unit.",
           "title": "X",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "y": {
+          "description": "Distance from the slide's top edge, with an explicit unit.",
           "title": "Y",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "width": {
+          "description": "Box width with an explicit unit.",
           "title": "Width",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "height": {
+          "description": "Box height with an explicit unit.",
           "title": "Height",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         }
       },
       "required": [
@@ -35,11 +43,13 @@
       "description": "An organization/department label. Unlike `status`/`page_number`\nthere's no `enabled` flag -- whether the `furniture.branding` block is\npresent at all *is* the toggle, matching spec section 7.8's own\nexample YAML. `text` is a literal string: general variable/expression\nsubstitution (e.g. `{organization}`) is a separate, still-open design\nquestion (spec section 21) that this does not preempt.",
       "properties": {
         "text": {
+          "description": "Literal label text, such as an organization or department name.",
           "title": "Text",
           "type": "string"
         },
         "box": {
-          "$ref": "#/$defs/Box"
+          "$ref": "#/$defs/Box",
+          "description": "Where the label is drawn."
         },
         "style": {
           "anyOf": [
@@ -51,6 +61,7 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name for the label.",
           "title": "Style"
         }
       },
@@ -66,8 +77,10 @@
       "description": "One `colors:` entry computed from another token/literal instead of\na hand-picked literal hex value. `base` may name a `colors:` token or\na literal hex value, the same \"token or bare literal\" convention\nevery other color-bearing field in `design.yaml` already uses.\nExactly one of `lighten`/`darken`/`saturate`/`desaturate`/`mix` must\nbe set; `weight` (0.0-1.0, default 0.5 when `mix` is set) is only\nvalid alongside `mix` -- it's the fraction of `mix`'s own color\nblended in (0.0 = all `base`, 1.0 = all `mix`).",
       "properties": {
         "base": {
+          "description": "The color to start from: a `colors:` token or a literal hex value.",
           "title": "Base",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "color"
         },
         "lighten": {
           "anyOf": [
@@ -79,6 +92,7 @@
             }
           ],
           "default": null,
+          "description": "Lighten the base by this amount (0.0-1.0).",
           "title": "Lighten"
         },
         "darken": {
@@ -91,6 +105,7 @@
             }
           ],
           "default": null,
+          "description": "Darken the base by this amount (0.0-1.0).",
           "title": "Darken"
         },
         "saturate": {
@@ -103,6 +118,7 @@
             }
           ],
           "default": null,
+          "description": "Increase the base's saturation by this amount (0.0-1.0).",
           "title": "Saturate"
         },
         "desaturate": {
@@ -115,18 +131,21 @@
             }
           ],
           "default": null,
+          "description": "Decrease the base's saturation by this amount (0.0-1.0).",
           "title": "Desaturate"
         },
         "mix": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Blend in this color (token or hex) instead of adjusting lightness or saturation.",
           "title": "Mix"
         },
         "weight": {
@@ -139,6 +158,7 @@
             }
           ],
           "default": null,
+          "description": "With `mix`: how much of the mixed color to blend in, from 0.0 (all base) to 1.0 (all mix).",
           "title": "Weight"
         }
       },
@@ -153,6 +173,7 @@
       "properties": {
         "overflow": {
           "default": "error",
+          "description": "What to do when text does not fit its box: fail the build, shrink it, clip it, or let it continue.",
           "enum": [
             "error",
             "shrink",
@@ -164,6 +185,7 @@
         },
         "image_fit": {
           "default": "contain",
+          "description": "How an image fills its box when no `fit` is set on the element.",
           "enum": [
             "contain",
             "cover",
@@ -175,13 +197,16 @@
         },
         "rotation": {
           "default": 0,
+          "description": "Rotation in degrees applied to elements that set none.",
           "title": "Rotation",
           "type": "number"
         },
         "footer_height": {
           "default": "0.4in",
+          "description": "Height of a reportifyr footer box placed directly beneath its element.",
           "title": "Footer Height",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "footer_style": {
           "anyOf": [
@@ -193,6 +218,7 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name used for footers when the element sets no `style`; unset uses a small built-in style.",
           "title": "Footer Style"
         },
         "table_style": {
@@ -205,6 +231,7 @@
             }
           ],
           "default": null,
+          "description": "`table_styles` name used by tables that set no `table_style`; unset keeps the default template look.",
           "title": "Table Style"
         }
       },
@@ -215,10 +242,12 @@
       "additionalProperties": true,
       "properties": {
         "body": {
+          "description": "Default font family for body text.",
           "title": "Body",
           "type": "string"
         },
         "heading": {
+          "description": "Default font family for headings.",
           "title": "Heading",
           "type": "string"
         },
@@ -232,6 +261,7 @@
             }
           ],
           "default": null,
+          "description": "Font family for code and other monospaced text.",
           "title": "Monospace"
         }
       },
@@ -255,7 +285,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Draft/final status marks; a build selects one placement via `status_indicator`."
         },
         "branding": {
           "anyOf": [
@@ -266,7 +297,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Organization label; present means shown."
         },
         "page_number": {
           "anyOf": [
@@ -277,7 +309,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Running page number."
         }
       },
       "title": "Furniture",
@@ -288,6 +321,7 @@
       "description": "A linear gradient fill, usable anywhere a plain color fill is\n(`SlideSize.background_gradient`, a `ShapeStyle.fill`). `angle`\nfollows `python-pptx`'s own `FillFormat.gradient_angle` convention:\n0 is left-to-right, increasing angles rotate clockwise, so 90 (the\ndefault) is top-to-bottom -- not the CSS `linear-gradient()`\nconvention some authors may expect from other tools.",
       "properties": {
         "stops": {
+          "description": "Color stops along the gradient path (at least 2).",
           "items": {
             "$ref": "#/$defs/GradientStop"
           },
@@ -296,6 +330,7 @@
         },
         "angle": {
           "default": 90,
+          "description": "Direction in degrees: 0 runs left to right and 90 (the default) top to bottom, increasing clockwise.",
           "title": "Angle",
           "type": "number"
         }
@@ -311,10 +346,13 @@
       "description": "One color/position pair along a `Gradient`'s path -- mirrors\n`python-pptx`'s own `a:gs` element, spec section 7.4's \"token or bare\nliteral\" convention for `color` included: `color` may name a\n`design.yaml` `colors:` token or a literal hex value, resolved the\nsame way `TextStyle.color`/`ShapeStyle.fill` already are.",
       "properties": {
         "color": {
+          "description": "Stop color: a `colors:` token name or a literal hex value.",
           "title": "Color",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "color"
         },
         "position": {
+          "description": "Where along the gradient this stop sits, from 0.0 (start) to 1.0 (end).",
           "title": "Position",
           "type": "number"
         }
@@ -332,16 +370,19 @@
       "properties": {
         "enabled": {
           "default": true,
+          "description": "Show the page number on every slide.",
           "title": "Enabled",
           "type": "boolean"
         },
         "format": {
           "default": "{page} / {total}",
+          "description": "Text pattern; `{page}` is the 1-indexed slide number and `{total}` the slide count.",
           "title": "Format",
           "type": "string"
         },
         "box": {
-          "$ref": "#/$defs/Box"
+          "$ref": "#/$defs/Box",
+          "description": "Where the page number is drawn."
         },
         "style": {
           "anyOf": [
@@ -353,6 +394,7 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name for the page number.",
           "title": "Style"
         }
       },
@@ -369,7 +411,8 @@
         "fill": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "$ref": "#/$defs/Gradient"
@@ -379,30 +422,35 @@
             }
           ],
           "default": null,
+          "description": "Fill: a color token or hex value, or a gradient. Unset leaves the shape unfilled.",
           "title": "Fill"
         },
         "line_color": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Outline color: a `colors:` token name or a literal hex value.",
           "title": "Line Color"
         },
         "line_width": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "length"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Outline thickness with an explicit unit, e.g. `1pt`.",
           "title": "Line Width"
         }
       },
@@ -413,22 +461,30 @@
       "additionalProperties": false,
       "properties": {
         "width": {
+          "description": "Slide width with an explicit unit, e.g. `13.333in`.",
           "title": "Width",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "height": {
+          "description": "Slide height with an explicit unit, e.g. `7.5in`.",
           "title": "Height",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "background": {
           "default": "#FFFFFF",
+          "description": "Solid slide background color; also the fallback behind a non-covering image or gradient.",
           "title": "Background",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "color"
         },
         "safe_area": {
           "default": "0in",
+          "description": "Inset kept clear of content on every slide edge.",
           "title": "Safe Area",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "background_image": {
           "anyOf": [
@@ -440,6 +496,7 @@
             }
           ],
           "default": null,
+          "description": "Optional project-relative image painted behind all slide content.",
           "title": "Background Image"
         },
         "background_gradient": {
@@ -451,7 +508,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Optional gradient painted as the slide's native background fill, in front of `background`."
         }
       },
       "required": [
@@ -474,7 +532,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Full-page, usually diagonal, watermark placement."
         },
         "corner_tr": {
           "anyOf": [
@@ -485,7 +544,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Small label in the top-right corner."
         },
         "corner_tl": {
           "anyOf": [
@@ -496,7 +556,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Small label in the top-left corner."
         },
         "corner_bl": {
           "anyOf": [
@@ -507,7 +568,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Small label in the bottom-left corner."
         },
         "corner_br": {
           "anyOf": [
@@ -518,7 +580,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Small label in the bottom-right corner."
         }
       },
       "title": "StatusFurniture",
@@ -529,7 +592,8 @@
       "description": "One `status_indicator` placement's own appearance -- a status/\nwatermark mark has no content of its own (spec section 7.8's\n`furniture.status` never carries a default word the way, say,\n`branding.text` does): `presentation.yaml`'s own\n`PresentationDocument.watermark` supplies the actual text, any build\nmay choose, and this only says where/how it's drawn once chosen.\n\n`z_index` (unset by default) is what actually chooses which of the\ntwo conventional \"status mark\" designs this is: left unset, it keeps\nevery other furniture item's own default\n(`_FURNITURE_OVERLAY_Z_INDEX`, well behind ordinary content) -- the\nright choice for a small, simple corner label (a `corner_*` field\nbelow). Set to a large positive value, it paints on top of every\nordinary element instead -- a real diagonal watermark (Word/Google\nDocs style) needs to read on top of whatever content it crosses, not\nhide behind it, which is also why that use case should pair\n`rotation` with a low `opacity` on its `style` (`TextStyle.opacity`)\nrather than relying on placement alone.",
       "properties": {
         "box": {
-          "$ref": "#/$defs/Box"
+          "$ref": "#/$defs/Box",
+          "description": "Where the mark is drawn. A rotated mark pivots around the centre of this box."
         },
         "style": {
           "anyOf": [
@@ -541,10 +605,12 @@
             }
           ],
           "default": null,
+          "description": "`text_styles` name for the mark's text.",
           "title": "Style"
         },
         "rotation": {
           "default": 0,
+          "description": "Rotation in degrees, e.g. -30 for a diagonal watermark.",
           "title": "Rotation",
           "type": "number"
         },
@@ -558,6 +624,7 @@
             }
           ],
           "default": null,
+          "description": "Stacking order. Unset paints behind content; a large positive value paints on top, like a watermark.",
           "title": "Z Index"
         }
       },
@@ -574,73 +641,85 @@
         "header_fill": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Fill color of the header row; unset keeps the default table template look.",
           "title": "Header Fill"
         },
         "header_text_color": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Header text color; set it alongside `header_fill` when the new fill would hide the default text.",
           "title": "Header Text Color"
         },
         "body_fill": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Fill color of body rows.",
           "title": "Body Fill"
         },
         "band_fill": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Alternate-row fill for banding; unset means every body row uses `body_fill`.",
           "title": "Band Fill"
         },
         "border_color": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "color"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Cell border color.",
           "title": "Border Color"
         },
         "border_width": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-deckifyr-widget": "length"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Cell border thickness with an explicit unit, e.g. `0.5pt`.",
           "title": "Border Width"
         }
       },
@@ -651,26 +730,33 @@
       "additionalProperties": false,
       "properties": {
         "font": {
+          "description": "Font family name, or a `fonts:` token such as `body`.",
           "title": "Font",
           "type": "string"
         },
         "size": {
+          "description": "Font size with an explicit unit, e.g. `18pt`.",
           "title": "Size",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "length"
         },
         "bold": {
           "default": false,
+          "description": "Render the text in bold.",
           "title": "Bold",
           "type": "boolean"
         },
         "italic": {
           "default": false,
+          "description": "Render the text in italics.",
           "title": "Italic",
           "type": "boolean"
         },
         "color": {
+          "description": "Text color: a `colors:` token name or a literal hex value.",
           "title": "Color",
-          "type": "string"
+          "type": "string",
+          "x-deckifyr-widget": "color"
         },
         "opacity": {
           "anyOf": [
@@ -682,6 +768,7 @@
             }
           ],
           "default": null,
+          "description": "Text opacity from 0.0 (transparent) to 1.0 (opaque, the default when unset); mainly for watermark-style marks.",
           "title": "Opacity"
         },
         "text_transform": {
@@ -700,6 +787,7 @@
             }
           ],
           "default": null,
+          "description": "Case transform applied when the text is rendered; unset leaves it exactly as authored.",
           "title": "Text Transform"
         }
       },
@@ -715,20 +803,24 @@
   "additionalProperties": false,
   "properties": {
     "deckifyr": {
+      "description": "Schema version of this document.",
       "title": "Deckifyr",
       "type": "string"
     },
     "slide": {
-      "$ref": "#/$defs/SlideSize"
+      "$ref": "#/$defs/SlideSize",
+      "description": "Slide dimensions and background."
     },
     "fonts": {
-      "$ref": "#/$defs/Fonts"
+      "$ref": "#/$defs/Fonts",
+      "description": "Font families used by text styles."
     },
     "colors": {
       "additionalProperties": {
         "anyOf": [
           {
-            "type": "string"
+            "type": "string",
+            "x-deckifyr-widget": "color"
           },
           {
             "$ref": "#/$defs/ColorDerivation"
@@ -736,6 +828,7 @@
         ]
       },
       "default": {},
+      "description": "Named color tokens: a literal hex value, or a color derived from another token.",
       "title": "Colors",
       "type": "object"
     },
@@ -744,6 +837,7 @@
         "$ref": "#/$defs/TextStyle"
       },
       "default": {},
+      "description": "Named text styles that elements reference through `style`.",
       "title": "Text Styles",
       "type": "object"
     },
@@ -752,6 +846,7 @@
         "$ref": "#/$defs/ShapeStyle"
       },
       "default": {},
+      "description": "Named fill/outline styles for `shape` elements.",
       "title": "Shape Styles",
       "type": "object"
     },
@@ -760,6 +855,7 @@
         "$ref": "#/$defs/TableStyle"
       },
       "default": {},
+      "description": "Named fill/border styles for `table` elements.",
       "title": "Table Styles",
       "type": "object"
     },
@@ -772,7 +868,8 @@
         "footer_height": "0.4in",
         "footer_style": null,
         "table_style": null
-      }
+      },
+      "description": "Project-wide fallbacks for settings an element leaves unset."
     },
     "furniture": {
       "$ref": "#/$defs/Furniture",
@@ -780,7 +877,8 @@
         "status": null,
         "branding": null,
         "page_number": null
-      }
+      },
+      "description": "Per-slide extras such as the status mark, branding label and page number."
     }
   },
   "required": [

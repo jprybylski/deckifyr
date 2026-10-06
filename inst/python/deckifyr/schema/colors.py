@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import colorsys
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from deckifyr.schema.errors import ColorResolutionError
+from deckifyr.schema.fields import ColorRef
 
 _NUMERIC_OPERATIONS = ("lighten", "darken", "saturate", "desaturate")
 
@@ -46,13 +47,33 @@ class ColorDerivation(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base: str
-    lighten: float | None = None
-    darken: float | None = None
-    saturate: float | None = None
-    desaturate: float | None = None
-    mix: str | None = None
-    weight: float | None = None
+    base: ColorRef = Field(
+        description="The color to start from: a `colors:` token or a literal hex value.",
+    )
+    lighten: float | None = Field(None, description="Lighten the base by this amount (0.0-1.0).")
+    darken: float | None = Field(None, description="Darken the base by this amount (0.0-1.0).")
+    saturate: float | None = Field(
+        None,
+        description="Increase the base's saturation by this amount (0.0-1.0).",
+    )
+    desaturate: float | None = Field(
+        None,
+        description="Decrease the base's saturation by this amount (0.0-1.0).",
+    )
+    mix: ColorRef | None = Field(
+        None,
+        description=(
+            "Blend in this color (token or hex) instead of adjusting lightness or "
+            "saturation."
+        ),
+    )
+    weight: float | None = Field(
+        None,
+        description=(
+            "With `mix`: how much of the mixed color to blend in, from 0.0 (all base) "
+            "to 1.0 (all mix)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_operation(self) -> "ColorDerivation":
