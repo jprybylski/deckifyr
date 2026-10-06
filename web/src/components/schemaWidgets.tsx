@@ -41,7 +41,19 @@ function Cross() {
 // ---- small pieces ---------------------------------------------------
 
 export function Required() {
-  return <span className="sf-required" data-required role="img" aria-label="required" title="required" />;
+  return (
+    <span className="sf-required" data-required role="img" aria-label="required" title="required">
+      <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+        <path
+          d="M6 1.2v9.6M1.85 3.6l8.3 4.8M1.85 8.4l8.3-4.8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
+  );
 }
 
 /** One-or-two-line description under a field, expandable when long. */
