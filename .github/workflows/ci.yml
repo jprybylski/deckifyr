@@ -23,9 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pin Python: left unpinned, uv picks the runner's newest Python
+      # (macos-latest now ships 3.15), which pyarrow/pyyaml/lxml publish no
+      # wheels for yet -- uv then builds pyarrow from source and fails.
+      # Bump this once those wheels exist.
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: "3.14"
 
       # `uv run` manages its own ephemeral venv from pyproject.toml, so
       # this needs no manual venv setup and works identically on all
