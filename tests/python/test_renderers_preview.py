@@ -277,3 +277,75 @@ def test_two_concurrent_real_previews_both_succeed(tmp_path):
     assert sorted(results) == [0, 1]
     for result in results.values():
         assert len(result.image_paths) == 1 and result.image_paths[0].is_file()
+
+
+@requires_soffice
+def test_concurrent_previews_work_while_a_separate_libreoffice_is_open(tmp_path):
+    """#84's acceptance criterion: previews must not collide with a LibreOffice
+    the user already has open, nor with each other (issue #91).
+
+    The "user's" instance is a long-running headless soffice holding its own
+    profile lock (a throwaway profile, so the developer's real LibreOffice
+    profile is never touched). Before each render got a private
+    `-env:UserInstallation` profile, a live instance on the shared profile made
+    conversions hand off to it and return nothing. CI has no `soffice`, so this
+    skips there and is a local/opt-in check.
+    """
+    import socket
+    import subprocess as sp
+
+    from deckifyr._proc import kill_process_tree
+
+    pytest.importorskip("pymupdf")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    profile = tmp_path / "user-profile"
+    user_instance = sp.Popen(
+        [
+            shutil.which("soffice"),
+            "--headless",
+            "--invisible",
+            "--norestore",
+            f"-env:UserInstallation={profile.as_uri()}",
+            f"--accept=socket,host=127.0.0.1,port={port};urp;",
+        ],
+        stdin=sp.DEVNULL,
+        stdout=sp.DEVNULL,
+        stderr=sp.DEVNULL,
+        **({"start_new_session": True} if sys.platform != "win32" else {}),
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+                break
+            except OSError:
+                time.sleep(0.25)
+        else:
+            pytest.skip("could not start a long-running soffice to act as the user's instance")
+
+        results, errors = {}, []
+
+        def render(index):
+            try:
+                pptx = _one_slide_pptx(tmp_path, f"busy{index}.pptx")
+                results[index] = render_slide_previews(pptx, tmp_path / f"busy-out{index}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=render, args=(i,)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=180)
+
+        assert not errors, errors
+        assert sorted(results) == [0, 1]
+        for result in results.values():
+            assert len(result.image_paths) == 1 and result.image_paths[0].is_file()
+        # The user's own instance must survive our previews untouched.
+        assert user_instance.poll() is None
+    finally:
+        kill_process_tree(user_instance)

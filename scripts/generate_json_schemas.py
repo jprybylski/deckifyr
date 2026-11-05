@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inst" / "python"))
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.schema.results import RESULT_MODELS
+from deckifyr.schema.results import RESULT_MODELS, result_json_schema
 
 SCHEMA_MODELS = {
     "design": DesignDocument,
@@ -60,7 +60,7 @@ def main() -> None:
         print(f"wrote {path}")
     for name, model in RESULT_MODELS.items():
         path = RESULTS_OUTPUT_DIR / f"{name}.schema.json"
-        path.write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
+        path.write_text(json.dumps(result_json_schema(name, model), indent=2) + "\n")
         print(f"wrote {path}")
 
 

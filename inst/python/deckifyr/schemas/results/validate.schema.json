@@ -1,7 +1,9 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jprybylski/deckifyr/schemas/results/v1/validate.schema.json",
   "$defs": {
     "WarningEntry": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "code": {
           "description": "Stable identifier for the kind of warning (e.g. W_MULTI_FIGURE).",
@@ -48,7 +50,7 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "status": {
       "const": "ok",
@@ -81,7 +83,7 @@
       "type": "string"
     },
     "warnings": {
-      "description": "Validation warnings. Reserved: validation has no warning producers today, so this is always empty.",
+      "description": "Validation warnings. Empty unless `--warn-only` coerced something: each unitless box length is reported as W_UNITLESS_LENGTH.",
       "items": {
         "$ref": "#/$defs/WarningEntry"
       },

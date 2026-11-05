@@ -151,6 +151,19 @@ doesn't engineer around it (see CLAUDE.md's architecture notes) --
 `ci.yml`'s `full-pipeline` job is the actual integration proof, run
 directly against the checkout instead.
 
+## Releases are immutable
+
+A version is released by bumping the repo-root `VERSION` (never
+`DESCRIPTION`'s `Version:`; the release workflow syncs that). Once a version
+is published, `release.yaml` never touches it again: a push to `main` that
+does not bump `VERSION` releases nothing (it emits a notice), so a pinned
+`deckifyr X.Y.Z` plus the SHA-256 of its wheel or `SHA256SUMS` always names
+the same bytes. To ship a change, bump `VERSION` -- do not re-tag.
+
+For belt and braces, enable GitHub's **immutable releases** setting for the
+repository (Settings -> General -> Releases). It needs admin rights, so the
+workflow cannot turn it on for itself; the workflow's guard works without it.
+
 ## Before opening a PR
 
 - `uv run --extra dev pytest tests/python -v` passes.

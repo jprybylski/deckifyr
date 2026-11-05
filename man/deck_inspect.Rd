@@ -4,10 +4,34 @@
 \alias{deck_inspect}
 \title{Inspect a presentation or .pptx}
 \usage{
-deck_inspect(target)
+deck_inspect(
+  target,
+  rscript_bin = NULL,
+  quarto_bin = NULL,
+  soffice_bin = NULL,
+  trusted_binaries_only = FALSE,
+  allow_outside_project = FALSE
+)
 }
 \arguments{
 \item{target}{Path to a \code{presentation.yaml} or a built \code{.pptx}.}
+
+\item{rscript_bin, quarto_bin, soffice_bin}{Run this executable instead of
+whatever \code{presentation.yaml}'s \code{build.reportifyr.flextable.binary},
+\code{build.quarto.binary} or \code{build.preview.binary} says (\code{NULL}, the
+default, keeps the project file's own setting). For a launcher that
+treats project files as untrusted user data (\code{deckifyr.policy}).}
+
+\item{trusted_binaries_only}{If \code{TRUE}, a project file that names a
+non-default \code{binary} (and no override was given for it) fails with
+\code{E_UNTRUSTED_BINARY} before anything runs, and \code{design.base},
+\code{layouts}, \code{build.output}, \code{build.manifest} and \code{build.reportifyr}'s
+paths must stay inside the project (\code{E_PATH_OUTSIDE_PROJECT}).
+Default \code{FALSE}: existing projects behave exactly as before.}
+
+\item{allow_outside_project}{With \code{trusted_binaries_only = TRUE}, let those
+paths resolve outside the project (e.g. a shared organization design).
+Default \code{FALSE}.}
 }
 \value{
 A parsed list from the CLI's JSON output.

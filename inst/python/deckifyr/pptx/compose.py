@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -45,6 +46,8 @@ from deckifyr.diagnostics import (
     BuildWarning,
     as_build_warning,
 )
+from deckifyr.pptx import staging as staging_module
+from deckifyr.policy import PERMISSIVE, TrustPolicy, check_presentation_policy, resolve_in_project
 from deckifyr.plan import (
     ResolvedElement,
     ResolvedGradient,
@@ -221,26 +224,42 @@ def _resolve_footer_style(design: DesignDocument) -> ResolvedTextStyle:
 
 
 def _build_reportifyr_context(
-    presentation: PresentationDocument, design: DesignDocument, *, project_root: Path
+    presentation: PresentationDocument,
+    design: DesignDocument,
+    *,
+    project_root: Path,
+    policy: TrustPolicy = PERMISSIVE,
 ) -> ReportifyrBuildContext:
     footer_style = _resolve_footer_style(design)
     config = presentation.build.reportifyr
     if config is None:
-        return ReportifyrBuildContext(footer_style=footer_style)
+        # No `build.reportifyr` block: every default applies -- except a
+        # launcher's own Rscript, which still has to win (issue #89).
+        return ReportifyrBuildContext(
+            footer_style=footer_style,
+            flextable_config=FlextableExecutionConfig(binary=policy.binary("rscript", None)),
+        )
     standard_footnotes = (
-        load_standard_footnotes(project_root / config.standard_footnotes)
+        load_standard_footnotes(
+            resolve_in_project(
+                project_root,
+                config.standard_footnotes,
+                "build.reportifyr.standard_footnotes",
+                policy,
+            )
+        )
         if config.standard_footnotes
         else None
     )
     flextable_config = (
         FlextableExecutionConfig(
-            binary=config.flextable.binary,
+            binary=policy.binary("rscript", config.flextable.binary),
             timeout_seconds=config.flextable.timeout_seconds,
             max_output_bytes=config.flextable.max_output_bytes,
             dpi=config.flextable.dpi,
         )
         if config.flextable is not None
-        else FlextableExecutionConfig()
+        else FlextableExecutionConfig(binary=policy.binary("rscript", None))
     )
     return ReportifyrBuildContext(
         outputs_dir=config.outputs_dir,
@@ -251,7 +270,9 @@ def _build_reportifyr_context(
     )
 
 
-def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionConfig:
+def _build_quarto_config(
+    presentation: PresentationDocument, policy: TrustPolicy = PERMISSIVE
+) -> QuartoExecutionConfig:
     """Assembled once per build from `presentation.build.quarto` (spec
     section 8.1), mirroring `_build_reportifyr_context` -- a build with
     no `quarto` element never reads it, and an absent `build.quarto`
@@ -259,15 +280,17 @@ def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionC
     """
     config = presentation.build.quarto
     if config is None:
-        return QuartoExecutionConfig()
+        return QuartoExecutionConfig(binary=policy.binary("quarto", None))
     return QuartoExecutionConfig(
-        binary=config.binary,
+        binary=policy.binary("quarto", config.binary),
         timeout_seconds=config.timeout_seconds,
         max_output_bytes=config.max_output_bytes,
     )
 
 
-def _build_preview_config(presentation: PresentationDocument) -> PreviewRenderConfig:
+def _build_preview_config(
+    presentation: PresentationDocument, policy: TrustPolicy = PERMISSIVE
+) -> PreviewRenderConfig:
     """Assembled once per build from `presentation.build.preview`,
     mirroring `_build_quarto_config` -- a build that never renders
     previews (neither `build.previews: true` nor `force_previews`) never
@@ -276,9 +299,11 @@ def _build_preview_config(presentation: PresentationDocument) -> PreviewRenderCo
     """
     config = presentation.build.preview
     if config is None:
-        return PreviewRenderConfig()
+        return PreviewRenderConfig(binary=policy.binary("soffice", None))
     return PreviewRenderConfig(
-        binary=config.binary, dpi=config.dpi, timeout_seconds=config.timeout_seconds
+        binary=policy.binary("soffice", config.binary),
+        dpi=config.dpi,
+        timeout_seconds=config.timeout_seconds,
     )
 
 
@@ -1138,14 +1163,23 @@ def compose(
     resolved_slides: list[ResolvedSlide],
     *,
     project_root: Path,
+    policy: TrustPolicy | None = None,
 ) -> tuple[PptxPresentation, list[dict[str, Any]], list[str]]:
+    policy = policy or PERMISSIVE
+    # Defence in depth (issue #89): the CLI and web layers already checked the
+    # policy when they loaded the project, but this is the last point before
+    # anything is executed, so a caller that reached `compose` another way
+    # still cannot run a binary or touch a path the policy forbids.
+    check_presentation_policy(presentation, project_root, policy)
     prs = PptxPresentation()
     prs.slide_width = Emu(parse_length(design.slide.width, strict=True))
     prs.slide_height = Emu(parse_length(design.slide.height, strict=True))
     blank_layout = _find_blank_layout(prs)
 
-    reportifyr_ctx = _build_reportifyr_context(presentation, design, project_root=project_root)
-    quarto_config = _build_quarto_config(presentation)
+    reportifyr_ctx = _build_reportifyr_context(
+        presentation, design, project_root=project_root, policy=policy
+    )
+    quarto_config = _build_quarto_config(presentation, policy)
 
     element_manifest: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -1188,6 +1222,20 @@ def compose(
     return prs, element_manifest, warnings
 
 
+def _own_preview_files(previews_dir: Path, stem: str) -> list[Path]:
+    """Existing preview files that belong to the deck named `stem`
+    (`<stem>-NN.png` and `<stem>.pdf`) -- other decks sharing the directory
+    are not ours to touch."""
+    if not previews_dir.is_dir():
+        return []
+    png = re.compile(rf"^{re.escape(stem)}-\d+\.png$")
+    return [
+        entry
+        for entry in previews_dir.iterdir()
+        if png.match(entry.name) or entry.name == f"{stem}.pdf"
+    ]
+
+
 def compose_and_write(
     presentation: PresentationDocument,
     design: DesignDocument,
@@ -1200,92 +1248,173 @@ def compose_and_write(
     force_previews: bool = False,
     preview_slides: list[int] | None = None,
     keep_preview_pdf: bool = False,
+    initial_warnings: list[str] | None = None,
+    policy: TrustPolicy | None = None,
 ) -> BuildResult:
+    """Compose the deck and write the PPTX, previews and manifest atomically.
+
+    Everything is built in a staging directory next to the output and only
+    promoted once every step succeeded (see `deckifyr.pptx.staging`): a
+    failure at any point before promotion -- a preview that times out, a
+    cancelled job -- leaves the previous build's PPTX, previews and manifest
+    exactly as they were, and the manifest is always promoted last, so one on
+    disk never describes files that are not there.
+    """
+    policy = policy or PERMISSIVE
     started_at = datetime.now(timezone.utc)
-    prs, element_manifest, warnings = compose(
-        presentation, design, resolved_slides, project_root=project_root
+    prs, element_manifest, compose_warnings = compose(
+        presentation, design, resolved_slides, project_root=project_root, policy=policy
     )
+    # Warnings produced before composing (e.g. `--warn-only` geometry
+    # coercions, issue #91) come first and land in the manifest too.
+    warnings = [*(initial_warnings or []), *compose_warnings]
 
-    output_path = (project_root / presentation.build.output).resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    prs.save(str(output_path))
-    ended_at = datetime.now(timezone.utc)
-
-    # `force_previews` is `deckifyr preview`'s own escape hatch (spec
-    # section 11.1): an explicit preview request renders regardless of
-    # the project's own `build.previews` flag, without requiring an
-    # author to permanently flip that flag on just to check one preview.
-    # An ordinary `deckifyr build` only renders when `build.previews` is
-    # set, per that field's own docstring.
-    preview_paths: list[Path] = []
-    preview_pdf_path: Path | None = None
-    if presentation.build.previews or force_previews:
-        try:
-            preview_result = render_slide_previews(
-                output_path,
-                output_path.parent / "previews",
-                config=_build_preview_config(presentation),
-                slides=preview_slides,
-                keep_pdf=keep_preview_pdf,
-            )
-            preview_paths = preview_result.image_paths
-            preview_pdf_path = preview_result.pdf_path
-        except MissingDependencyError as exc:
-            # `force_previews` (`deckifyr preview`, or the web editor's
-            # own Preview button) is an explicit ask to render previews
-            # -- a missing LibreOffice there is the whole request
-            # failing, so it still propagates as a hard error, same as
-            # before. `build.previews: true` is opportunistic: it rides
-            # along on an ordinary `deckifyr build`/`POST /api/build`
-            # whose actual deliverable is the `.pptx` `prs.save(...)`
-            # above already wrote to disk successfully by this point --
-            # losing that (and the manifest, which is written further
-            # below and would otherwise never happen either) over a
-            # missing *optional* rendering dependency is a worse outcome
-            # than a build that succeeds with a warning. Confirmed this
-            # was a real gap, not hypothetical: the web editor's own
-            # "Render slide previews" checkbox (issue #32) made this
-            # exact case trivially reachable -- previously reaching it
-            # meant hand-editing `build.previews: true` into
-            # presentation.yaml.
-            if force_previews:
-                raise
-            warnings.append(
-                BuildWarning(
-                    "build.previews is enabled but rendering slide previews was "
-                    f"skipped: {exc}",
-                    W_PREVIEW_SKIPPED,
-                )
-            )
-
-    manifest = {
-        "deckifyr_version": DECKIFYR_VERSION,
-        "metadata": {"title": presentation.metadata.title},
-        "build": {
-            "started_at": started_at.isoformat(),
-            "ended_at": ended_at.isoformat(),
-        },
-        "input_files": {
-            "presentation": {
-                "path": str(presentation_path),
-                "sha256": sha256_file(presentation_path),
-            },
-            "design": {"path": str(design_path), "sha256": sha256_file(design_path)},
-            "layouts": {"path": str(layouts_path), "sha256": sha256_file(layouts_path)},
-        },
-        "slide_count": len(resolved_slides),
-        "elements": element_manifest,
-        "output": {"path": str(output_path), "sha256": sha256_file(output_path)},
-        "previews": [str(p) for p in preview_paths],
-        "preview_pdf": str(preview_pdf_path) if preview_pdf_path else None,
-        "warnings": warnings,
-    }
-
+    output_path = resolve_in_project(project_root, presentation.build.output, "build.output", policy)
+    output_dir = output_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    previews_dir = output_dir / "previews"
     manifest_path: Path | None = None
     if presentation.build.manifest:
-        manifest_path = (project_root / presentation.build.manifest).resolve()
+        manifest_path = resolve_in_project(
+            project_root, presentation.build.manifest, "build.manifest", policy
+        )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    # A killed build (job cancel/timeout is SIGKILL, so no `finally` ran) can
+    # leave its staging behind; clear what no live process owns.
+    for directory in {output_dir, manifest_path.parent if manifest_path else output_dir}:
+        staging_module.sweep_stale_staging(directory)
+
+    token = staging_module.new_staging_token()
+    staging = output_dir / staging_module.staging_dir_name(token)
+    staging.mkdir()
+    try:
+        # The staged PPTX keeps the final file name: preview PNG names derive
+        # from `pptx_path.stem`.
+        staged_pptx = staging / output_path.name
+        prs.save(str(staged_pptx))
+        staging_module.fsync_file(staged_pptx)
+        ended_at = datetime.now(timezone.utc)
+
+        # `force_previews` is `deckifyr preview`'s own escape hatch (spec
+        # section 11.1): an explicit preview request renders regardless of
+        # the project's own `build.previews` flag, without requiring an
+        # author to permanently flip that flag on just to check one preview.
+        # An ordinary `deckifyr build` only renders when `build.previews` is
+        # set, per that field's own docstring.
+        staged_previews: list[Path] = []
+        staged_pdf: Path | None = None
+        if presentation.build.previews or force_previews:
+            try:
+                preview_result = render_slide_previews(
+                    staged_pptx,
+                    staging / "previews",
+                    config=_build_preview_config(presentation, policy),
+                    slides=preview_slides,
+                    keep_pdf=keep_preview_pdf,
+                )
+                staged_previews = preview_result.image_paths
+                staged_pdf = preview_result.pdf_path
+            except MissingDependencyError as exc:
+                # `force_previews` (`deckifyr preview`, or the web editor's
+                # own Preview button) is an explicit ask to render previews
+                # -- a missing LibreOffice there is the whole request
+                # failing, so it still propagates as a hard error.
+                # `build.previews: true` is opportunistic: it rides along on
+                # an ordinary `deckifyr build`/`POST /api/build` whose actual
+                # deliverable is the `.pptx` -- losing that (and the
+                # manifest) over a missing *optional* rendering dependency is
+                # a worse outcome than a build that succeeds with a warning.
+                # The web editor's "Render slide previews" checkbox (issue
+                # #32) made this exact case trivially reachable.
+                if force_previews:
+                    raise
+                warnings.append(
+                    BuildWarning(
+                        "build.previews is enabled but rendering slide previews was "
+                        f"skipped: {exc}",
+                        W_PREVIEW_SKIPPED,
+                    )
+                )
+        for staged_file in [*staged_previews, *([staged_pdf] if staged_pdf else [])]:
+            staging_module.fsync_file(staged_file)
+
+        # The manifest names FINAL paths, never staging ones.
+        preview_paths = [previews_dir / p.name for p in staged_previews]
+        preview_pdf_path = previews_dir / staged_pdf.name if staged_pdf else None
+
+        manifest = {
+            "deckifyr_version": DECKIFYR_VERSION,
+            "metadata": {"title": presentation.metadata.title},
+            "build": {
+                "started_at": started_at.isoformat(),
+                "ended_at": ended_at.isoformat(),
+            },
+            "input_files": {
+                "presentation": {
+                    "path": str(presentation_path),
+                    "sha256": sha256_file(presentation_path),
+                },
+                "design": {"path": str(design_path), "sha256": sha256_file(design_path)},
+                "layouts": {"path": str(layouts_path), "sha256": sha256_file(layouts_path)},
+            },
+            "slide_count": len(resolved_slides),
+            "elements": element_manifest,
+            "output": {"path": str(output_path), "sha256": sha256_file(staged_pptx)},
+            "previews": [str(p) for p in preview_paths],
+            "preview_pdf": str(preview_pdf_path) if preview_pdf_path else None,
+            "warnings": warnings,
+        }
+        staged_manifest: Path | None = None
+        if manifest_path is not None:
+            # Staged beside its own target (it may live in another directory
+            # from the output) so the final rename stays on one filesystem.
+            staged_manifest = manifest_path.with_name(
+                f"{staging_module.staging_dir_name(token)}.manifest"
+            )
+            staging_module.write_text_synced(staged_manifest, json.dumps(manifest, indent=2))
+
+        # --- promotion: everything above succeeded -----------------------
+        aside_manifest: Path | None = None
+        if manifest_path is not None and manifest_path.exists():
+            aside_manifest = manifest_path.with_name(
+                f"{staging_module.staging_dir_name(token)}.prev-manifest"
+            )
+            os.replace(manifest_path, aside_manifest)
+        try:
+            staging_module.promote_file(staged_pptx, output_path)
+        except BaseException:
+            # Nothing of the new build is in place yet (the PPTX rename is
+            # the first change), so the previous build can be put back whole.
+            if aside_manifest is not None:
+                os.replace(aside_manifest, manifest_path)
+            raise
+        if staged_previews or staged_pdf:
+            previews_dir.mkdir(parents=True, exist_ok=True)
+            if preview_slides is None:
+                # A full render replaces this deck's whole preview set, so a
+                # longer previous deck can't leave stale tail slides behind.
+                keep = {p.name for p in (*staged_previews, *([staged_pdf] if staged_pdf else []))}
+                for old in _own_preview_files(previews_dir, output_path.stem):
+                    if old.name not in keep:
+                        staging_module.remove_path(old)
+            for staged_file in [*staged_previews, *([staged_pdf] if staged_pdf else [])]:
+                staging_module.promote_file(staged_file, previews_dir / staged_file.name)
+        if staged_manifest is not None:
+            staging_module.promote_file(staged_manifest, manifest_path)
+        if aside_manifest is not None:
+            staging_module.remove_path(aside_manifest)
+    finally:
+        staging_module.remove_path(staging)
+        if manifest_path is not None:
+            # A staged manifest only survives if promotion never reached it
+            # (some earlier step failed). The `.prev-manifest` set aside is
+            # deliberately NOT removed here: if promotion failed after the new
+            # PPTX was in place, restoring it would pair an old manifest with
+            # a new PPTX, so it is left for `sweep_stale_staging` instead.
+            staging_module.remove_path(
+                manifest_path.with_name(f"{staging_module.staging_dir_name(token)}.manifest")
+            )
 
     return BuildResult(
         output_path=output_path,

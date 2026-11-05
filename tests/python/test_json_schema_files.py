@@ -12,7 +12,7 @@ from pathlib import Path
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.schema.results import RESULT_MODELS
+from deckifyr.schema.results import RESULT_MODELS, result_json_schema
 
 SCHEMA_MODELS = {
     "design": DesignDocument,
@@ -60,9 +60,40 @@ def test_checked_in_result_schema_files_match_the_live_models():
         name
         for name, model in RESULT_MODELS.items()
         if json.loads((RESULTS_DIR / f"{name}.schema.json").read_text())
-        != model.model_json_schema()
+        != result_json_schema(name, model)
     ]
     assert not stale, (
         f"result schemas {stale} out of date -- run "
         "`python scripts/generate_json_schemas.py` and commit the result"
     )
+
+
+def _closed_objects(node, path=""):
+    """Every object schema inside `node` that forbids extra properties."""
+    found = []
+    if isinstance(node, dict):
+        if node.get("additionalProperties") is False:
+            found.append(path or "<root>")
+        for key, value in node.items():
+            found.extend(_closed_objects(value, f"{path}/{key}"))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found.extend(_closed_objects(value, f"{path}/{i}"))
+    return found
+
+
+def test_result_schemas_allow_extra_keys_as_documented():
+    # The docs promise adding a key to a result is not a breaking change; a
+    # schema that closed its objects would reject such a payload (issue #91).
+    for name in RESULT_MODELS:
+        schema = json.loads((RESULTS_DIR / f"{name}.schema.json").read_text())
+        assert _closed_objects(schema) == [], name
+
+
+def test_result_schemas_carry_a_versioned_id():
+    from deckifyr.schema.results import RESULT_VERSION
+
+    for name in RESULT_MODELS:
+        schema = json.loads((RESULTS_DIR / f"{name}.schema.json").read_text())
+        assert schema["$id"].endswith(f"/v{RESULT_VERSION}/{name}.schema.json")
+        assert schema["$schema"].startswith("https://json-schema.org/")

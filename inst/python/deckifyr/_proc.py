@@ -50,6 +50,48 @@ class GroupRunResult:
     stderr: str
 
 
+def pid_alive(pid: int) -> bool:
+    """Whether a process with this PID currently exists.
+
+    POSIX uses signal 0 (existence probe). Windows must not: there any
+    signal other than CTRL_C/CTRL_BREAK is `TerminateProcess`, so
+    `os.kill(pid, 0)` would *kill* the process being probed -- the handle
+    is queried via `OpenProcess`/`GetExitCodeProcess` instead.
+    """
+    if pid <= 0:
+        return False
+    if not _IS_WINDOWS:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == error_access_denied  # exists, not ours to open
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _group_kwargs() -> dict:
     if _IS_WINDOWS:
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}

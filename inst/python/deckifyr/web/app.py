@@ -51,6 +51,7 @@ from deckifyr.plan import (
     expand_slide,
     resolve_watermark_text,
 )
+from deckifyr.policy import PERMISSIVE, TrustPolicy, resolve_in_project
 from deckifyr.renderers.preview import LIBREOFFICE_INSTALL_URL
 from deckifyr.resolvers.discovery import (
     list_project_directory,
@@ -63,6 +64,7 @@ from deckifyr.schema.layouts import BLANK_LAYOUT_ID, Element, Layout, LayoutsDoc
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_INCH, format_length, parse_length
 from deckifyr.web.jobs import DEFAULT_JOB_TIMEOUT_SECONDS, JobManager
+from deckifyr.web.security import HostPolicy, RequestGuard
 
 # The synthetic slide id `GET /api/furniture`/the furniture PATCH/POST/
 # DELETE routes below use for design.yaml's furniture block (issue #21).
@@ -89,6 +91,10 @@ _ERROR_CODE_STATUS: dict[str, int] = {
     ErrorCode.PATH_NOT_FOUND: 422,
     ErrorCode.IO: 404,
     ErrorCode.MISSING_DEPENDENCY: 424,
+    # A launcher's trust policy refusing what the document asks for (issue #89):
+    # the request is well-formed, so this is 422, not 403/500.
+    ErrorCode.UNTRUSTED_BINARY: 422,
+    ErrorCode.PATH_OUTSIDE_PROJECT: 422,
 }
 
 
@@ -321,23 +327,45 @@ class _WorkingCopy:
     from disk.
     """
 
-    def __init__(self, presentation_path: Path):
+    def __init__(self, presentation_path: Path, policy: TrustPolicy | None = None):
         self._presentation_path = presentation_path
+        self._policy = policy or PERMISSIVE
         self._docs: dict[str, Any] = {"presentation": None, "design": None, "layouts": None}
         self._dirty: set[str] = set()
 
-    def _design_layouts_paths(self) -> tuple[Path, Path]:
-        presentation_data = self.get("presentation") or {}
+    def _design_layouts_paths(self, *, cache: bool = True) -> tuple[Path, Path]:
+        presentation_data = (self.get if cache else self.peek)("presentation") or {}
+        if not isinstance(presentation_data, dict):
+            presentation_data = {}
         base_dir = self._presentation_path.parent
         design_base = (presentation_data.get("design") or {}).get("base", "design.yaml")
         layouts_rel = presentation_data.get("layouts", "layouts.yaml")
-        return (base_dir / design_base).resolve(), (base_dir / layouts_rel).resolve()
+        # Containment (issue #89) has to live here, not only in `load_project`:
+        # this is what both *reads* design/layouts into the working copy and
+        # *writes* them back on save, and either one happens before
+        # `load_project` ever sees the document.
+        return (
+            resolve_in_project(base_dir, design_base, "design.base", self._policy),
+            resolve_in_project(base_dir, layouts_rel, "layouts", self._policy),
+        )
 
-    def path_for(self, doc: str) -> Path:
+    def path_for(self, doc: str, *, cache: bool = True) -> Path:
         if doc == "presentation":
             return self._presentation_path
-        design_path, layouts_path = self._design_layouts_paths()
+        design_path, layouts_path = self._design_layouts_paths(cache=cache)
         return design_path if doc == "design" else layouts_path
+
+    def peek(self, doc: str) -> Any:
+        """Like `get`, but never populates the cache.
+
+        For read-only probes (`/api/health`): the first real request should
+        still be the one that loads a document, so a supervisor polling
+        health before anything else can't pin a stale copy that an edit on
+        disk would then have to be discarded to pick up.
+        """
+        if self._docs[doc] is not None:
+            return self._docs[doc]
+        return projectio.read_yaml(self.path_for(doc, cache=False))
 
     def get(self, doc: str) -> Any:
         if self._docs[doc] is None:
@@ -508,6 +536,9 @@ def create_app(
     job_timeout_seconds: float | None = DEFAULT_JOB_TIMEOUT_SECONDS,
     request_shutdown: Callable[[], None] | None = None,
     allow_frontend_rebuild: bool = True,
+    policy: TrustPolicy | None = None,
+    host_policy: HostPolicy | None = None,
+    api_token: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to one project.
 
@@ -517,12 +548,31 @@ def create_app(
     reports it can't stop anything rather than pretending to.
     `allow_frontend_rebuild=False` skips the dev-checkout `npm run build`
     at startup -- a supervised/installed context must never shell out to
-    npm (`--launcher workspace` turns it off).
+    npm (`--launcher workspace` turns it off). `policy` (issue #89,
+    `deckifyr.policy`) is what the project file is trusted to choose: it gates
+    every edit before it is accepted, the paths the working copy reads and
+    saves, the binary the preview-availability check reports, and (via
+    `policy_argv`) the build/preview subprocesses. `None` is permissive.
+    `host_policy` and `api_token` (issue #88, `deckifyr.web.security`) guard
+    the API against other pages in the user's browser: a Host allow-list /
+    cross-site Origin check, and a per-launch secret required on every
+    `/api/*` request but `GET /api/health`. `deckifyr serve` always supplies a
+    host policy; `None` (embedded/test use, where `TestClient` sends
+    `Host: testserver`) leaves the Host check off, though a `Sec-Fetch-Site:
+    cross-site` write is rejected regardless.
     """
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
-    job_manager = JobManager(job_timeout_seconds=job_timeout_seconds)
-    working_copy = _WorkingCopy(presentation_path)
+    policy = policy or PERMISSIVE
+    job_manager = JobManager(
+        job_timeout_seconds=job_timeout_seconds, policy_argv=policy.to_argv()
+    )
+    working_copy = _WorkingCopy(presentation_path, policy)
+
+    def _validate_presentation(path: Path, data: Any, **kwargs: Any) -> Any:
+        """`projectio.validate_presentation_data` under this app's policy --
+        the one door every mutation goes through, so none can skip it."""
+        return projectio.validate_presentation_data(path, data, policy=policy, **kwargs)
 
     static_dir = Path(__file__).parent / "static"
     web_src_dir = Path(__file__).resolve().parents[4] / "web" / "src"
@@ -562,6 +612,10 @@ def create_app(
             )
 
     app = FastAPI(title="deckifyr", lifespan=lifespan)
+    # Always installed (it is a no-op without a host policy/token apart from
+    # rejecting a cross-site write): a middleware, not per-route code, so no
+    # route -- present or future -- can forget it. See deckifyr.web.security.
+    app.add_middleware(RequestGuard, host_policy=host_policy, api_token=api_token)
     # Exposed so the hosting process (`cli._cmd_serve`) can tell, after the
     # server stops, whether edits were left unsaved -- it must never lose
     # them silently (issue #83).
@@ -618,6 +672,26 @@ def create_app(
 
     # --- health / project ------------------------------------------
 
+    def _probe_project_error() -> dict[str, str] | None:
+        """`None` when the project (including any unsaved edits) validates,
+        else `{code, message}`. Schema and cross-reference checks only -- no
+        plan expansion, no content resolution -- so it stays cheap enough to
+        poll. Reads through `working_copy.peek`, so it never caches."""
+        try:
+            projectio.load_project(
+                presentation_path,
+                strict=True,
+                presentation_data=working_copy.peek("presentation"),
+                design_data=working_copy.peek("design"),
+                layouts_data=working_copy.peek("layouts"),
+                policy=policy,
+            )
+        except DeckifyrError as exc:
+            return {"code": exc.code, "message": str(exc)}
+        except Exception as exc:  # health must never 500, whatever is on disk
+            return {"code": ErrorCode.INTERNAL, "message": f"{type(exc).__name__}: {exc}"}
+        return None
+
     @app.get("/api/health")
     def get_health() -> dict[str, Any]:
         # `launcher` deliberately rides on /api/health, not /api/project:
@@ -634,12 +708,21 @@ def create_app(
         # (queued/running build/preview jobs) are cheap, read-only, and
         # exist so a supervisor can tell whether stopping is safe without
         # making an edit to find out.
+        #
+        # `project_loaded`/`project_error` (issue #91) answer "is the bound
+        # project actually usable?" in the same probe, without changing what
+        # the status code means: the project failing to load is reported
+        # here, never as a non-200 (a launcher that needs to tell "server up"
+        # from "project OK" reads the body).
+        project_error = _probe_project_error()
         return {
             "status": "ok",
             "launcher": launcher,
             "frontend_warning": frontend_warning,
             "dirty": working_copy.dirty,
             "active_jobs": job_manager.active_count(),
+            "project_loaded": project_error is None,
+            "project_error": project_error,
         }
 
     @app.post("/api/shutdown")
@@ -715,7 +798,7 @@ def create_app(
     def put_config(doc: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         path = _doc_path(doc)
         if doc == "presentation":
-            presentation = projectio.validate_presentation_data(
+            presentation = _validate_presentation(
                 path, body, layouts_data=working_copy.get("layouts")
             )
             working_copy.set(doc, body)
@@ -743,6 +826,7 @@ def create_app(
             presentation_data=working_copy.get("presentation"),
             design_data=working_copy.get("design"),
             layouts_data=working_copy.get("layouts"),
+            policy=policy,
         )
 
     @app.get("/api/plan")
@@ -838,7 +922,7 @@ def create_app(
         if "value" in body:
             _set_element_field(edited, f"{prefix}.value", body["value"])
 
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -881,7 +965,7 @@ def create_app(
             raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
         except editor.AmbiguousPlacementError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -898,7 +982,7 @@ def create_app(
             editor.remove_slide(edited, slide_id)
         except editor.SlideNotFoundError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -1037,7 +1121,7 @@ def create_app(
         presentation_edited = copy.deepcopy(working_copy.get("presentation"))
         reassigned = editor.layouts_using(presentation_edited, layout_name)
         editor.reassign_layout(presentation_edited, layout_name, BLANK_LAYOUT_ID)
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, presentation_edited, layouts_data=working_copy.get("layouts")
         )
 
@@ -1111,7 +1195,7 @@ def create_app(
             )
         except editor.DuplicateElementIdError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -1137,7 +1221,7 @@ def create_app(
             )
         except editor.ElementNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -1234,7 +1318,7 @@ def create_app(
             )
         except editor.DuplicateSlideIdError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-        presentation = projectio.validate_presentation_data(
+        presentation = _validate_presentation(
             presentation_path, edited, layouts_data=working_copy.get("layouts")
         )
         working_copy.set("presentation", edited)
@@ -1439,7 +1523,7 @@ def create_app(
             # via the Deck Options dropdown.
             edited_presentation = copy.deepcopy(working_copy.get("presentation"))
             edited_presentation["status_indicator"] = new_status_indicator
-            projectio.validate_presentation_data(
+            _validate_presentation(
                 presentation_path, edited_presentation, layouts_data=working_copy.get("layouts")
             )
             working_copy.set("presentation", edited_presentation)
@@ -1532,7 +1616,9 @@ def create_app(
         """
         presentation_data = working_copy.get("presentation") or {}
         preview_config = ((presentation_data.get("build") or {}).get("preview") or {})
-        binary = preview_config.get("binary", "soffice")
+        # Same resolution a real build uses: the launcher's override wins over
+        # whatever the project file says (issue #89).
+        binary = policy.binary("soffice", preview_config.get("binary"))
         available = shutil.which(binary) is not None
         return {
             "available": available,

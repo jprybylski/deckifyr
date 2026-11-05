@@ -93,7 +93,11 @@ class JobManager:
     `job_timeout_seconds` bounds every job (`None`/`<= 0` disables the
     limit). `argv_prefix` is the command every job runs, with the job's own
     arguments appended -- the real `python -m deckifyr --json` by default;
-    a test seam, not user configuration.
+    a test seam, not user configuration. `policy_argv` (issue #89) is the
+    launcher's trust-policy flags (`TrustPolicy.to_argv()`), appended after the
+    subcommand so the child `build`/`preview` process enforces the very same
+    policy as the server that spawned it -- the child re-runs `load_project`,
+    so it is a second line of defence, not a re-implementation.
     """
 
     def __init__(
@@ -101,7 +105,9 @@ class JobManager:
         *,
         job_timeout_seconds: float | None = DEFAULT_JOB_TIMEOUT_SECONDS,
         argv_prefix: Sequence[str] | None = None,
+        policy_argv: Sequence[str] = (),
     ) -> None:
+        self._policy_argv = tuple(policy_argv)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self.job_timeout_seconds = (
@@ -198,7 +204,7 @@ class JobManager:
 
         try:
             proc = run_in_group(
-                [*self._argv_prefix, *command_args],
+                [*self._argv_prefix, *command_args, *self._policy_argv],
                 cwd=job.project_root,
                 timeout=self.job_timeout_seconds,
                 on_start=on_start,

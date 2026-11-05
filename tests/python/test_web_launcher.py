@@ -73,6 +73,40 @@ def test_health_works_when_the_project_does_not_load(tmp_path):
     assert body["dirty"] is False and body["active_jobs"] == 0
 
 
+def test_health_reports_a_loaded_project(stoppable):
+    client, _, _ = stoppable
+    body = client.get("/api/health").json()
+    assert body["project_loaded"] is True
+    assert body["project_error"] is None
+
+
+def test_health_reports_why_the_project_did_not_load_while_staying_200(tmp_path):
+    response = TestClient(create_app(tmp_path, launcher="workspace")).get("/api/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_loaded"] is False
+    assert body["project_error"]["code"] == "E_IO"
+    assert "not found" in body["project_error"]["message"]
+
+
+def test_health_reports_a_schema_error_in_the_project(project_dir):
+    (project_dir / "presentation.yaml").write_text("deckifyr: '1'\nnonsense: true\n")
+    body = TestClient(create_app(project_dir)).get("/api/health").json()
+    assert body["project_loaded"] is False
+    assert body["project_error"]["code"] == "E_SCHEMA_VALIDATION"
+
+
+def test_health_poll_does_not_pin_a_cached_copy_of_the_project(project_dir):
+    client = TestClient(create_app(project_dir))
+    assert client.get("/api/health").json()["project_loaded"] is True
+    # An on-disk change made after a health poll must still be what the first
+    # real request sees: the probe must not have cached the pre-edit document.
+    path = project_dir / "presentation.yaml"
+    path.write_text(path.read_text().replace("Minimal Example Deck", "Edited After Health"))
+    served = client.get("/api/config/presentation").json()
+    assert served["metadata"]["title"] == "Edited After Health"
+
+
 def test_health_counts_active_jobs(stoppable):
     client, _, app = stoppable
     app.state.job_manager._argv_prefix = (sys.executable, "-c", "import time; time.sleep(60)")

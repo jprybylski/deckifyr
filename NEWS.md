@@ -1,5 +1,73 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `deckifyr serve` now guards its API against other pages open in the same
+  browser (issue #88). Only `127.0.0.1`/`localhost`/`[::1]` on the served
+  port, the bound `--host` and any `--allowed-host` (repeatable) are
+  accepted as `Host` -- anything else gets `421`, which stops DNS-rebinding
+  access. A state-changing request (`POST`/`PUT`/`PATCH`/`DELETE`) marked
+  `Sec-Fetch-Site: cross-site` or `same-site`, or carrying an `Origin` that
+  is not allowed, gets `403`; before this a cross-site form `POST` to
+  `/api/build`, `/api/discard` or `/api/shutdown` ran the handler. Curl, the
+  R facade, CI, the editor itself and the R Viewer pane are unaffected. A
+  supervising launcher can also set `--api-token-env VAR`: every `/api/*`
+  request except `GET /api/health` must then send the secret from that
+  environment variable as `X-Deckifyr-Api-Token` (read from the environment,
+  never argv; static assets stay open).
+* A launcher can stop a project file from choosing executables or paths
+  (issue #89). `--rscript-bin`/`--quarto-bin`/`--soffice-bin` (or
+  `DECKIFYR_RSCRIPT_BIN`/`..._QUARTO_BIN`/`..._SOFFICE_BIN`) run the
+  launcher's own executables instead of the project file's.
+  `--trusted-binaries-only` (`DECKIFYR_TRUSTED_BINARIES_ONLY`) rejects a
+  project whose `build.*.binary` differs from the default name with
+  `E_UNTRUSTED_BINARY` before anything runs, and requires `design.base`,
+  `layouts`, `build.output`, `build.manifest` and `build.reportifyr` paths to
+  resolve (symlinks followed) inside the project, else
+  `E_PATH_OUTSIDE_PROJECT`; `--allow-outside-project` relaxes the paths for a
+  shared organization design. It applies to `validate`, `build`, `preview`,
+  `inspect`, `serve` (including the editor's config `PUT` and saves) and, via
+  the environment, `get`/`set`/`slide`. All of it is off by default.
+  `deck_build()`, `deck_validate()`, `deck_preview()`, `deck_inspect()` and
+  `deck_serve()` take the same options.
+* `validate --warn-only` (and `build --warn-only`) report each unitless
+  length it coerces to EMUs as a `W_UNITLESS_LENGTH` warning, instead of
+  accepting it silently (issue #91).
+* `GET /api/health` reports `project_loaded` and `project_error`
+  (`{code, message}`), so one probe tells a supervisor both that the server is
+  up and whether the project is usable. It is still `200` either way.
+* The global `--debug` flag (or `DECKIFYR_DEBUG=1`) adds a `traceback` to the
+  error payload of an unexpected failure.
+
+## Changed
+
+* A release is now immutable (issue #91): pushing to `main` without bumping
+  `VERSION` no longer re-tags the published version or re-uploads its assets
+  (the workflow emits a notice instead). A consumer that pins `deckifyr X.Y.Z`
+  plus the SHA-256 of its wheel or `SHA256SUMS` can rely on both naming fixed
+  bytes; to ship a change, bump `VERSION`. Enabling GitHub's "immutable
+  releases" repository setting enforces the same thing server-side.
+* `build` writes its `.pptx`, previews and manifest atomically (issue #90).
+  Everything is built in a private `.deckifyr-staging-*` directory next to the
+  output and only promoted once every step succeeded, manifest last, so a
+  failed or killed build leaves the previous build's files untouched and a
+  manifest on disk always matches the files it names. A full preview render
+  replaces that deck's previous preview files, so a preview set can no longer
+  mix two builds. Leftovers from a killed build are swept at the next build.
+* The published `--json` result schemas now allow extra keys (as the docs
+  always said adding a key is not a breaking change) and carry a versioned
+  `$id` (issue #91).
+
+## Fixed
+
+* Any exception that is not a `deckifyr` error -- for example a
+  `PermissionError` because the output `.pptx` is open in PowerPoint -- now
+  produces the `--json` error payload on stderr (`E_IO` for an OS error,
+  `E_INTERNAL` otherwise) instead of a bare traceback with no JSON (issue #90).
+* The process-tree and orphan tests now run on Windows too (issue #91).
+
 # deckifyr 0.3.4
 
 ## Added

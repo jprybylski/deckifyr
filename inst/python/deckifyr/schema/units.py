@@ -71,6 +71,21 @@ def parse_length(raw: str | int | float, *, strict: bool = True) -> int:
     return round(value * _UNIT_TO_EMU[unit])
 
 
+def is_unitless(raw: str | int | float) -> bool:
+    """True when `raw` is a bare number that `parse_length(strict=False)` would
+    coerce straight to EMUs (the case `--warn-only` silently accepts).
+
+    Malformed values are not "unitless" -- `parse_length` rejects those in
+    either mode -- so this only reports the coercion, never a parse error.
+    """
+    if isinstance(raw, bool):
+        return False
+    if isinstance(raw, (int, float)):
+        return True
+    match = _LENGTH_RE.match(raw)
+    return bool(match) and match.group("unit") is None
+
+
 def emu_to_inches(emu: int) -> float:
     return emu / EMU_PER_INCH
 

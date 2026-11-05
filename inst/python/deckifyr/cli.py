@@ -62,8 +62,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +74,13 @@ from pydantic import ValidationError as PydanticValidationError
 from deckifyr import editor, projectio, templates
 from deckifyr.diagnostics import warnings_payload
 from deckifyr.plan import expand_presentation
+from deckifyr.policy import (
+    ALLOW_OUTSIDE_PROJECT_ENV,
+    BINARY_KINDS,
+    TRUSTED_BINARIES_ONLY_ENV,
+    TrustPolicy,
+    resolve_policy,
+)
 from deckifyr.pptx import BuildResult, compose_and_write
 from deckifyr.pptx.compose import sha256_file
 from deckifyr.schema.design import DesignDocument
@@ -89,6 +98,13 @@ _EXIT_CODE_BY_ERROR_CODE = {
     ErrorCode.IO: EXIT_IO_ERROR,
     ErrorCode.NOT_IMPLEMENTED: EXIT_NOT_IMPLEMENTED,
 }
+
+
+def _policy(args: argparse.Namespace) -> TrustPolicy:
+    """The launcher's trust policy (issue #89): flag, else environment, else
+    off. Subcommands without trust flags (the edit commands) get it from the
+    environment alone, which is how a supervising launcher reaches them."""
+    return resolve_policy(args, os.environ)
 
 
 def _examples_dir() -> Path:
@@ -202,17 +218,18 @@ def _cmd_skills(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=_policy(args)
     )
+    # Only a `--warn-only` run can have anything to warn about: strict mode
+    # already rejected every unitless length inside `load_project`.
+    warnings = [] if args.strict else projectio.collect_geometry_warnings(layouts, presentation)
     return {
         "valid": True,
         "presentation": str(args.presentation),
         "slide_count": len(presentation.slides),
         "layout_count": len(layouts.layouts),
         "schema_version": presentation.deckifyr,
-        # Reserved for a stable result shape (issue #85): validation has no
-        # warning producers today, so this is always empty.
-        "warnings": [],
+        "warnings": warnings_payload(warnings),
     }
 
 
@@ -233,11 +250,17 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     # Fail on schema/geometry problems before planning/composing, so
     # `build` on a broken project reports the real validation error
     # rather than a confusing failure downstream.
+    policy = _policy(args)
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=policy
     )
 
     project_root = presentation_path.parent
+    # `--warn-only` coerces unitless lengths to EMUs; report each one
+    # (issue #91) -- strict mode already failed above, so nothing to add.
+    geometry_warnings = (
+        [] if args.strict else projectio.collect_geometry_warnings(layouts, presentation)
+    )
     resolved_slides = expand_presentation(
         presentation, design, layouts, strict=args.strict
     )
@@ -257,6 +280,8 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         design_path=(project_root / presentation.design.base).resolve(),
         layouts_path=(project_root / presentation.layouts).resolve(),
         keep_preview_pdf=True,
+        initial_warnings=geometry_warnings,
+        policy=policy,
     )
 
     return {
@@ -314,7 +339,7 @@ def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
 
     doc_type = projectio.resolve_document_type(args.type, data)
     if doc_type == "presentation":
-        extra = projectio.validate_and_write_presentation(path, data)
+        extra = projectio.validate_and_write_presentation(path, data, policy=_policy(args))
     else:
         model = projectio.DOCUMENT_MODELS[doc_type]
         try:
@@ -360,7 +385,7 @@ def _cmd_slide_add(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
@@ -370,7 +395,7 @@ def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
         editor.remove_slide(data, args.id)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
@@ -393,7 +418,7 @@ def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
         editor.update_slide(data, args.id, **kwargs)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
@@ -407,7 +432,7 @@ def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _parse_slides_arg(raw: str | None) -> list[int] | None:
@@ -428,8 +453,9 @@ def _parse_slides_arg(raw: str | None) -> list[int] | None:
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     presentation_path = Path(args.presentation).resolve()
+    policy = _policy(args)
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=policy
     )
 
     project_root = presentation_path.parent
@@ -455,6 +481,7 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
         force_previews=True,
         preview_slides=_parse_slides_arg(args.slides),
         keep_preview_pdf=True,
+        policy=policy,
     )
 
     return {
@@ -468,8 +495,10 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _inspect_presentation(path: Path, *, strict: bool) -> dict[str, Any]:
-    presentation, design, layouts = projectio.load_project(path, strict=strict)
+def _inspect_presentation(
+    path: Path, *, strict: bool, policy: TrustPolicy | None = None
+) -> dict[str, Any]:
+    presentation, design, layouts = projectio.load_project(path, strict=strict, policy=policy)
     resolved_slides = expand_presentation(presentation, design, layouts, strict=strict)
     return {
         "target": "presentation",
@@ -561,7 +590,7 @@ def _cmd_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
     suffix = target.suffix.lower()
     if suffix in (".yaml", ".yml"):
-        return _inspect_presentation(target, strict=args.strict)
+        return _inspect_presentation(target, strict=args.strict, policy=_policy(args))
     if suffix == ".pptx":
         return _inspect_pptx(target)
     raise DeckifyrError(
@@ -587,9 +616,29 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         ) from exc
 
     from deckifyr.web.app import create_app, strip_path_prefix
+    from deckifyr.web.security import build_host_policy
 
     project_root = Path(args.project or ".").resolve()
     server_holder: list[Any] = []
+
+    # Issue #88. The token comes from the environment, never argv (a process
+    # listing would show it); a launcher that asked for one and did not set it
+    # must fail loudly rather than start an unauthenticated server.
+    api_token = None
+    if args.api_token_env:
+        api_token = os.environ.get(args.api_token_env, "")
+        if not api_token:
+            raise DeckifyrError(
+                f"--api-token-env {args.api_token_env}: that environment variable is "
+                "unset or empty, so the server would run without the token it was "
+                "asked to require",
+                code=ErrorCode.IO,
+            )
+    # Port 0 means "pick one": the Host header then carries a port we cannot
+    # know in advance, so only the names are checked.
+    host_policy = build_host_policy(
+        args.port or None, args.host, args.allowed_host
+    )
 
     def request_shutdown() -> None:
         # Called from `POST /api/shutdown` once it has decided stopping is
@@ -607,6 +656,9 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         # A supervised/installed context must never shell out to npm at
         # startup; `--launcher workspace` implies this.
         allow_frontend_rebuild=not (args.no_frontend_rebuild or args.launcher == "workspace"),
+        policy=_policy(args),
+        host_policy=host_policy,
+        api_token=api_token,
     )
     served = strip_path_prefix(app, args.root_path) if args.root_path else app
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) or until
@@ -636,6 +688,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="deckifyr")
     parser.add_argument(
         "--json", action="store_true", help="emit structured JSON output"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "include the traceback of an unexpected (non-deckifyr) error in the output "
+            "(also enabled by DECKIFYR_DEBUG=1)"
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -693,16 +753,57 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         )
         group.add_argument("--warn-only", dest="strict", action="store_false")
 
+    def add_trust_flags(p: argparse.ArgumentParser) -> None:
+        """What a supervising launcher uses to stop a project file choosing
+        executables or paths (issue #89, `deckifyr.policy`). Every flag also
+        has an environment variable, which is how the edit commands (`get`,
+        `set`, `slide`) -- which take no flags -- see the same policy."""
+        group = p.add_argument_group(
+            "trust policy",
+            "for launchers that treat project files as untrusted user data; all off by default",
+        )
+        for kind, (flag, env_name) in BINARY_KINDS.items():
+            group.add_argument(
+                flag,
+                dest=f"{kind}_bin",
+                metavar="PATH",
+                default=None,
+                help=(
+                    f"run this executable instead of the project file's own setting "
+                    f"(env: {env_name})"
+                ),
+            )
+        group.add_argument(
+            "--trusted-binaries-only",
+            action="store_true",
+            help=(
+                "reject a project file whose build.*.binary differs from the default bare "
+                "name (E_UNTRUSTED_BINARY) and require design.base, layouts, build.output, "
+                "build.manifest and build.reportifyr paths to stay inside the project "
+                f"(E_PATH_OUTSIDE_PROJECT) (env: {TRUSTED_BINARIES_ONLY_ENV})"
+            ),
+        )
+        group.add_argument(
+            "--allow-outside-project",
+            action="store_true",
+            help=(
+                "with --trusted-binaries-only, permit those paths to resolve outside the "
+                f"project (env: {ALLOW_OUTSIDE_PROJECT_ENV})"
+            ),
+        )
+
     validate_parser = subparsers.add_parser(
         "validate", help="validate a presentation.yaml and its referenced files"
     )
     validate_parser.add_argument("presentation")
     add_strict_flag(validate_parser)
+    add_trust_flags(validate_parser)
     validate_parser.set_defaults(handler=_cmd_validate)
 
     build_parser = subparsers.add_parser("build", help="build a .pptx and manifest")
     build_parser.add_argument("presentation")
     add_strict_flag(build_parser)
+    add_trust_flags(build_parser)
     build_parser.set_defaults(handler=_cmd_build)
 
     preview_parser = subparsers.add_parser(
@@ -715,6 +816,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="comma-separated 1-indexed slide numbers to render (default: all), e.g. 1,3",
     )
     add_strict_flag(preview_parser)
+    add_trust_flags(preview_parser)
     preview_parser.set_defaults(handler=_cmd_preview)
 
     inspect_parser = subparsers.add_parser(
@@ -722,6 +824,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument("target")
     add_strict_flag(inspect_parser)
+    add_trust_flags(inspect_parser)
     inspect_parser.set_defaults(handler=_cmd_inspect)
 
     schema_parser = subparsers.add_parser("schema", help="print a document type's JSON Schema")
@@ -874,9 +977,70 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "web/src is newer than the committed bundle"
         ),
     )
+    serve_parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="HOST[:PORT]",
+        help=(
+            "also accept this Host/Origin (repeatable) -- the public name of a reverse "
+            "proxy in front of the editor. Without a port it matches any port. The "
+            "loopback names on the served port and the --host it bound are always allowed; "
+            "any other Host gets 421 (DNS-rebinding protection)"
+        ),
+    )
+    serve_parser.add_argument(
+        "--api-token-env",
+        metavar="VAR",
+        default=None,
+        help=(
+            "name of an environment variable holding a per-launch secret: every /api/* "
+            "request except GET /api/health must then send it as X-Deckifyr-Api-Token "
+            "(the supervising proxy injects it; the editor's own browser bundle never "
+            "sees it). Static assets stay open. The value is read from the environment, "
+            "never argv"
+        ),
+    )
+    add_trust_flags(serve_parser)
     serve_parser.set_defaults(handler=_cmd_serve)
 
     return parser
+
+
+def _emit_error(args: argparse.Namespace, payload: dict[str, Any], exit_code: int) -> int:
+    if args.json:
+        # Deliberately stderr, not stdout, on the error path: the R
+        # facade invokes this CLI through pyro::run_python_script(),
+        # which uses processx::run(error_on_status = TRUE) and
+        # discards the captured stdout/stderr return value whenever
+        # the process exits non-zero, replacing it with a generic
+        # "<script> failed." error. R/run-python.R works around this
+        # by passing its own stderr_callback to capture output as it
+        # streams (before the exit-status check fires), which only
+        # works if the diagnostic actually went to stderr. Keeping
+        # errors on stderr and success on stdout is also just the
+        # more conventional CLI split. See R/run-python.R for the R
+        # side of this handshake -- the two must not drift apart.
+        print(
+            json.dumps(
+                {"status": "error", "result_version": RESULT_VERSION, **payload}, indent=2
+            ),
+            file=sys.stderr,
+        )
+    else:
+        print(f"ERROR [{payload['code']}]: {payload['message']}", file=sys.stderr)
+        if payload["code"] == ErrorCode.INTERNAL and "traceback" not in payload:
+            print("(re-run with --debug for the traceback)", file=sys.stderr)
+        elif "traceback" in payload:
+            print(payload["traceback"], file=sys.stderr)
+    return exit_code
+
+
+def _debug_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "debug", False)) or os.environ.get("DECKIFYR_DEBUG", "") not in (
+        "",
+        "0",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -887,29 +1051,28 @@ def main(argv: list[str] | None = None) -> int:
         result = args.handler(args)
     except DeckifyrError as exc:
         exit_code = _EXIT_CODE_BY_ERROR_CODE.get(exc.code, EXIT_VALIDATION_ERROR)
-        if args.json:
-            # Deliberately stderr, not stdout, on the error path: the R
-            # facade invokes this CLI through pyro::run_python_script(),
-            # which uses processx::run(error_on_status = TRUE) and
-            # discards the captured stdout/stderr return value whenever
-            # the process exits non-zero, replacing it with a generic
-            # "<script> failed." error. R/run-python.R works around this
-            # by passing its own stderr_callback to capture output as it
-            # streams (before the exit-status check fires), which only
-            # works if the diagnostic actually went to stderr. Keeping
-            # errors on stderr and success on stdout is also just the
-            # more conventional CLI split. See R/run-python.R for the R
-            # side of this handshake -- the two must not drift apart.
-            print(
-                json.dumps(
-                    {"status": "error", "result_version": RESULT_VERSION, **exc.to_dict()},
-                    indent=2,
-                ),
-                file=sys.stderr,
+        return _emit_error(args, exc.to_dict(), exit_code)
+    except Exception as exc:
+        # Not one of ours (issue #90): without this, a `PermissionError`
+        # (say, the output .pptx is open in PowerPoint on Windows) or a
+        # genuine bug escapes as a bare traceback with no JSON on stderr,
+        # which breaks the `--json` contract callers (the R facade, the
+        # web job manager, a launcher) depend on. An OS-level failure is an
+        # I/O error; anything else is internal. The traceback is kept out of
+        # the default output (it is noise to a caller and may carry paths)
+        # and opt-in via `--debug`/DECKIFYR_DEBUG, where it rides inside the
+        # one JSON object rather than as extra stderr text that would make
+        # the payload unparseable.
+        code = ErrorCode.IO if isinstance(exc, OSError) else ErrorCode.INTERNAL
+        payload: dict[str, Any] = {
+            "code": code,
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+        if _debug_enabled(args):
+            payload["traceback"] = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
-        else:
-            print(f"ERROR [{exc.code}]: {exc}", file=sys.stderr)
-        return exit_code
+        return _emit_error(args, payload, _EXIT_CODE_BY_ERROR_CODE.get(code, EXIT_VALIDATION_ERROR))
 
     if args.json:
         print(json.dumps({"status": "ok", "result_version": RESULT_VERSION, **result}, indent=2))

@@ -9,7 +9,9 @@
 #'
 #' @param presentation Path to `presentation.yaml`.
 #' @param strict Reject unitless geometry when `TRUE` (default); `FALSE`
-#'   is the `--warn-only` policy from spec section 11.1.
+#'   is the `--warn-only` policy from spec section 11.1. Each unitless length
+#'   it then accepts is reported in `$warnings` as `W_UNITLESS_LENGTH`.
+#' @inheritParams deck_build
 #' @return A parsed list from the CLI's JSON output, e.g. `$valid`,
 #'   `$slide_count`, `$layout_count`.
 #' @examples
@@ -23,10 +25,15 @@
 #' deck_validate(presentation)
 #' }
 #' @export
-deck_validate <- function(presentation, strict = TRUE) {
+deck_validate <- function(presentation, strict = TRUE,
+                          rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                          trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
   args <- c("validate", presentation)
   if (!isTRUE(strict)) {
     args <- c(args, "--warn-only")
   }
+  args <- c(args, .trust_args(
+    rscript_bin, quarto_bin, soffice_bin, trusted_binaries_only, allow_outside_project
+  ))
   .run_deckifyr_cli(args)
 }

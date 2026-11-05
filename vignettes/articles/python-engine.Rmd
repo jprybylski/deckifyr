@@ -41,7 +41,11 @@ makes network calls.
 The `--json` output is a versioned contract. Every success payload (on
 stdout) and every error payload (on stderr) carries `"result_version"`
 (currently `1`); it changes only for a break an existing consumer
-couldn't ignore, and adding a key is not one, so tolerate unknown keys.
+couldn't ignore, and adding a key is not one, so tolerate unknown keys (the
+published schemas allow them and carry a versioned `$id`). A failure that is
+not a deckifyr error -- say the output `.pptx` is open in another program --
+is still one JSON object on stderr: `E_IO` for an OS error, `E_INTERNAL`
+otherwise (add the global `--debug` flag to include a `traceback`).
 `validate`, `build` and `preview` have published JSON Schemas under
 `inst/python/deckifyr/schemas/results/` (`validate`, `build`, `preview`,
 `error`, plus `ok` for what every other command promises). Notably
@@ -196,7 +200,8 @@ app, a process supervisor) and be mounted under a URL prefix:
   so it never shells out to `npm`, whatever the checkout layout.
 * **Readiness and state.** `GET /api/health` returning 200 means the
   server is ready to accept project requests; it never depends on the
-  project loading. It also reports `dirty` (unsaved in-memory edits) and
+  project loading. It also reports `project_loaded`/`project_error` (is the
+  project usable?), `dirty` (unsaved in-memory edits) and
   `active_jobs` (queued/running build or preview jobs), so a supervisor
   can tell whether stopping is safe without making an edit to find out.
 * **Orderly stop.** `POST /api/shutdown` with an optional JSON body
@@ -208,6 +213,24 @@ app, a process supervisor) and be mounted under a URL prefix:
   process trees. The process then exits `0`. A plain `SIGTERM`/`SIGINT`
   cannot ask, so it writes a warning to stderr if edits were left
   unsaved (and cancels leftover jobs) rather than losing work silently.
+* **Protection from other browser tabs.** The server only answers a `Host`
+  of `127.0.0.1`/`localhost`/`[::1]` on its own port (plus the `--host` it
+  bound and any `--allowed-host`, repeatable -- give a reverse proxy's public
+  name here); anything else is `421`, which blocks DNS rebinding. A
+  state-changing request marked `Sec-Fetch-Site: cross-site`/`same-site`, or
+  with a foreign `Origin`, is `403`. `--api-token-env VAR` makes every
+  `/api/*` request except `GET /api/health` require the secret in `$VAR` as
+  an `X-Deckifyr-Api-Token` header; the proxy injects it, the editor's bundle
+  never sees it, and static assets stay open.
+* **Project files as untrusted data.** `--rscript-bin`, `--quarto-bin` and
+  `--soffice-bin` (or `DECKIFYR_*_BIN`) run the launcher's own executables
+  instead of a project file's `build.*.binary`. `--trusted-binaries-only`
+  rejects a project whose `binary` differs from the default (`E_UNTRUSTED_BINARY`)
+  and requires `design.base`, `layouts`, `build.output`, `build.manifest` and
+  `build.reportifyr` paths to stay inside the project
+  (`E_PATH_OUTSIDE_PROJECT`; `--allow-outside-project` relaxes the paths).
+  Off by default. These flags work on `validate`, `build`, `preview`,
+  `inspect` and `serve`, and reach the editor's saves and every build it runs.
 * **Bounded jobs.** `--job-timeout SECONDS` (default 600, `0` for no
   limit) bounds every background build/preview; an overrun is killed
   with its whole process tree and reported as `E_TIMEOUT`. Jobs can be

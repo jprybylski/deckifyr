@@ -337,6 +337,57 @@ test_that("deck_serve() launches the expected uv invocation and returns a deckif
   )
 })
 
+test_that("deck_serve() forwards the trust policy to the server command (issue #89)", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-trust-test")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+
+  local_mocked_bindings(`system.file` = function(...) "/fake/python/src")
+  local_mocked_bindings(
+    get_venv_uv_paths = function() list(uv = "fake-uv", venv = "fake-venv"),
+    .package = "pyro"
+  )
+  socket_calls <- 0L
+  local_mocked_bindings(socketConnection = function(...) {
+    socket_calls <<- socket_calls + 1L
+    if (socket_calls == 1L) stop("connection refused")
+    textConnection("")
+  })
+  captured <- NULL
+  local_mocked_bindings(
+    .launch_server_process = function(uv_path, args, env_vars) {
+      captured <<- args
+      make_fake_process(TRUE)
+    }
+  )
+
+  deck_serve(
+    project = project_dir, port = 8321, open_browser = FALSE,
+    quarto_bin = "/opt/quarto", trusted_binaries_only = TRUE, allow_outside_project = TRUE
+  )
+
+  # The policy rides after the fixed arguments, as plain CLI flags.
+  expect_equal(
+    utils::tail(captured, 4),
+    c("--quarto-bin", "/opt/quarto", "--trusted-binaries-only", "--allow-outside-project")
+  )
+  expect_lt(match("--launcher", captured), match("--quarto-bin", captured))
+})
+
+test_that("deck_serve() rejects a malformed trust argument before probing the port", {
+  project_dir <- file.path(tempdir(), "deckifyr-serve-trust-bad")
+  unlink(project_dir, recursive = TRUE)
+  dir.create(project_dir)
+  local_mocked_bindings(
+    .port_is_open = function(...) stop("the port must not be probed first"),
+    .launch_server_process = function(...) stop("nothing must be launched")
+  )
+  expect_error(
+    deck_serve(project = project_dir, open_browser = FALSE, quarto_bin = c("a", "b")),
+    "single path string"
+  )
+})
+
 test_that("deck_serve() refuses to launch when the port is already occupied", {
   project_dir <- file.path(tempdir(), "deckifyr-serve-port-busy-test")
   unlink(project_dir, recursive = TRUE)
