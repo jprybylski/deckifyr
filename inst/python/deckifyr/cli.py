@@ -70,12 +70,15 @@ from typing import Any
 from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import editor, projectio, templates
+from deckifyr.diagnostics import warnings_payload
 from deckifyr.plan import expand_presentation
-from deckifyr.pptx import compose_and_write
+from deckifyr.pptx import BuildResult, compose_and_write
+from deckifyr.pptx.compose import sha256_file
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
+from deckifyr.schema.results import RESULT_VERSION
 
 EXIT_OK = 0
 EXIT_VALIDATION_ERROR = 1
@@ -191,7 +194,22 @@ def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
         "slide_count": len(presentation.slides),
         "layout_count": len(layouts.layouts),
         "schema_version": presentation.deckifyr,
+        # Reserved for a stable result shape (issue #85): validation has no
+        # warning producers today, so this is always empty.
+        "warnings": [],
     }
+
+
+def _artifact_entries(result: BuildResult) -> list[dict[str, str]]:
+    """`artifacts` for a `--json` result (issue #85): each produced file with
+    its SHA-256, so a caller can record provenance without re-hashing."""
+    files: list[tuple[str, Path]] = [("pptx", result.output_path)]
+    if result.manifest_path:
+        files.append(("manifest", result.manifest_path))
+    files.extend(("preview", p) for p in result.preview_paths)
+    if result.preview_pdf_path:
+        files.append(("preview_pdf", result.preview_pdf_path))
+    return [{"kind": kind, "path": str(p), "sha256": sha256_file(p)} for kind, p in files]
 
 
 def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
@@ -230,8 +248,12 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "manifest": str(result.manifest_path) if result.manifest_path else None,
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
+        # The full list (issue #85) -- previously only the count, with the
+        # text reachable only through the optional manifest.
+        "warnings": warnings_payload(result.warnings),
         "previews": [str(p) for p in result.preview_paths],
         "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
+        "artifacts": _artifact_entries(result),
     }
 
 
@@ -424,6 +446,9 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
         "previews": [str(p) for p in result.preview_paths],
         "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
         "slide_count": result.slide_count,
+        "warning_count": len(result.warnings),
+        "warnings": warnings_payload(result.warnings),
+        "artifacts": _artifact_entries(result),
     }
 
 
@@ -858,13 +883,19 @@ def main(argv: list[str] | None = None) -> int:
             # errors on stderr and success on stdout is also just the
             # more conventional CLI split. See R/run-python.R for the R
             # side of this handshake -- the two must not drift apart.
-            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"status": "error", "result_version": RESULT_VERSION, **exc.to_dict()},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
         else:
             print(f"ERROR [{exc.code}]: {exc}", file=sys.stderr)
         return exit_code
 
     if args.json:
-        print(json.dumps({"status": "ok", **result}, indent=2))
+        print(json.dumps({"status": "ok", "result_version": RESULT_VERSION, **result}, indent=2))
     elif args.command == "schema":
         # A JSON Schema has no nicer "human-readable" form than its own
         # JSON, so print it as-is regardless of --json.

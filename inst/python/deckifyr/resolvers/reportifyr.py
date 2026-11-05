@@ -30,6 +30,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from deckifyr.diagnostics import (
+    W_INVALID_SIDECAR,
+    W_MISSING_SIDECAR,
+    W_MULTI_FIGURE,
+    BuildWarning,
+)
 from deckifyr.resolvers import BuildContext, ResolvedContent
 from deckifyr.schema.errors import ContentValidationError
 
@@ -103,9 +109,10 @@ def _select_entry(names: list[str]) -> tuple[str, list[str]]:
     if len(names) == 1:
         return names[0], []
     ignored = names[1:]
-    warning = (
+    warning = BuildWarning(
         f"{MAGIC_PREFIX}[{', '.join(names)}]: multi-figure references are not "
-        f"tiled in this version -- using {names[0]!r} and ignoring {ignored!r}"
+        f"tiled in this version -- using {names[0]!r} and ignoring {ignored!r}",
+        W_MULTI_FIGURE,
     )
     return names[0], [warning]
 
@@ -161,14 +168,24 @@ def _load_metadata(
                 "build.reportifyr.fail_on_missing_metadata: false to build "
                 "without one"
             )
-        return None, [f"{artifact_path}: no reportifyr metadata sidecar found at {sidecar}; footer skipped"]
+        return None, [
+            BuildWarning(
+                f"{artifact_path}: no reportifyr metadata sidecar found at {sidecar}; footer skipped",
+                W_MISSING_SIDECAR,
+            )
+        ]
 
     try:
         metadata = json.loads(sidecar.read_text())
     except json.JSONDecodeError as exc:
         if fail_on_missing:
             raise ContentValidationError(f"{sidecar}: invalid JSON metadata sidecar: {exc}") from exc
-        return None, [f"{sidecar}: invalid JSON metadata sidecar ({exc}); footer skipped"]
+        return None, [
+            BuildWarning(
+                f"{sidecar}: invalid JSON metadata sidecar ({exc}); footer skipped",
+                W_INVALID_SIDECAR,
+            )
+        ]
 
     return metadata, []
 

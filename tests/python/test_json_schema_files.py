@@ -12,6 +12,7 @@ from pathlib import Path
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
+from deckifyr.schema.results import RESULT_MODELS
 
 SCHEMA_MODELS = {
     "design": DesignDocument,
@@ -43,4 +44,25 @@ def test_checked_in_schema_files_match_the_live_models():
     assert not stale, (
         f"{stale} out of date -- run `python scripts/generate_json_schemas.py` "
         "and commit the result"
+    )
+
+
+RESULTS_DIR = SCHEMAS_DIR / "results"
+
+
+def test_every_result_type_has_a_checked_in_schema_file():
+    on_disk = {p.stem.removesuffix(".schema") for p in RESULTS_DIR.glob("*.schema.json")}
+    assert on_disk == set(RESULT_MODELS)
+
+
+def test_checked_in_result_schema_files_match_the_live_models():
+    stale = [
+        name
+        for name, model in RESULT_MODELS.items()
+        if json.loads((RESULTS_DIR / f"{name}.schema.json").read_text())
+        != model.model_json_schema()
+    ]
+    assert not stale, (
+        f"result schemas {stale} out of date -- run "
+        "`python scripts/generate_json_schemas.py` and commit the result"
     )

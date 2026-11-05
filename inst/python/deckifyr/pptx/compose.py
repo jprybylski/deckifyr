@@ -39,6 +39,12 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
 
 from deckifyr import __version__ as DECKIFYR_VERSION
+from deckifyr.diagnostics import (
+    W_FLEXTABLE_RENDERED,
+    W_PREVIEW_SKIPPED,
+    BuildWarning,
+    as_build_warning,
+)
 from deckifyr.plan import (
     ResolvedElement,
     ResolvedGradient,
@@ -331,7 +337,7 @@ def _apply_text_alpha(run: Any, opacity: float) -> None:
     srgb_clr.append(parse_xml(f'<a:alpha xmlns:a="{_DRAWINGML_NS}" val="{val}"/>'))
 
 
-def _sha256_file(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -604,7 +610,7 @@ def _add_image_shape(
     image_path: Path = resolver.resolve(str(element.source), context).value
 
     shape = _place_picture(slide, element, image_path)
-    return shape, {"resolved_path": str(image_path), "sha256": _sha256_file(image_path)}
+    return shape, {"resolved_path": str(image_path), "sha256": sha256_file(image_path)}
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +741,12 @@ def _add_reportifyr_shape(
             artifact.path, config=reportifyr_ctx.flextable_config
         )
         image_path = rendered_path
-        warnings.append(f"{artifact.path.name}: rendered flextable to PNG for placement")
+        warnings.append(
+            BuildWarning(
+                f"{artifact.path.name}: rendered flextable to PNG for placement",
+                W_FLEXTABLE_RENDERED,
+            )
+        )
 
     try:
         shape = _place_picture(slide, element, image_path)
@@ -745,7 +756,7 @@ def _add_reportifyr_shape(
 
     footer_note = _apply_footer(slide, element, "figure", artifact.metadata, reportifyr_ctx, design)
 
-    source_manifest = {"resolved_path": str(artifact.path), "sha256": _sha256_file(artifact.path)}
+    source_manifest = {"resolved_path": str(artifact.path), "sha256": sha256_file(artifact.path)}
     return shape, source_manifest, warnings, footer_note
 
 
@@ -935,7 +946,7 @@ def _add_table_shape(
 
     footer_note = _apply_footer(slide, element, "table", metadata, reportifyr_ctx, design)
 
-    source_manifest = {"resolved_path": str(table_path), "sha256": _sha256_file(table_path)}
+    source_manifest = {"resolved_path": str(table_path), "sha256": sha256_file(table_path)}
     return graphic_frame, source_manifest, warnings, footer_note
 
 
@@ -1017,7 +1028,7 @@ def _add_quarto_shape(
         finally:
             artifact.image_path.unlink(missing_ok=True)
 
-    source_manifest = {"resolved_path": str(artifact.path), "sha256": _sha256_file(artifact.path)}
+    source_manifest = {"resolved_path": str(artifact.path), "sha256": sha256_file(artifact.path)}
     return shape, source_manifest, artifact.warnings, artifact.render_mode
 
 
@@ -1115,6 +1126,9 @@ def _compose_element(
             **source_manifest,
         }
     )
+    # Every warning raised while composing this element is tagged with where
+    # it came from (fill-only, so a group's child keeps its own element id).
+    warnings = [as_build_warning(w).located(slide_id, element.id) for w in warnings]
     return shape, manifest_entries, warnings, footer_notes
 
 
@@ -1237,8 +1251,11 @@ def compose_and_write(
             if force_previews:
                 raise
             warnings.append(
-                "build.previews is enabled but rendering slide previews was "
-                f"skipped: {exc}"
+                BuildWarning(
+                    "build.previews is enabled but rendering slide previews was "
+                    f"skipped: {exc}",
+                    W_PREVIEW_SKIPPED,
+                )
             )
 
     manifest = {
@@ -1251,14 +1268,14 @@ def compose_and_write(
         "input_files": {
             "presentation": {
                 "path": str(presentation_path),
-                "sha256": _sha256_file(presentation_path),
+                "sha256": sha256_file(presentation_path),
             },
-            "design": {"path": str(design_path), "sha256": _sha256_file(design_path)},
-            "layouts": {"path": str(layouts_path), "sha256": _sha256_file(layouts_path)},
+            "design": {"path": str(design_path), "sha256": sha256_file(design_path)},
+            "layouts": {"path": str(layouts_path), "sha256": sha256_file(layouts_path)},
         },
         "slide_count": len(resolved_slides),
         "elements": element_manifest,
-        "output": {"path": str(output_path), "sha256": _sha256_file(output_path)},
+        "output": {"path": str(output_path), "sha256": sha256_file(output_path)},
         "previews": [str(p) for p in preview_paths],
         "preview_pdf": str(preview_pdf_path) if preview_pdf_path else None,
         "warnings": warnings,

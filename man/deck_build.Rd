@@ -18,14 +18,24 @@ A parsed list from the CLI's JSON output:
 \item{\code{manifest}}{The manifest path, or \code{NULL} if
 \code{presentation.yaml}'s \code{build.manifest} is unset.}
 \item{\code{slide_count}}{Number of slides composed.}
-\item{\code{warning_count}}{Number of non-fatal build warnings (the
-manifest itself carries their text) -- includes a skipped
-preview render when \code{build.previews: true} and LibreOffice
-isn't installed.}
+\item{\code{warning_count}}{Number of non-fatal build warnings --
+includes a skipped preview render when \code{build.previews: true}
+and LibreOffice isn't installed.}
+\item{\code{warnings}}{The warnings themselves, a list with one entry
+per warning: \code{code} (a stable identifier such as
+\code{"W_MISSING_SIDECAR"}), \code{message}, and the \code{slide}/\code{element} ids
+it came from (\code{NULL} for a build-level warning). Present
+whether or not a manifest is written.}
 \item{\code{previews}}{Per-slide preview PNG paths, only non-empty when
 \code{build.previews: true} actually rendered them.}
 \item{\code{preview_pdf}}{The intermediate PDF LibreOffice produced
 alongside those PNGs, or \code{NULL} if previews weren't rendered.}
+\item{\code{artifacts}}{A list of every file the build produced
+(\code{kind}, \code{path}, \code{sha256}), so provenance can be recorded
+without re-hashing.}
+\item{\code{status}, \code{result_version}}{\code{"ok"} and the version of the
+result schema (currently \code{1}); new keys may be added within a
+version, so treat unknown entries as ignorable.}
 }
 }
 \description{

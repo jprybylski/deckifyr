@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inst" / "python"))
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
+from deckifyr.schema.results import RESULT_MODELS
 
 SCHEMA_MODELS = {
     "design": DesignDocument,
@@ -44,10 +45,21 @@ OUTPUT_DIR = (
 )
 
 
+# The versioned `--json` result payloads (issue #85), in a subdirectory so
+# the exact `schemas/*.schema.json` set (documents only) stays what IDE YAML
+# tooling expects to find.
+RESULTS_OUTPUT_DIR = OUTPUT_DIR / "results"
+
+
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, model in SCHEMA_MODELS.items():
         path = OUTPUT_DIR / f"{name}.schema.json"
+        path.write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
+        print(f"wrote {path}")
+    for name, model in RESULT_MODELS.items():
+        path = RESULTS_OUTPUT_DIR / f"{name}.schema.json"
         path.write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
         print(f"wrote {path}")
 

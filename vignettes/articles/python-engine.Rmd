@@ -38,6 +38,19 @@ wording (`0` success, `1` schema/validation failure, `2` argparse usage
 error, `3` I/O failure, `4` feature not implemented yet). No subcommand
 makes network calls.
 
+The `--json` output is a versioned contract. Every success payload (on
+stdout) and every error payload (on stderr) carries `"result_version"`
+(currently `1`); it changes only for a break an existing consumer
+couldn't ignore, and adding a key is not one, so tolerate unknown keys.
+`validate`, `build` and `preview` have published JSON Schemas under
+`inst/python/deckifyr/schemas/results/` (`validate`, `build`, `preview`,
+`error`, plus `ok` for what every other command promises). Notably
+`build` and `preview` return the **full list of warnings** --
+`{code, message, slide, element}` each, whether or not a manifest is
+written -- and an `artifacts` list of `{kind, path, sha256}` for the
+`.pptx`, manifest, previews and preview PDF; `warning_count` and the
+original keys are unchanged.
+
 ### `init`: scaffold a new project
 
 ```bash
