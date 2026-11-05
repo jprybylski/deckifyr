@@ -126,6 +126,10 @@ class ErrorResult(_Model):
     dependency: DependencyEntry | None = Field(
         default=None, description="Present only for E_MISSING_DEPENDENCY."
     )
+    traceback: str | None = Field(
+        default=None,
+        description="Python traceback of an unexpected error (E_INTERNAL, or E_IO from an OS error); present only with --debug / DECKIFYR_DEBUG.",
+    )
 
 
 RESULT_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"

@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from deckifyr._proc import kill_process_tree, run_in_group
+from deckifyr._proc import kill_process_tree, pid_alive, run_in_group
 from deckifyr.web.jobs import JobManager
 
 IS_WINDOWS = sys.platform == "win32"
@@ -50,36 +50,9 @@ HANGING_TREE = textwrap.dedent(
 )
 
 
-def _pid_alive_windows(pid: int) -> bool:
-    # `os.kill(pid, 0)` must never be used here: on Windows any signal other
-    # than CTRL_C/CTRL_BREAK calls TerminateProcess, so it would *kill* the
-    # process it was only meant to probe.
-    import ctypes
-    from ctypes import wintypes
-
-    process_query_limited_information = 0x1000
-    error_access_denied = 5
-    still_active = 259
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-    if not handle:
-        return ctypes.get_last_error() == error_access_denied  # exists, just not ours to open
-    try:
-        code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return True
-        return code.value == still_active
-    finally:
-        kernel32.CloseHandle(handle)
-
-
 def _pid_alive(pid: int) -> bool:
     if IS_WINDOWS:
-        return _pid_alive_windows(pid)
+        return pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

@@ -59,6 +59,19 @@
       ],
       "default": null,
       "description": "Present only for E_MISSING_DEPENDENCY."
+    },
+    "traceback": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Python traceback of an unexpected error (E_INTERNAL, or E_IO from an OS error); present only with --debug / DECKIFYR_DEBUG.",
+      "title": "Traceback"
     }
   },
   "required": [

@@ -115,6 +115,92 @@ def test_error_payload_has_only_declared_keys(tmp_path, capsys):
     assert set(json.loads(err)) <= set(ErrorResult.model_fields)
 
 
+# --- every --json failure is machine-readable (issue #90) --------------------
+
+
+def _build_that_raises(monkeypatch, exc):
+    def boom(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("deckifyr.cli.compose_and_write", boom)
+
+
+def test_a_permission_error_while_saving_is_an_e_io_json_error(
+    minimal_deck_dir, tmp_path, capsys, monkeypatch
+):
+    presentation = _copy_deck(minimal_deck_dir, tmp_path)
+    _build_that_raises(
+        monkeypatch, PermissionError(13, "Permission denied", "build/out.pptx")
+    )
+
+    code, out, err = _run(capsys, "build", str(presentation))
+
+    assert code == 3 and out == ""  # EXIT_IO_ERROR, nothing on stdout
+    payload = json.loads(err)  # stderr is exactly one JSON object, no traceback text
+    ErrorResult.model_validate(payload)
+    assert payload["status"] == "error" and payload["result_version"] == RESULT_VERSION
+    assert payload["code"] == "E_IO"
+    assert "PermissionError" in payload["message"] and "build/out.pptx" in payload["message"]
+    assert "traceback" not in payload
+
+
+def test_an_unexpected_exception_is_an_e_internal_json_error(
+    minimal_deck_dir, tmp_path, capsys, monkeypatch
+):
+    presentation = _copy_deck(minimal_deck_dir, tmp_path)
+    _build_that_raises(monkeypatch, RuntimeError("something nobody planned for"))
+
+    code, out, err = _run(capsys, "build", str(presentation))
+
+    assert code == 1 and out == ""
+    payload = json.loads(err)
+    ErrorResult.model_validate(payload)
+    assert payload["code"] == "E_INTERNAL"
+    assert payload["message"] == "RuntimeError: something nobody planned for"
+    assert "Traceback" not in err
+
+
+def test_debug_puts_the_traceback_inside_the_one_json_object(
+    minimal_deck_dir, tmp_path, capsys, monkeypatch
+):
+    presentation = _copy_deck(minimal_deck_dir, tmp_path)
+    _build_that_raises(monkeypatch, RuntimeError("boom"))
+
+    code, _, err = _run(capsys, "--debug", "build", str(presentation))
+
+    assert code == 1
+    payload = json.loads(err)  # still parseable: the traceback is a field, not extra text
+    assert payload["code"] == "E_INTERNAL"
+    assert "Traceback (most recent call last)" in payload["traceback"]
+    assert "RuntimeError: boom" in payload["traceback"]
+
+
+def test_debug_env_var_is_equivalent_to_the_flag(minimal_deck_dir, tmp_path, capsys, monkeypatch):
+    presentation = _copy_deck(minimal_deck_dir, tmp_path)
+    _build_that_raises(monkeypatch, RuntimeError("boom"))
+    monkeypatch.setenv("DECKIFYR_DEBUG", "1")
+
+    _, _, err = _run(capsys, "build", str(presentation))
+
+    assert "traceback" in json.loads(err)
+
+
+def test_human_mode_hides_the_traceback_unless_asked(
+    minimal_deck_dir, tmp_path, capsys, monkeypatch
+):
+    presentation = _copy_deck(minimal_deck_dir, tmp_path)
+    _build_that_raises(monkeypatch, RuntimeError("boom"))
+
+    code = main(["build", str(presentation)])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "ERROR [E_INTERNAL]: RuntimeError: boom" in err
+    assert "Traceback" not in err and "--debug" in err
+
+    code = main(["--debug", "build", str(presentation)])
+    assert "Traceback (most recent call last)" in capsys.readouterr().err
+
+
 # --- --warn-only reports each unitless-length coercion (issue #91) ----------
 
 

@@ -62,8 +62,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -644,6 +646,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json", action="store_true", help="emit structured JSON output"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "include the traceback of an unexpected (non-deckifyr) error in the output "
+            "(also enabled by DECKIFYR_DEBUG=1)"
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser(
@@ -886,6 +896,42 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _emit_error(args: argparse.Namespace, payload: dict[str, Any], exit_code: int) -> int:
+    if args.json:
+        # Deliberately stderr, not stdout, on the error path: the R
+        # facade invokes this CLI through pyro::run_python_script(),
+        # which uses processx::run(error_on_status = TRUE) and
+        # discards the captured stdout/stderr return value whenever
+        # the process exits non-zero, replacing it with a generic
+        # "<script> failed." error. R/run-python.R works around this
+        # by passing its own stderr_callback to capture output as it
+        # streams (before the exit-status check fires), which only
+        # works if the diagnostic actually went to stderr. Keeping
+        # errors on stderr and success on stdout is also just the
+        # more conventional CLI split. See R/run-python.R for the R
+        # side of this handshake -- the two must not drift apart.
+        print(
+            json.dumps(
+                {"status": "error", "result_version": RESULT_VERSION, **payload}, indent=2
+            ),
+            file=sys.stderr,
+        )
+    else:
+        print(f"ERROR [{payload['code']}]: {payload['message']}", file=sys.stderr)
+        if payload["code"] == ErrorCode.INTERNAL and "traceback" not in payload:
+            print("(re-run with --debug for the traceback)", file=sys.stderr)
+        elif "traceback" in payload:
+            print(payload["traceback"], file=sys.stderr)
+    return exit_code
+
+
+def _debug_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "debug", False)) or os.environ.get("DECKIFYR_DEBUG", "") not in (
+        "",
+        "0",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -894,29 +940,28 @@ def main(argv: list[str] | None = None) -> int:
         result = args.handler(args)
     except DeckifyrError as exc:
         exit_code = _EXIT_CODE_BY_ERROR_CODE.get(exc.code, EXIT_VALIDATION_ERROR)
-        if args.json:
-            # Deliberately stderr, not stdout, on the error path: the R
-            # facade invokes this CLI through pyro::run_python_script(),
-            # which uses processx::run(error_on_status = TRUE) and
-            # discards the captured stdout/stderr return value whenever
-            # the process exits non-zero, replacing it with a generic
-            # "<script> failed." error. R/run-python.R works around this
-            # by passing its own stderr_callback to capture output as it
-            # streams (before the exit-status check fires), which only
-            # works if the diagnostic actually went to stderr. Keeping
-            # errors on stderr and success on stdout is also just the
-            # more conventional CLI split. See R/run-python.R for the R
-            # side of this handshake -- the two must not drift apart.
-            print(
-                json.dumps(
-                    {"status": "error", "result_version": RESULT_VERSION, **exc.to_dict()},
-                    indent=2,
-                ),
-                file=sys.stderr,
+        return _emit_error(args, exc.to_dict(), exit_code)
+    except Exception as exc:
+        # Not one of ours (issue #90): without this, a `PermissionError`
+        # (say, the output .pptx is open in PowerPoint on Windows) or a
+        # genuine bug escapes as a bare traceback with no JSON on stderr,
+        # which breaks the `--json` contract callers (the R facade, the
+        # web job manager, a launcher) depend on. An OS-level failure is an
+        # I/O error; anything else is internal. The traceback is kept out of
+        # the default output (it is noise to a caller and may carry paths)
+        # and opt-in via `--debug`/DECKIFYR_DEBUG, where it rides inside the
+        # one JSON object rather than as extra stderr text that would make
+        # the payload unparseable.
+        code = ErrorCode.IO if isinstance(exc, OSError) else ErrorCode.INTERNAL
+        payload: dict[str, Any] = {
+            "code": code,
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+        if _debug_enabled(args):
+            payload["traceback"] = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
-        else:
-            print(f"ERROR [{exc.code}]: {exc}", file=sys.stderr)
-        return exit_code
+        return _emit_error(args, payload, _EXIT_CODE_BY_ERROR_CODE.get(code, EXIT_VALIDATION_ERROR))
 
     if args.json:
         print(json.dumps({"status": "ok", "result_version": RESULT_VERSION, **result}, indent=2))
