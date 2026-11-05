@@ -60,7 +60,7 @@ from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import BLANK_LAYOUT_ID, Element, Layout, LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_INCH, format_length, parse_length
-from deckifyr.web.jobs import JobManager
+from deckifyr.web.jobs import DEFAULT_JOB_TIMEOUT_SECONDS, JobManager
 
 # The synthetic slide id `GET /api/furniture`/the furniture PATCH/POST/
 # DELETE routes below use for design.yaml's furniture block (issue #21).
@@ -503,10 +503,11 @@ def create_app(
     presentation_name: str = "presentation.yaml",
     *,
     launcher: str = "cli",
+    job_timeout_seconds: float | None = DEFAULT_JOB_TIMEOUT_SECONDS,
 ) -> FastAPI:
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
-    job_manager = JobManager()
+    job_manager = JobManager(job_timeout_seconds=job_timeout_seconds)
     working_copy = _WorkingCopy(presentation_path)
 
     static_dir = Path(__file__).parent / "static"
@@ -1440,6 +1441,17 @@ def create_app(
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
         job = job_manager.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"no job with id {job_id!r}")
+        return {"id": job.id, "status": job.status, "result": job.result, "error": job.error}
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str) -> dict[str, Any]:
+        """Kill a queued/running job's whole process tree (issue #84).
+
+        Idempotent: cancelling a job that already finished just returns it.
+        """
+        job = job_manager.cancel(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"no job with id {job_id!r}")
         return {"id": job.id, "status": job.status, "result": job.result, "error": job.error}

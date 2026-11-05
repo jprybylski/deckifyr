@@ -547,7 +547,12 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
     from deckifyr.web.app import create_app, strip_path_prefix
 
     project_root = Path(args.project or ".").resolve()
-    app = create_app(project_root, args.presentation, launcher=args.launcher)
+    app = create_app(
+        project_root,
+        args.presentation,
+        launcher=args.launcher,
+        job_timeout_seconds=args.job_timeout,
+    )
     if args.root_path:
         app = strip_path_prefix(app, args.root_path)
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
@@ -781,6 +786,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--presentation",
         default="presentation.yaml",
         help="presentation.yaml path, relative to --project (default: presentation.yaml)",
+    )
+    serve_parser.add_argument(
+        "--job-timeout",
+        type=float,
+        default=600.0,
+        help=(
+            "seconds a background build/preview job may run before it is killed "
+            "(process tree included) and reported as an E_TIMEOUT failure; "
+            "0 disables the limit (default: 600)"
+        ),
     )
     serve_parser.add_argument(
         "--launcher",

@@ -333,6 +333,12 @@ export function getJob(jobId: string): Promise<Job> {
   return request(`api/jobs/${encodeURIComponent(jobId)}`);
 }
 
+/** Kills a queued/running job's whole process tree (issue #84). Idempotent
+ * server-side: cancelling a finished job just returns it. */
+export function postCancelJob(jobId: string): Promise<Job> {
+  return request(`api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+}
+
 export function getJobArtifacts(jobId: string): Promise<JobArtifactsResponse> {
   return request(`api/jobs/${encodeURIComponent(jobId)}/artifacts`);
 }
@@ -352,9 +358,9 @@ export interface PollJobOptions {
   intervalMs?: number;
   /** Total wall-clock budget before giving up and resolving with
    * whatever the last-seen job state was (still `"running"`/`"queued"`)
-   * rather than polling forever -- a build that's genuinely stuck
-   * (spec has no server-side timeout on its own subprocess) must not
-   * spin the UI silently forever. */
+   * rather than polling forever. The server also bounds every job
+   * (issue #84's job timeout), but this keeps the UI from depending on
+   * that. */
   timeoutMs?: number;
   /** Injectable for tests; defaults to the real timers. */
   sleep?: (ms: number) => Promise<void>;
@@ -362,8 +368,8 @@ export interface PollJobOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Poll `GET /api/jobs/{id}` until `status` is `"succeeded"`/`"failed"`,
- * or until `timeoutMs` elapses. Resolves with the last-seen `Job` either
+/** Poll `GET /api/jobs/{id}` until the job leaves `"queued"`/`"running"`
+ * (`"succeeded"`, `"failed"` or `"cancelled"`), or until `timeoutMs` elapses. Resolves with the last-seen `Job` either
  * way -- callers distinguish "finished" from "timed out but still
  * running" by checking `job.status` themselves (`"running"`/`"queued"`
  * after this resolves means the timeout was hit, not a terminal state). */
@@ -375,7 +381,7 @@ export async function pollJobUntilDone(
   const deadline = Date.now() + timeoutMs;
 
   let job = await getJob(jobId);
-  while (job.status !== "succeeded" && job.status !== "failed") {
+  while (job.status === "queued" || job.status === "running") {
     if (Date.now() >= deadline) {
       return job;
     }

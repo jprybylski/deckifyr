@@ -49,6 +49,7 @@ import {
   getConfig,
   getJobArtifacts,
   getPreviewAvailability,
+  postCancelJob,
   jobArtifactUrl,
   pollJobUntilDone,
   postBuild,
@@ -144,12 +145,21 @@ const IDLE_JOB_STATE: JobRunState = {
  * budget), and fetches its artifact list on a terminal status -- shared
  * by the Build and Preview buttons below, which otherwise differ only
  * in what they submit. */
-async function runJob(submit: () => Promise<{ job_id: string }>): Promise<JobRunState> {
+async function runJob(
+  submit: () => Promise<{ job_id: string }>,
+  onSubmitted?: (jobId: string) => void
+): Promise<JobRunState> {
   const { job_id } = await submit();
+  // The id is only known once submitted, but the Cancel button (issue #84)
+  // needs it while the job is still being polled.
+  onSubmitted?.(job_id);
   const finished = await pollJobUntilDone(job_id, { timeoutMs: POLL_TIMEOUT_MS });
   if (finished.status === "succeeded" || finished.status === "failed") {
     const { artifacts } = await getJobArtifacts(job_id);
     return { status: finished.status, job: finished, artifacts, error: null, timedOut: false };
+  }
+  if (finished.status === "cancelled") {
+    return { status: "cancelled", job: finished, artifacts: [], error: null, timedOut: false };
   }
   return { status: finished.status, job: finished, artifacts: [], error: null, timedOut: true };
 }
@@ -237,18 +247,37 @@ export default function BuildPanel() {
 
   // --- build job -------------------------------------------------------
   const [build, setBuild] = useState<JobRunState>(IDLE_JOB_STATE);
+  const [buildJobId, setBuildJobId] = useState<string | null>(null);
 
   async function handleBuild() {
     setBuild({ ...IDLE_JOB_STATE, status: "queued" });
     try {
-      setBuild(await runJob(postBuild));
+      setBuild(await runJob(postBuild, setBuildJobId));
     } catch (err) {
       setBuild({ ...IDLE_JOB_STATE, error: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBuildJobId(null);
+    }
+  }
+
+  /** Cancel a running job (issue #84). The poll loop already running in
+   * `handleBuild`/`handlePreview` observes the `cancelled` status and
+   * settles the panel state itself; this only has to ask the server. */
+  async function handleCancel(
+    jobId: string,
+    setState: (update: (prev: JobRunState) => JobRunState) => void
+  ) {
+    try {
+      await postCancelJob(jobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setState((prev) => ({ ...prev, error: message }));
     }
   }
 
   // --- preview job (issue #27) -----------------------------------------
   const [preview, setPreview] = useState<JobRunState>(IDLE_JOB_STATE);
+  const [previewJobIdActive, setPreviewJobIdActive] = useState<string | null>(null);
   const [slidesInput, setSlidesInput] = useState("");
 
   function parsedSlides(): number[] | undefined {
@@ -262,9 +291,11 @@ export default function BuildPanel() {
   async function handlePreview() {
     setPreview({ ...IDLE_JOB_STATE, status: "queued" });
     try {
-      setPreview(await runJob(() => postPreview(parsedSlides())));
+      setPreview(await runJob(() => postPreview(parsedSlides()), setPreviewJobIdActive));
     } catch (err) {
       setPreview({ ...IDLE_JOB_STATE, error: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setPreviewJobIdActive(null);
     }
   }
 
@@ -319,6 +350,11 @@ export default function BuildPanel() {
       >
         Build
       </button>
+      {buildJobId && (build.status === "queued" || build.status === "running") && (
+        <button type="button" onClick={() => void handleCancel(buildJobId, setBuild)}>
+          Cancel
+        </button>
+      )}
       <ProgressBar status={build.status} />
       {state.dirty && (
         // `POST /api/build` always shells out to a real `deckifyr build`
@@ -393,6 +429,14 @@ export default function BuildPanel() {
         >
           Preview
         </button>
+        {previewJobIdActive && (preview.status === "queued" || preview.status === "running") && (
+          <button
+            type="button"
+            onClick={() => void handleCancel(previewJobIdActive, setPreview)}
+          >
+            Cancel
+          </button>
+        )}
         <ProgressBar status={preview.status} />
         {preview.status !== "idle" && (
           <p className="build-panel__status">Status: {preview.status}</p>

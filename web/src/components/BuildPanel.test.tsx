@@ -364,3 +364,77 @@ describe("BuildPanel preview job (issue #27)", () => {
     );
   });
 });
+
+describe("BuildPanel cancel and timeout (issue #84)", () => {
+  it("offers Cancel while a build runs, POSTs the cancel, and settles on 'cancelled'", async () => {
+    let cancelled = false;
+    const fetchMock = stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "api/build" && init?.method === "POST") {
+        return jsonResponse(200, { job_id: "job-c" });
+      }
+      if (url === "api/jobs/job-c/cancel" && init?.method === "POST") {
+        cancelled = true;
+        return jsonResponse(200, { id: "job-c", status: "cancelled", result: null, error: null });
+      }
+      if (url === "api/jobs/job-c") {
+        return jsonResponse(200, {
+          id: "job-c",
+          status: cancelled ? "cancelled" : "running",
+          result: null,
+          error: null,
+        });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+    await screen.findByDisplayValue("build/deck.pptx");
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Build" }).click();
+    });
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    await act(async () => {
+      cancel.click();
+    });
+
+    await waitFor(() => expect(screen.getByText("Status: cancelled")).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    // A cancelled job has no artifacts to fetch.
+    expect(fetchMock).not.toHaveBeenCalledWith("api/jobs/job-c/artifacts", expect.anything());
+  });
+
+  it("shows a job-timeout failure's message", async () => {
+    stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "api/build" && init?.method === "POST") {
+        return jsonResponse(200, { job_id: "job-t" });
+      }
+      if (url === "api/jobs/job-t") {
+        return jsonResponse(200, {
+          id: "job-t",
+          status: "failed",
+          result: null,
+          error: {
+            code: "E_TIMEOUT",
+            message: "build job exceeded its 600s job timeout and was terminated",
+          },
+        });
+      }
+      if (url === "api/jobs/job-t/artifacts") {
+        return jsonResponse(200, { artifacts: [] });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+    await screen.findByDisplayValue("build/deck.pptx");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Build" }).click();
+    });
+
+    await waitFor(() => expect(screen.getByText(/exceeded its 600s job timeout/)).toBeInTheDocument());
+    expect(screen.getByText("Status: failed")).toBeInTheDocument();
+  });
+});

@@ -128,3 +128,152 @@ def test_render_slide_previews_keep_pdf_saves_the_intermediate_pdf(tmp_path):
     assert result.pdf_path == out_dir / "one-slide.pdf"
     assert result.pdf_path.is_file()
     assert result.pdf_path.stat().st_size > 0
+
+
+# --- isolated profile + group kill (issue #84) -----------------------------
+#
+# These use a fake `soffice` (a tiny script) so they run without LibreOffice
+# and can observe exactly how it was invoked.
+
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+import os  # noqa: E402
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shebang scripts")
+
+
+def _one_slide_pptx(tmp_path, name="deck.pptx"):
+    prs = Presentation()
+    blank_layout = next(layout for layout in prs.slide_layouts if layout.name == "Blank")
+    prs.slides.add_slide(blank_layout)
+    path = tmp_path / name
+    prs.save(str(path))
+    return path
+
+
+def _fake_soffice(tmp_path, body: str):
+    script = tmp_path / "fake-soffice"
+    script.write_text(f"#!{sys.executable}\n{body}")
+    script.chmod(0o755)
+    return script
+
+
+# Records its argv's UserInstallation to a log, then writes a real 1-page PDF
+# where `--convert-to pdf --outdir` told it to.
+_RECORDING_FAKE = '''
+import os, sys, time
+args = sys.argv[1:]
+log = os.environ.get("FAKE_SOFFICE_LOG") or {log!r}
+profile = next(a for a in args if a.startswith("-env:UserInstallation="))
+outdir = args[args.index("--outdir") + 1]
+src = args[-1]
+with open(log, "a") as fh:
+    fh.write(profile + "\\n")
+time.sleep(0.5)  # overlap with a concurrent call
+import pymupdf
+doc = pymupdf.open(); doc.new_page()
+stem = os.path.splitext(os.path.basename(src))[0]
+doc.save(os.path.join(outdir, stem + ".pdf"))
+'''
+
+
+@posix_only
+def test_each_render_gets_its_own_private_libreoffice_profile(tmp_path):
+    pytest.importorskip("pymupdf")
+    log = tmp_path / "profiles.log"
+    fake = _fake_soffice(tmp_path, _RECORDING_FAKE.format(log=str(log)))
+    config = PreviewRenderConfig(binary=str(fake), timeout_seconds=60)
+    errors = []
+
+    def render(index):
+        try:
+            pptx = _one_slide_pptx(tmp_path, f"deck{index}.pptx")
+            render_slide_previews(pptx, tmp_path / f"out{index}", config=config)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=render, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert not errors, errors
+    profiles = log.read_text().split()
+    assert len(profiles) == 2
+    assert all(p.startswith("-env:UserInstallation=file:///") for p in profiles)
+    # Concurrent calls must never share a profile (the lock that makes the
+    # second one silently no-op or hang).
+    assert profiles[0] != profiles[1]
+    # ...and the profile is private scratch space, gone after the call.
+    for profile in profiles:
+        assert not os.path.exists(profile.removeprefix("-env:UserInstallation=file://"))
+
+
+@posix_only
+def test_a_hung_render_times_out_and_leaves_no_orphaned_libreoffice(tmp_path):
+    pidfile = tmp_path / "pids.txt"
+    # Like the real launcher: starts a detached "soffice.bin" in its own
+    # session, then hangs.
+    fake = _fake_soffice(
+        tmp_path,
+        f'''
+import os, subprocess, sys, time
+gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True)
+open({str(pidfile)!r}, "w").write(f"{{os.getpid()}} {{gc.pid}}")
+time.sleep(120)
+''',
+    )
+    pptx = _one_slide_pptx(tmp_path)
+    config = PreviewRenderConfig(binary=str(fake), timeout_seconds=2)
+
+    pytest.importorskip("pymupdf")
+    with pytest.raises(ContentValidationError, match="exceeded its 2s execution timeout"):
+        render_slide_previews(pptx, tmp_path / "out", config=config)
+
+    deadline = time.monotonic() + 15
+    while not pidfile.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    parent, grandchild = (int(x) for x in pidfile.read_text().split())
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        stat = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+        ).stdout.strip()
+        return bool(stat) and not stat.startswith("Z")
+
+    deadline = time.monotonic() + 15
+    while (alive(parent) or alive(grandchild)) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not alive(parent)
+    assert not alive(grandchild), "soffice.bin-style grandchild was orphaned"
+
+
+@requires_soffice
+def test_two_concurrent_real_previews_both_succeed(tmp_path):
+    pytest.importorskip("pymupdf")
+    results, errors = {}, []
+
+    def render(index):
+        try:
+            pptx = _one_slide_pptx(tmp_path, f"real{index}.pptx")
+            results[index] = render_slide_previews(pptx, tmp_path / f"out{index}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=render, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=180)
+
+    assert not errors, errors
+    assert sorted(results) == [0, 1]
+    for result in results.values():
+        assert len(result.image_paths) == 1 and result.image_paths[0].is_file()

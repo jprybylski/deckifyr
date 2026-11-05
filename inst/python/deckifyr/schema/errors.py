@@ -23,6 +23,7 @@ class ErrorCode:
     PATH_NOT_FOUND = "E_PATH_NOT_FOUND"
     COLOR_RESOLUTION = "E_COLOR_RESOLUTION"
     MISSING_DEPENDENCY = "E_MISSING_DEPENDENCY"
+    TIMEOUT = "E_TIMEOUT"
 
 
 class DeckifyrError(Exception):

@@ -192,7 +192,10 @@ export interface DiscardResult {
   dirty: boolean;
 }
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+/** `cancelled`: `POST /api/jobs/{id}/cancel` (issue #84) killed it. A job that
+ * overran the server's job timeout is `failed` with `error.code`
+ * `E_TIMEOUT`, not a status of its own. */
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface JobResult {
   output?: string;

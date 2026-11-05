@@ -164,3 +164,18 @@ describe("pollJobUntilDone", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("pollJobUntilDone terminal states (issue #84)", () => {
+  it("stops polling on a cancelled job", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: "j", status: "running", result: null, error: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: "j", status: "cancelled", result: null, error: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const job = await pollJobUntilDone("j", { sleep: async () => {} });
+
+    expect(job.status).toBe("cancelled");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

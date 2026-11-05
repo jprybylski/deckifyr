@@ -1154,3 +1154,44 @@ def test_schema_presentation_matches_model(client):
 def test_schema_unknown_doc_is_404(client):
     response = client.get("/api/schemas/nope")
     assert response.status_code == 404
+
+
+# --- job cancel / timeout (issue #84) ----------------------------------
+
+
+def test_cancel_unknown_job_is_404(client):
+    response = client.post("/api/jobs/nope/cancel")
+    assert response.status_code == 404
+
+
+def test_cancel_endpoint_stops_or_returns_a_job(client):
+    job_id = client.post("/api/build").json()["job_id"]
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == job_id
+    # A real build can finish before the cancel lands; either way the
+    # endpoint is idempotent and never reports a half-state.
+    assert body["status"] in ("cancelled", "succeeded")
+    if body["status"] == "cancelled":
+        assert body["result"] is None and body["error"] is None
+        assert client.get(f"/api/jobs/{job_id}").json()["status"] == "cancelled"
+
+
+def test_build_job_that_overruns_the_job_timeout_fails_with_e_timeout(project_dir):
+    # A real `deckifyr build` cannot finish in a millisecond, so this
+    # exercises the actual timeout -> tree-kill -> E_TIMEOUT path end to end.
+    app = create_app(project_dir, job_timeout_seconds=0.001)
+    client = TestClient(app)
+    job_id = client.post("/api/build").json()["job_id"]
+
+    deadline = time.monotonic() + 30
+    body = client.get(f"/api/jobs/{job_id}").json()
+    while body["status"] in ("queued", "running") and time.monotonic() < deadline:
+        time.sleep(0.1)
+        body = client.get(f"/api/jobs/{job_id}").json()
+
+    assert body["status"] == "failed", body
+    assert body["error"]["code"] == "E_TIMEOUT"
