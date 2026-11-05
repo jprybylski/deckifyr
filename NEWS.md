@@ -1,5 +1,51 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `deckifyr serve` can run as a managed child of a launcher and behind a
+  reverse proxy (issues #82, #83). The editor now uses page-relative
+  URLs, so it works mounted under a path prefix (e.g.
+  `/apps/deckifyr/`) behind a prefix-stripping proxy with no
+  configuration; `--root-path` supports a proxy that does not strip the
+  prefix. `--launcher workspace` gives the no-project screen
+  workspace-appropriate guidance and implies the new
+  `--no-frontend-rebuild` (never run `npm` at startup). `GET /api/health`
+  now reports `dirty` and `active_jobs`, and `POST /api/shutdown`
+  (`{"if_dirty": "refuse"|"save", "active_jobs": "refuse"|"cancel"}`)
+  stops the server in an orderly way: a refusal is a `409` with no side
+  effects, `save` writes edits first, and the process exits 0. A plain
+  SIGTERM/SIGINT with unsaved edits now writes a warning to stderr
+  instead of dropping them silently.
+* Background build/preview jobs are bounded and cancellable (issue #84):
+  a job-level timeout (`deckifyr serve --job-timeout`, 600 s by default)
+  reports `E_TIMEOUT`, `POST /api/jobs/{id}/cancel` and a Cancel button
+  in the Build tab stop a running job, and both kill the whole process
+  tree (new `deckifyr._proc`), so no LibreOffice is left behind.
+  Preview rendering also uses a private LibreOffice profile per call, so
+  it no longer collides with an open LibreOffice or with a concurrent
+  preview.
+* The CLI's `--json` output is a versioned contract (issue #85): every
+  success and error payload carries `result_version` (`1`); `build` and
+  `preview` return the full `warnings` list (`code`, `message`, `slide`,
+  `element`) whether or not a manifest is written, plus an `artifacts`
+  list of `{kind, path, sha256}`; `validate`/`build`/`preview`/error
+  payloads have published JSON Schemas under `schemas/results/`. All
+  existing keys are unchanged.
+* Each release now attaches a versioned Python wheel and sdist plus a
+  `SHA256SUMS` file covering them and the R tarball (issue #86). The
+  Python package version is read from `VERSION`, so the wheel, a build
+  manifest's `deckifyr_version` and the release tag always agree.
+
+## Fixed
+
+* `deckifyr init` (without `--from-dir`/`--from-repo`) now works from an
+  installed wheel: the bundled minimal example was not packaged, so it
+  only worked from a repo checkout.
+* Installing the Python package no longer prints a `SyntaxWarning` from
+  `deckifyr.renderers.quarto`.
+
 # deckifyr 0.3.3
 
 ## Changed
