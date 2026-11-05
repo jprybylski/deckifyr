@@ -77,6 +77,97 @@ def test_validate_payload_conforms_and_is_versioned(minimal_deck_dir, capsys):
     assert payload["warnings"] == []
 
 
+# --- the published key sets (the tripwire the schemas no longer provide) -----
+#
+# The result schemas allow extra keys (so adding one is not a breaking change
+# for a consumer), which means `model_validate` alone no longer notices a
+# handler that grows an undeclared key. These explicit sets do: a new key must
+# be declared on the model in `deckifyr.schema.results` (so it appears in the
+# published schema) *and* here.
+
+_VALIDATE_KEYS = {
+    "status", "result_version", "valid", "presentation", "slide_count",
+    "layout_count", "schema_version", "warnings",
+}
+_BUILD_KEYS = {
+    "status", "result_version", "output", "manifest", "slide_count", "warning_count",
+    "warnings", "previews", "preview_pdf", "artifacts",
+}
+_WARNING_KEYS = {"code", "message", "slide", "element"}
+
+
+def test_validate_payload_has_exactly_the_declared_keys(minimal_deck_dir, capsys):
+    _, out, _ = _run(capsys, "validate", str(minimal_deck_dir / "presentation.yaml"))
+    assert set(json.loads(out)) == _VALIDATE_KEYS == set(ValidateResult.model_fields)
+
+
+def test_build_payload_has_exactly_the_declared_keys(minimal_deck_dir, tmp_path, capsys):
+    presentation = _warning_project(minimal_deck_dir, tmp_path, manifest=True)
+    _, out, _ = _run(capsys, "build", str(presentation))
+    payload = json.loads(out)
+    assert set(payload) == _BUILD_KEYS == set(BuildResultPayload.model_fields)
+    assert all(set(w) == _WARNING_KEYS for w in payload["warnings"])
+
+
+def test_error_payload_has_only_declared_keys(tmp_path, capsys):
+    code, _, err = _run(capsys, "validate", str(tmp_path / "missing.yaml"))
+    assert code != EXIT_OK
+    assert set(json.loads(err)) <= set(ErrorResult.model_fields)
+
+
+# --- --warn-only reports each unitless-length coercion (issue #91) ----------
+
+
+def _unitless_project(minimal_deck_dir, tmp_path):
+    presentation_path = _copy_deck(minimal_deck_dir, tmp_path)
+    data = yaml.safe_load(presentation_path.read_text())
+    element = data["slides"][0]["elements"][0]
+    if isinstance(data["slides"][0]["elements"], dict):
+        raise AssertionError("fixture shape changed; update this helper")
+    element["box"] = {"x": "914400", "y": "1in", "width": "4in", "height": "457200"}
+    presentation_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return presentation_path, element["id"], data["slides"][0]["id"]
+
+
+def test_warn_only_validate_reports_each_unitless_length(minimal_deck_dir, tmp_path, capsys):
+    presentation, element_id, slide_id = _unitless_project(minimal_deck_dir, tmp_path)
+
+    code, out, _ = _run(capsys, "validate", "--warn-only", str(presentation))
+
+    assert code == EXIT_OK
+    payload = json.loads(out)
+    ValidateResult.model_validate(payload)
+    warnings = payload["warnings"]
+    assert [w["code"] for w in warnings] == ["W_UNITLESS_LENGTH"] * 2
+    assert {w["element"] for w in warnings} == {element_id}
+    assert {w["slide"] for w in warnings} == {slide_id}
+    assert any("x='914400'" in w["message"] for w in warnings)
+    assert any("height='457200'" in w["message"] for w in warnings)
+
+
+def test_strict_validate_rejects_the_same_unitless_lengths(minimal_deck_dir, tmp_path, capsys):
+    presentation, _, _ = _unitless_project(minimal_deck_dir, tmp_path)
+    code, _, err = _run(capsys, "validate", str(presentation))
+    assert code != EXIT_OK
+    assert json.loads(err)["code"] == "E_UNIT_PARSE"
+
+
+def test_warn_only_build_carries_the_warnings_into_result_and_manifest(
+    minimal_deck_dir, tmp_path, capsys
+):
+    presentation, element_id, _ = _unitless_project(minimal_deck_dir, tmp_path)
+
+    code, out, _ = _run(capsys, "build", "--warn-only", str(presentation))
+
+    assert code == EXIT_OK
+    payload = json.loads(out)
+    BuildResultPayload.model_validate(payload)
+    unitless = [w for w in payload["warnings"] if w["code"] == "W_UNITLESS_LENGTH"]
+    assert len(unitless) == 2 and payload["warning_count"] == len(payload["warnings"])
+    manifest = json.loads(Path(payload["manifest"]).read_text())
+    assert manifest["warnings"] == [w["message"] for w in payload["warnings"]]
+
+
 def test_build_payload_conforms_and_lists_the_warning_without_a_manifest(
     minimal_deck_dir, tmp_path, capsys
 ):

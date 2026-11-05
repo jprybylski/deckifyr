@@ -1,7 +1,9 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jprybylski/deckifyr/schemas/results/v1/preview.schema.json",
   "$defs": {
     "ArtifactEntry": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "kind": {
           "description": "What the file is.",
@@ -34,7 +36,7 @@
       "type": "object"
     },
     "WarningEntry": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "code": {
           "description": "Stable identifier for the kind of warning (e.g. W_MULTI_FIGURE).",
@@ -81,7 +83,7 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "status": {
       "const": "ok",

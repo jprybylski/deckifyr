@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jprybylski/deckifyr/schemas/results/v1/ok.schema.json",
   "additionalProperties": true,
   "description": "What every successful `--json` payload promises, whatever the command.",
   "properties": {

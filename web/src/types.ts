@@ -123,6 +123,11 @@ export interface HealthResponse {
   dirty?: boolean;
   /** Queued/running build/preview jobs (issue #83). */
   active_jobs?: number;
+  /** The bound project validates (issue #91). `false` does not make the
+   * response non-200 -- the server is still up and ready to be told where
+   * the project is; the reason is in `project_error`. */
+  project_loaded?: boolean;
+  project_error?: { code: string; message: string } | null;
   /** Non-null only in a dev checkout whose built `web/static/` bundle is
    * older than `web/src/` (`deckifyr.web.app._frontend_build_warning`) --
    * a real trap this exists to surface instead of leaving a stale-JS

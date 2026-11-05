@@ -1200,11 +1200,15 @@ def compose_and_write(
     force_previews: bool = False,
     preview_slides: list[int] | None = None,
     keep_preview_pdf: bool = False,
+    initial_warnings: list[str] | None = None,
 ) -> BuildResult:
     started_at = datetime.now(timezone.utc)
-    prs, element_manifest, warnings = compose(
+    prs, element_manifest, compose_warnings = compose(
         presentation, design, resolved_slides, project_root=project_root
     )
+    # Warnings produced before composing (e.g. `--warn-only` geometry
+    # coercions, issue #91) come first and land in the manifest too.
+    warnings = [*(initial_warnings or []), *compose_warnings]
 
     output_path = (project_root / presentation.build.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)

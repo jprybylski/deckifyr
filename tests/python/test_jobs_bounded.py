@@ -19,17 +19,29 @@ import pytest
 from deckifyr._proc import kill_process_tree, run_in_group
 from deckifyr.web.jobs import JobManager
 
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+IS_WINDOWS = sys.platform == "win32"
 
-# A child that starts a grandchild in its own session (like the CLI's
-# soffice), records both PIDs, then hangs.
+# Python starts slower on a Windows runner, and the tree has to exist (child
+# *and* grandchild started, PIDs recorded) before the timeout fires or the
+# test would pass vacuously. Generous there, tight on POSIX to keep it fast.
+TIMEOUT = 8 if IS_WINDOWS else 2
+
+# A child that starts a grandchild in its own session / process group (like
+# the CLI's soffice), records both PIDs, then hangs. `taskkill /T` (the
+# Windows path under test) follows parent/child links, so the grandchild is
+# only reachable through a real tree walk there too.
 HANGING_TREE = textwrap.dedent(
     """
     import os, subprocess, sys, time
     pidfile = sys.argv[-1]
+    detach = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
     gc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(120)"],
-        start_new_session=True,
+        **detach,
     )
     with open(pidfile, "w") as fh:
         fh.write(f"{os.getpid()} {gc.pid}")
@@ -38,7 +50,36 @@ HANGING_TREE = textwrap.dedent(
 )
 
 
+def _pid_alive_windows(pid: int) -> bool:
+    # `os.kill(pid, 0)` must never be used here: on Windows any signal other
+    # than CTRL_C/CTRL_BREAK calls TerminateProcess, so it would *kill* the
+    # process it was only meant to probe.
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == error_access_denied  # exists, just not ours to open
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int) -> bool:
+    if IS_WINDOWS:
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -94,14 +135,13 @@ def _submit(manager, tmp_path, pidfile):
 # --- run_in_group ----------------------------------------------------------
 
 
-@posix_only
 def test_run_in_group_timeout_kills_the_whole_tree(tmp_path):
     script = tmp_path / "hang.py"
     script.write_text(HANGING_TREE)
     pidfile = tmp_path / "pids.txt"
 
     with pytest.raises(subprocess.TimeoutExpired):
-        run_in_group([sys.executable, str(script), str(pidfile)], timeout=2)
+        run_in_group([sys.executable, str(script), str(pidfile)], timeout=TIMEOUT)
 
     parent, grandchild = _read_pids(pidfile)
     assert _wait_for(lambda: not _pid_alive(parent))
@@ -129,15 +169,14 @@ def test_kill_process_tree_is_safe_on_an_already_finished_process():
 # --- JobManager ------------------------------------------------------------
 
 
-@posix_only
 def test_job_timeout_fails_the_job_and_leaves_no_orphans(tmp_path):
-    manager, pidfile = _manager(tmp_path, timeout=2)
+    manager, pidfile = _manager(tmp_path, timeout=TIMEOUT)
     job = _submit(manager, tmp_path, pidfile)
 
     assert _wait_for(lambda: job.status in ("failed", "succeeded"), timeout=30)
     assert job.status == "failed"
     assert job.error["code"] == "E_TIMEOUT"
-    assert "2s job timeout" in job.error["message"]
+    assert f"{TIMEOUT}s job timeout" in job.error["message"]
 
     parent, grandchild = _read_pids(pidfile)
     assert _wait_for(lambda: not _pid_alive(parent))
@@ -145,7 +184,6 @@ def test_job_timeout_fails_the_job_and_leaves_no_orphans(tmp_path):
     assert manager.active_count() == 0
 
 
-@posix_only
 def test_cancel_kills_the_running_job_and_its_process_tree(tmp_path):
     manager, pidfile = _manager(tmp_path, timeout=120)
     job = _submit(manager, tmp_path, pidfile)

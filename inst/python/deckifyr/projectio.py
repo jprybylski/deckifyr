@@ -21,12 +21,13 @@ import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import editor
+from deckifyr.diagnostics import W_UNITLESS_LENGTH, BuildWarning
 from deckifyr.schema.colors import resolve_color_tokens
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
-from deckifyr.schema.units import UnitParseError, parse_length
+from deckifyr.schema.units import UnitParseError, is_unitless, parse_length
 
 
 def format_pydantic_error(exc: PydanticValidationError, source: str) -> str:
@@ -37,34 +38,74 @@ def format_pydantic_error(exc: PydanticValidationError, source: str) -> str:
     return "\n".join(lines)
 
 
+_BOX_FIELDS = ("x", "y", "width", "height")
+
+
 def _iter_boxes(layouts: LayoutsDocument, presentation: PresentationDocument):
-    for layout in layouts.layouts.values():
-        for element in layout.elements.values():
+    """Yield `(slide_id, element_id, where, box)` for every declared box.
+
+    `slide_id` is `None` for a layout zone; `where` is a human label
+    ("layout 'title' zone 'heading'") used in warnings.
+    """
+    for layout_id, layout in layouts.layouts.items():
+        for zone_id, element in layout.elements.items():
             if element.box is not None:
-                yield element.box
+                yield None, zone_id, f"layout {layout_id!r} zone {zone_id!r}", element.box
     for slide in presentation.slides:
-        elements = (
-            slide.elements.values()
-            if isinstance(slide.elements, dict)
-            else slide.elements
-        )
-        for element in elements:
+        if isinstance(slide.elements, dict):
+            pairs = list(slide.elements.items())
+        else:
+            pairs = [(element.id, element) for element in slide.elements]
+        for element_id, element in pairs:
             if element.box is not None:
-                yield element.box
+                yield (
+                    slide.id,
+                    element_id,
+                    f"slide {slide.id!r} element {element_id!r}",
+                    element.box,
+                )
 
 
 def _check_boxes(
     layouts: LayoutsDocument, presentation: PresentationDocument, *, strict: bool
 ) -> list[str]:
     problems: list[str] = []
-    for box in _iter_boxes(layouts, presentation):
-        for field_name in ("x", "y", "width", "height"):
+    for _slide_id, _element_id, _where, box in _iter_boxes(layouts, presentation):
+        for field_name in _BOX_FIELDS:
             raw = getattr(box, field_name)
             try:
                 parse_length(raw, strict=strict)
             except UnitParseError as exc:
                 problems.append(f"{field_name}={raw!r}: {exc}")
     return problems
+
+
+def collect_geometry_warnings(
+    layouts: LayoutsDocument, presentation: PresentationDocument
+) -> list[BuildWarning]:
+    """One `W_UNITLESS_LENGTH` warning per unitless box length (issue #91).
+
+    Only meaningful for a non-strict (`--warn-only`) run: strict mode rejects
+    these in `load_project`, so there is nothing left to warn about. In
+    non-strict mode `parse_length` coerces a bare number to EMUs, which is
+    almost never what an author meant by `x: 1` -- surface each one instead
+    of accepting it silently.
+    """
+    warnings: list[BuildWarning] = []
+    for slide_id, element_id, where, box in _iter_boxes(layouts, presentation):
+        for field_name in _BOX_FIELDS:
+            raw = getattr(box, field_name)
+            if is_unitless(raw):
+                warnings.append(
+                    BuildWarning(
+                        f"{where}: box {field_name}={raw!r} has no unit and is read as "
+                        "EMUs (914400 per inch); write an explicit unit such as '1in'",
+                        code=W_UNITLESS_LENGTH,
+                        slide=slide_id,
+                        element=element_id,
+                    )
+                )
+    return warnings
 
 
 def load_project(

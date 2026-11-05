@@ -6,6 +6,7 @@ from deckifyr.schema.units import (
     EMU_PER_MM,
     EMU_PER_POINT,
     format_length,
+    is_unitless,
     parse_length,
 )
 from deckifyr.schema.errors import UnitParseError
@@ -75,3 +76,14 @@ def test_format_length_of_value_that_does_not_round_cleanly_is_still_parseable()
     formatted = format_length(emu, "in")
     round_tripped = parse_length(formatted)
     assert abs(round_tripped - emu) <= round(EMU_PER_INCH * 0.0001)
+
+
+@pytest.mark.parametrize("raw", [914400, 12.5, "914400", " 0.5 ", "-3"])
+def test_is_unitless_true_for_bare_numbers(raw):
+    assert is_unitless(raw)
+
+
+@pytest.mark.parametrize("raw", ["1in", "18pt", "2.5cm", "10mm", "1 in", True, "wide", ""])
+def test_is_unitless_false_for_unit_values_and_garbage(raw):
+    # Garbage is not "unitless": parse_length rejects it in either mode.
+    assert not is_unitless(raw)

@@ -204,15 +204,16 @@ def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
     presentation, design, layouts = projectio.load_project(
         Path(args.presentation), strict=args.strict
     )
+    # Only a `--warn-only` run can have anything to warn about: strict mode
+    # already rejected every unitless length inside `load_project`.
+    warnings = [] if args.strict else projectio.collect_geometry_warnings(layouts, presentation)
     return {
         "valid": True,
         "presentation": str(args.presentation),
         "slide_count": len(presentation.slides),
         "layout_count": len(layouts.layouts),
         "schema_version": presentation.deckifyr,
-        # Reserved for a stable result shape (issue #85): validation has no
-        # warning producers today, so this is always empty.
-        "warnings": [],
+        "warnings": warnings_payload(warnings),
     }
 
 
@@ -238,6 +239,11 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     project_root = presentation_path.parent
+    # `--warn-only` coerces unitless lengths to EMUs; report each one
+    # (issue #91) -- strict mode already failed above, so nothing to add.
+    geometry_warnings = (
+        [] if args.strict else projectio.collect_geometry_warnings(layouts, presentation)
+    )
     resolved_slides = expand_presentation(
         presentation, design, layouts, strict=args.strict
     )
@@ -257,6 +263,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         design_path=(project_root / presentation.design.base).resolve(),
         layouts_path=(project_root / presentation.layouts).resolve(),
         keep_preview_pdf=True,
+        initial_warnings=geometry_warnings,
     )
 
     return {

@@ -326,18 +326,32 @@ class _WorkingCopy:
         self._docs: dict[str, Any] = {"presentation": None, "design": None, "layouts": None}
         self._dirty: set[str] = set()
 
-    def _design_layouts_paths(self) -> tuple[Path, Path]:
-        presentation_data = self.get("presentation") or {}
+    def _design_layouts_paths(self, *, cache: bool = True) -> tuple[Path, Path]:
+        presentation_data = (self.get if cache else self.peek)("presentation") or {}
+        if not isinstance(presentation_data, dict):
+            presentation_data = {}
         base_dir = self._presentation_path.parent
         design_base = (presentation_data.get("design") or {}).get("base", "design.yaml")
         layouts_rel = presentation_data.get("layouts", "layouts.yaml")
         return (base_dir / design_base).resolve(), (base_dir / layouts_rel).resolve()
 
-    def path_for(self, doc: str) -> Path:
+    def path_for(self, doc: str, *, cache: bool = True) -> Path:
         if doc == "presentation":
             return self._presentation_path
-        design_path, layouts_path = self._design_layouts_paths()
+        design_path, layouts_path = self._design_layouts_paths(cache=cache)
         return design_path if doc == "design" else layouts_path
+
+    def peek(self, doc: str) -> Any:
+        """Like `get`, but never populates the cache.
+
+        For read-only probes (`/api/health`): the first real request should
+        still be the one that loads a document, so a supervisor polling
+        health before anything else can't pin a stale copy that an edit on
+        disk would then have to be discarded to pick up.
+        """
+        if self._docs[doc] is not None:
+            return self._docs[doc]
+        return projectio.read_yaml(self.path_for(doc, cache=False))
 
     def get(self, doc: str) -> Any:
         if self._docs[doc] is None:
@@ -618,6 +632,25 @@ def create_app(
 
     # --- health / project ------------------------------------------
 
+    def _probe_project_error() -> dict[str, str] | None:
+        """`None` when the project (including any unsaved edits) validates,
+        else `{code, message}`. Schema and cross-reference checks only -- no
+        plan expansion, no content resolution -- so it stays cheap enough to
+        poll. Reads through `working_copy.peek`, so it never caches."""
+        try:
+            projectio.load_project(
+                presentation_path,
+                strict=True,
+                presentation_data=working_copy.peek("presentation"),
+                design_data=working_copy.peek("design"),
+                layouts_data=working_copy.peek("layouts"),
+            )
+        except DeckifyrError as exc:
+            return {"code": exc.code, "message": str(exc)}
+        except Exception as exc:  # health must never 500, whatever is on disk
+            return {"code": ErrorCode.INTERNAL, "message": f"{type(exc).__name__}: {exc}"}
+        return None
+
     @app.get("/api/health")
     def get_health() -> dict[str, Any]:
         # `launcher` deliberately rides on /api/health, not /api/project:
@@ -634,12 +667,21 @@ def create_app(
         # (queued/running build/preview jobs) are cheap, read-only, and
         # exist so a supervisor can tell whether stopping is safe without
         # making an edit to find out.
+        #
+        # `project_loaded`/`project_error` (issue #91) answer "is the bound
+        # project actually usable?" in the same probe, without changing what
+        # the status code means: the project failing to load is reported
+        # here, never as a non-200 (a launcher that needs to tell "server up"
+        # from "project OK" reads the body).
+        project_error = _probe_project_error()
         return {
             "status": "ok",
             "launcher": launcher,
             "frontend_warning": frontend_warning,
             "dirty": working_copy.dirty,
             "active_jobs": job_manager.active_count(),
+            "project_loaded": project_error is None,
+            "project_error": project_error,
         }
 
     @app.post("/api/shutdown")

@@ -24,6 +24,7 @@ class ErrorCode:
     COLOR_RESOLUTION = "E_COLOR_RESOLUTION"
     MISSING_DEPENDENCY = "E_MISSING_DEPENDENCY"
     TIMEOUT = "E_TIMEOUT"
+    INTERNAL = "E_INTERNAL"
 
 
 class DeckifyrError(Exception):

@@ -1,7 +1,17 @@
 # Release-on-merge automation, driven by the VERSION file (see
 # .github/scripts/sync-release-metadata.R). Never touches CRAN - only
-# creates/refreshes a GitHub release and tag, and syncs DESCRIPTION/NEWS.md
-# to match VERSION.
+# creates a GitHub release and tag, and syncs DESCRIPTION/NEWS.md to match
+# VERSION.
+#
+# A published release is immutable by policy (issue #91): once a version has
+# been released, this workflow never moves its tag, re-uploads its assets or
+# folds new NEWS into its section. A push to main that does not bump VERSION
+# therefore releases nothing (a notice explains why); to ship changes, bump
+# VERSION. A consumer that pins "deckifyr X.Y.Z" plus the SHA-256 of an asset
+# (or SHA256SUMS) can rely on both naming fixed bytes. GitHub's own
+# "immutable releases" repository setting enforces the same thing server-side
+# but needs admin rights, so it is a one-time manual setting (see
+# CONTRIBUTING.md), not something this workflow can turn on.
 #
 # Ported from ../quartifyr's own release.yaml (itself ported from
 # ../xpose.xtras). main is now a protected branch (a "basic" ruleset
@@ -93,6 +103,26 @@ jobs:
         id: sync
         run: Rscript .github/scripts/sync-release-metadata.R
 
+      # action == "refresh" means VERSION equals the latest released tag, i.e.
+      # nothing was bumped. That version is already published, so there is
+      # nothing to do: no metadata commit (it would fold new NEWS into the
+      # released section), no tag move, no asset upload. Runs on dry runs too,
+      # so a workflow_dispatch preview shows exactly this decision.
+      - name: Guard published versions
+        if: steps.sync.outputs.action == 'refresh'
+        run: |
+          tag="${{ steps.sync.outputs.tag }}"
+          if state="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$state" = "false" ]; then
+              echo "::notice title=Release skipped::${tag} is already published and published releases are never modified. Bump VERSION to release these changes."
+              exit 0
+            fi
+            echo "::error::${tag} exists only as a draft release. Publish or delete it by hand; this workflow will not touch a published version's tag or assets."
+            exit 1
+          fi
+          echo "::error::VERSION matches tag ${tag} but no GitHub release exists for it. Create the release by hand or bump VERSION; this workflow never moves an existing tag."
+          exit 1
+
       # The Python wheel + sdist (issue #86). Not gated on DRY_RUN: building
       # has no side effects, so a dry run now also proves the distributions
       # build and that their version equals VERSION (pyproject.toml reads
@@ -121,14 +151,14 @@ jobs:
           unzip -l "dist/deckifyr-${expected}-py3-none-any.whl" | grep -q "deckifyr/web/static/index.html"
 
       - name: Commit release metadata changes
-        if: steps.sync.outputs.changed == 'true' && env.DRY_RUN != 'true'
+        if: steps.sync.outputs.action == 'new' && steps.sync.outputs.changed == 'true' && env.DRY_RUN != 'true'
         run: |
           git commit -am "chore: sync release metadata for ${{ steps.sync.outputs.version }}"
           git push origin HEAD:main
 
       - name: Check whether this commit is already released
         id: check
-        if: env.DRY_RUN != 'true'
+        if: steps.sync.outputs.action == 'new' && env.DRY_RUN != 'true'
         run: |
           already_tagged="$(git rev-parse -q --verify "refs/tags/${{ steps.sync.outputs.tag }}" || true)"
           if [ "${{ steps.sync.outputs.changed }}" = "false" ] && [ "$already_tagged" = "$(git rev-parse HEAD)" ]; then
@@ -139,7 +169,7 @@ jobs:
           fi
 
       - name: Build package tarball
-        if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
+        if: steps.sync.outputs.action == 'new' && env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
         run: R CMD build . --compact-vignettes=gs+qpdf
 
       # One SHA256SUMS covering every asset (R tarball, wheel, sdist), so a
@@ -147,7 +177,7 @@ jobs:
       # R tarball is copied next to the distributions so the file lists bare
       # file names.
       - name: Write SHA256SUMS
-        if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
+        if: steps.sync.outputs.action == 'new' && env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
         run: |
           cp "${{ steps.sync.outputs.tarball }}" dist/
           cd dist
@@ -155,7 +185,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create release
-        if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true' && steps.sync.outputs.action == 'new'
+        if: steps.sync.outputs.action == 'new' && env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
         run: |
           gh release create "${{ steps.sync.outputs.tag }}" \
             "${{ steps.sync.outputs.tarball }}" \
@@ -163,16 +193,3 @@ jobs:
             --target "$(git rev-parse HEAD)" \
             --title "${{ steps.sync.outputs.tag }}" \
             --notes-file changelog.md
-
-      - name: Refresh existing release
-        if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true' && steps.sync.outputs.action == 'refresh'
-        run: |
-          git tag -f "${{ steps.sync.outputs.tag }}" "$(git rev-parse HEAD)"
-          git push origin "${{ steps.sync.outputs.tag }}" --force
-          gh release edit "${{ steps.sync.outputs.tag }}" --notes-file changelog.md
-          # Every asset is replaced together, so a refresh can never leave a
-          # stale wheel or checksum file next to a new tarball.
-          gh release upload "${{ steps.sync.outputs.tag }}" \
-            "${{ steps.sync.outputs.tarball }}" \
-            dist/deckifyr-*-py3-none-any.whl dist/deckifyr-*.tar.gz dist/SHA256SUMS \
-            --clobber
