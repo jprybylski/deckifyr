@@ -30,6 +30,7 @@ from pptx import Presentation
 uvicorn = pytest.importorskip("uvicorn")
 
 from deckifyr.web.app import create_app, strip_path_prefix  # noqa: E402
+from deckifyr.web.security import build_host_policy  # noqa: E402
 
 PREFIX = "/apps/deckifyr"
 STATIC_DIR = pathlib.Path(__file__).resolve().parents[2] / "inst/python/deckifyr/web/static"
@@ -44,8 +45,8 @@ def _free_port() -> int:
 class _Upstream:
     """A real uvicorn server running `app` on a background thread."""
 
-    def __init__(self, app) -> None:
-        self.port = _free_port()
+    def __init__(self, app, port: int | None = None) -> None:
+        self.port = port or _free_port()
         config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning")
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
@@ -63,7 +64,9 @@ class _Upstream:
         self.thread.join(timeout=10)
 
 
-def _make_proxy_handler(upstream_port: int, *, strip_prefix: bool):
+def _make_proxy_handler(
+    upstream_port: int, *, strip_prefix: bool, extra_headers: dict[str, str] | None = None
+):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -85,6 +88,13 @@ def _make_proxy_handler(upstream_port: int, *, strip_prefix: bool):
             headers = {
                 k: v for k, v in self.headers.items() if k.lower() not in ("host", "connection")
             }
+            # A real launcher injects its per-launch secret here (issue #88); the
+            # browser never holds it. Replaces any same-named client header so a
+            # page cannot supply its own.
+            for key in list(headers):
+                if key.lower() in {k.lower() for k in (extra_headers or {})}:
+                    del headers[key]
+            headers.update(extra_headers or {})
             conn.request(self.command, path, body=body, headers=headers)
             response = conn.getresponse()
             data = response.read()
@@ -103,9 +113,18 @@ def _make_proxy_handler(upstream_port: int, *, strip_prefix: bool):
 
 
 class _Proxy:
-    def __init__(self, upstream_port: int, *, strip_prefix: bool) -> None:
+    def __init__(
+        self,
+        upstream_port: int,
+        *,
+        strip_prefix: bool,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self.server = ThreadingHTTPServer(
-            ("127.0.0.1", 0), _make_proxy_handler(upstream_port, strip_prefix=strip_prefix)
+            ("127.0.0.1", 0),
+            _make_proxy_handler(
+                upstream_port, strip_prefix=strip_prefix, extra_headers=extra_headers
+            ),
         )
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -231,3 +250,77 @@ def test_built_bundle_has_no_root_relative_api_or_asset_urls():
             if needle in text:
                 offenders.append((path.name, needle))
     assert not offenders, offenders
+
+
+# --- a guarded editor behind a header-injecting proxy (issue #88) --------------
+
+TOKEN = "per-launch-secret"
+
+
+@pytest.fixture(params=["strip", "root-path"])
+def guarded(request, project_dir) -> Iterator[tuple[_Proxy, _Upstream, str]]:
+    """The editor with a Host allow-list and a required API token, behind a
+    proxy that injects that token -- the workspace-launcher arrangement.
+
+    Yields `(proxy, upstream, mount)`: `mount` is the path prefix the *upstream*
+    itself serves under ("" when the proxy strips it, `PREFIX` under `--root-path`)."""
+    strip = request.param == "strip"
+    port = _free_port()
+    app = create_app(
+        project_dir, host_policy=build_host_policy(port, "127.0.0.1"), api_token=TOKEN
+    )
+    if not strip:
+        app = strip_path_prefix(app, PREFIX)
+    with _Upstream(app, port=port) as upstream:
+        with _Proxy(
+            upstream.port, strip_prefix=strip, extra_headers={"X-Deckifyr-Api-Token": TOKEN}
+        ) as proxy:
+            yield proxy, upstream, ("" if strip else PREFIX)
+
+
+def _direct(upstream: _Upstream, method: str, path: str, headers=None) -> int:
+    conn = http.client.HTTPConnection("127.0.0.1", upstream.port, timeout=30)
+    conn.request(method, path, headers=headers or {})
+    status = conn.getresponse().status
+    conn.close()
+    return status
+
+
+def test_the_whole_editor_works_through_a_token_injecting_proxy(guarded):
+    proxy, _, _ = guarded
+    api = f"{PREFIX}/api"
+
+    status, html = proxy.request("GET", f"{PREFIX}/")
+    assert status == 200 and b"<title>deckifyr</title>" in html
+    assert proxy.json("GET", f"{api}/health")[0] == 200
+    assert proxy.json("GET", f"{api}/project")[0] == 200
+    status, presentation = proxy.json("GET", f"{api}/config/presentation")
+    assert status == 200
+    assert proxy.json("PUT", f"{api}/config/presentation", presentation)[0] == 200
+    assert proxy.json("POST", f"{api}/save")[0] == 200
+    status, job = proxy.json("POST", f"{api}/build")
+    assert status == 200 and job["job_id"]
+
+
+def test_the_loopback_port_is_not_usable_without_the_token(guarded):
+    # The proxy cannot protect a port a page can reach directly; the token can.
+    _, upstream, mount = guarded
+    api = f"{mount}/api"
+    assert _direct(upstream, "GET", f"{api}/health") == 200  # health stays open
+    assert _direct(upstream, "GET", f"{api}/project") == 403
+    assert _direct(upstream, "POST", f"{api}/build") == 403
+    assert _direct(upstream, "POST", f"{api}/shutdown") == 403
+    assert _direct(upstream, "GET", f"{api}/project", {"X-Deckifyr-Api-Token": TOKEN}) == 200
+    assert _direct(upstream, "GET", f"{mount}/") == 200  # static assets stay open
+
+
+def test_a_double_prefixed_path_cannot_skip_the_token_under_root_path(guarded):
+    # Under --root-path the app is wrapped by `strip_path_prefix`, and Starlette
+    # strips `root_path` once more when routing, so `/p/p/api/...` reaches an API
+    # route. The token check must see that, not just the raw path.
+    _, upstream, mount = guarded
+    if not mount:
+        pytest.skip("only meaningful when the app itself is mounted under a prefix")
+    double = f"{mount}{mount}/api/project"
+    assert _direct(upstream, "GET", double) == 403
+    assert _direct(upstream, "GET", double, {"X-Deckifyr-Api-Token": TOKEN}) == 200

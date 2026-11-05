@@ -616,9 +616,29 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         ) from exc
 
     from deckifyr.web.app import create_app, strip_path_prefix
+    from deckifyr.web.security import build_host_policy
 
     project_root = Path(args.project or ".").resolve()
     server_holder: list[Any] = []
+
+    # Issue #88. The token comes from the environment, never argv (a process
+    # listing would show it); a launcher that asked for one and did not set it
+    # must fail loudly rather than start an unauthenticated server.
+    api_token = None
+    if args.api_token_env:
+        api_token = os.environ.get(args.api_token_env, "")
+        if not api_token:
+            raise DeckifyrError(
+                f"--api-token-env {args.api_token_env}: that environment variable is "
+                "unset or empty, so the server would run without the token it was "
+                "asked to require",
+                code=ErrorCode.IO,
+            )
+    # Port 0 means "pick one": the Host header then carries a port we cannot
+    # know in advance, so only the names are checked.
+    host_policy = build_host_policy(
+        args.port or None, args.host, args.allowed_host
+    )
 
     def request_shutdown() -> None:
         # Called from `POST /api/shutdown` once it has decided stopping is
@@ -637,6 +657,8 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         # startup; `--launcher workspace` implies this.
         allow_frontend_rebuild=not (args.no_frontend_rebuild or args.launcher == "workspace"),
         policy=_policy(args),
+        host_policy=host_policy,
+        api_token=api_token,
     )
     served = strip_path_prefix(app, args.root_path) if args.root_path else app
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) or until
@@ -953,6 +975,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "never run `npm run build` at startup, even in a dev checkout whose "
             "web/src is newer than the committed bundle"
+        ),
+    )
+    serve_parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="HOST[:PORT]",
+        help=(
+            "also accept this Host/Origin (repeatable) -- the public name of a reverse "
+            "proxy in front of the editor. Without a port it matches any port. The "
+            "loopback names on the served port and the --host it bound are always allowed; "
+            "any other Host gets 421 (DNS-rebinding protection)"
+        ),
+    )
+    serve_parser.add_argument(
+        "--api-token-env",
+        metavar="VAR",
+        default=None,
+        help=(
+            "name of an environment variable holding a per-launch secret: every /api/* "
+            "request except GET /api/health must then send it as X-Deckifyr-Api-Token "
+            "(the supervising proxy injects it; the editor's own browser bundle never "
+            "sees it). Static assets stay open. The value is read from the environment, "
+            "never argv"
         ),
     )
     add_trust_flags(serve_parser)

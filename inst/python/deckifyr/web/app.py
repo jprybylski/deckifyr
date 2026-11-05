@@ -64,6 +64,7 @@ from deckifyr.schema.layouts import BLANK_LAYOUT_ID, Element, Layout, LayoutsDoc
 from deckifyr.schema.presentation import PresentationDocument, Slide
 from deckifyr.schema.units import EMU_PER_INCH, format_length, parse_length
 from deckifyr.web.jobs import DEFAULT_JOB_TIMEOUT_SECONDS, JobManager
+from deckifyr.web.security import HostPolicy, RequestGuard
 
 # The synthetic slide id `GET /api/furniture`/the furniture PATCH/POST/
 # DELETE routes below use for design.yaml's furniture block (issue #21).
@@ -536,6 +537,8 @@ def create_app(
     request_shutdown: Callable[[], None] | None = None,
     allow_frontend_rebuild: bool = True,
     policy: TrustPolicy | None = None,
+    host_policy: HostPolicy | None = None,
+    api_token: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to one project.
 
@@ -550,6 +553,13 @@ def create_app(
     every edit before it is accepted, the paths the working copy reads and
     saves, the binary the preview-availability check reports, and (via
     `policy_argv`) the build/preview subprocesses. `None` is permissive.
+    `host_policy` and `api_token` (issue #88, `deckifyr.web.security`) guard
+    the API against other pages in the user's browser: a Host allow-list /
+    cross-site Origin check, and a per-launch secret required on every
+    `/api/*` request but `GET /api/health`. `deckifyr serve` always supplies a
+    host policy; `None` (embedded/test use, where `TestClient` sends
+    `Host: testserver`) leaves the Host check off, though a `Sec-Fetch-Site:
+    cross-site` write is rejected regardless.
     """
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
@@ -602,6 +612,10 @@ def create_app(
             )
 
     app = FastAPI(title="deckifyr", lifespan=lifespan)
+    # Always installed (it is a no-op without a host policy/token apart from
+    # rejecting a cross-site write): a middleware, not per-route code, so no
+    # route -- present or future -- can forget it. See deckifyr.web.security.
+    app.add_middleware(RequestGuard, host_policy=host_policy, api_token=api_token)
     # Exposed so the hosting process (`cli._cmd_serve`) can tell, after the
     # server stops, whether edits were left unsaved -- it must never lose
     # them silently (issue #83).
