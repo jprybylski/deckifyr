@@ -1,0 +1,8 @@
+# Files the sdist needs beyond what setuptools collects on its own:
+# VERSION is the single source of the package version (pyproject.toml's
+# [tool.setuptools.dynamic]), and the minimal example is copied into the
+# wheel by setup.py at build time (a wheel is built *from* the sdist by
+# `uv build`/`python -m build`, so the sdist has to carry both).
+include VERSION
+include setup.py
+recursive-include inst/examples/minimal-deck *.yaml

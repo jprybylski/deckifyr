@@ -172,7 +172,7 @@ uv run deckifyr serve --project my-deck
 ```
 
 Requires the optional `web` extra (`uv sync --extra web`, or
-`pip install deckifyr[web]`) for `fastapi`/`uvicorn`. Runs a local
+the release wheel with the `[web]` extra, see "Installing the Python engine from a release" below) for `fastapi`/`uvicorn`. Runs a local
 FastAPI backend plus a React/Konva editor over one project directory
 for the life of the process -- drag/resize/rotate elements on a slide
 canvas, edit `design`/`layouts`/`presentation.yaml` through a
@@ -249,12 +249,44 @@ straight into the same `deckifyr.plan`/`deckifyr.pptx.compose`/
 `deckifyr.editor` pipeline this section describes, not a second
 implementation of it.
 
-## Optional extras
+## Installing the Python engine from a release
+
+Every GitHub release attaches a pure-Python wheel and an sdist next to the
+R source tarball, plus a `SHA256SUMS` file covering all of them. Their
+version always equals the release tag (`VERSION`), so a consumer can pin
+by version **and** by hash instead of tracking a moving git ref:
 
 ```bash
-uv pip install 'deckifyr[tables]'   # Parquet table sources (pyarrow)
-uv pip install 'deckifyr[web]'      # the `serve` command's web editor
-uv pip install 'deckifyr[dev]'      # test suite (pytest, pyarrow)
+VERSION=0.3.4   # the release you want
+BASE=https://github.com/jprybylski/deckifyr/releases/download/v$VERSION
+
+# Add it to a project (uv records the wheel's hash in uv.lock) ...
+uv add "deckifyr[web,preview] @ $BASE/deckifyr-$VERSION-py3-none-any.whl"
+
+# ... or verify a download yourself before installing it:
+curl -LO $BASE/deckifyr-$VERSION-py3-none-any.whl
+curl -LO $BASE/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # `shasum -a 256 -c` on macOS
+uv pip install "./deckifyr-$VERSION-py3-none-any.whl[web,preview]"
+```
+
+The wheel bundles the built web editor, the JSON Schemas (including the
+`--json` result schemas), the coding-agent skills and the example
+project `deckifyr init` scaffolds from, so `deckifyr init`, `validate`,
+`build` and `serve` all work straight after install. External tools
+(LibreOffice for previews, Quarto, R for `.rds` tables) are still
+separate installs; see the extras below.
+
+## Optional extras
+
+Extras are selected with the usual `[extra]` suffix on the wheel (or, in
+a repo checkout, `uv sync --extra <name>`):
+
+```bash
+uv sync --extra tables    # Parquet table sources (pyarrow)
+uv sync --extra web       # the `serve` command's web editor (fastapi/uvicorn)
+uv sync --extra preview   # `preview`/`build.previews` rasterization (pymupdf)
+uv sync --extra dev       # test suite (pytest, pyarrow, ...)
 ```
 
 CSV table sources work with no extra; a project using only CSV

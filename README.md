@@ -78,6 +78,18 @@ never a second implementation of the same logic.
 | `examples/demo-deck/` | A richer, repo-only demo (see its README.md) -- a six-slide deck using real `reportifyr`-produced artifacts (a figure, a native table, and a rendered flextable) and two real `quarto` fragments | YAML |
 | `tests/` | `tests/python/` (pytest, unit-level plus an end-to-end build of `examples/demo-deck/`) and `tests/testthat/` (R, including end-to-end tests of the real R→pyro→Python bridge) | Python, R |
 
+## Install the Python CLI from a release
+
+Each [GitHub release](https://github.com/jprybylski/deckifyr/releases)
+attaches a versioned wheel and sdist (pure Python, with the built web
+editor bundled) and a `SHA256SUMS` file covering them and the R tarball:
+
+```bash
+uv add "deckifyr[web,preview] @ https://github.com/jprybylski/deckifyr/releases/download/v0.3.4/deckifyr-0.3.4-py3-none-any.whl"
+```
+
+See the Python-engine article for hash verification and the optional extras.
+
 ## Quick start
 
 ```bash

@@ -8,8 +8,8 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
 
 Requires the optional `web` extra (`fastapi`/`uvicorn`) to be installed
 in the Python environment `deck_serve()` calls into -- provision it with
-`uv sync --extra web` (or, against a plain Python install,
-`pip install deckifyr[web]`). `deck_serve()` reports a missing extra
+`uv sync --extra web` (or, against a plain Python install, the release
+wheel with the `[web]` extra -- see `vignette("python-engine")`). `deck_serve()` reports a missing extra
 immediately, with the exact command to fix it, rather than failing
 partway into starting the server.
 

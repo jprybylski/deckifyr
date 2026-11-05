@@ -1,4 +1,4 @@
-"""Quarto fragment execution (spec section 8/8.1, issue #3).
+r"""Quarto fragment execution (spec section 8/8.1, issue #3).
 
 A `type: quarto` element binds a single `.qmd` fragment to one element's
 `box` -- not a whole document, per section 8.1's complexity limit. This

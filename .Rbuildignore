@@ -15,6 +15,10 @@
 ^\.claude$
 ^uv\.lock$
 ^pyproject\.toml$
+^setup\.py$
+^MANIFEST\.in$
+^dist$
+^build$
 ^CONTRIBUTING\.md$
 ^CLAUDE\.md$
 ^docs$

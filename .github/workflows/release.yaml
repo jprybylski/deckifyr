@@ -93,6 +93,33 @@ jobs:
         id: sync
         run: Rscript .github/scripts/sync-release-metadata.R
 
+      # The Python wheel + sdist (issue #86). Not gated on DRY_RUN: building
+      # has no side effects, so a dry run now also proves the distributions
+      # build and that their version equals VERSION (pyproject.toml reads
+      # VERSION directly, so they cannot drift -- this makes any regression
+      # of that fail the release instead of shipping a mislabeled wheel).
+      # Both are built from this same commit, with the committed web/static
+      # bundle, and uploaded next to the R tarball further down.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+
+      - name: Build Python wheel and sdist
+        run: |
+          uv build --out-dir dist
+          expected="${{ steps.sync.outputs.version }}"
+          test -f "dist/deckifyr-${expected}-py3-none-any.whl" || {
+            echo "::error::expected dist/deckifyr-${expected}-py3-none-any.whl (VERSION=${expected}); got:"
+            ls dist
+            exit 1
+          }
+          test -f "dist/deckifyr-${expected}.tar.gz" || {
+            echo "::error::expected dist/deckifyr-${expected}.tar.gz; got:"
+            ls dist
+            exit 1
+          }
+          unzip -l "dist/deckifyr-${expected}-py3-none-any.whl" | grep -q "deckifyr/web/static/index.html"
+
       - name: Commit release metadata changes
         if: steps.sync.outputs.changed == 'true' && env.DRY_RUN != 'true'
         run: |
@@ -115,11 +142,24 @@ jobs:
         if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
         run: R CMD build . --compact-vignettes=gs+qpdf
 
+      # One SHA256SUMS covering every asset (R tarball, wheel, sdist), so a
+      # consumer can pin and verify by hash (`sha256sum -c SHA256SUMS`). The
+      # R tarball is copied next to the distributions so the file lists bare
+      # file names.
+      - name: Write SHA256SUMS
+        if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true'
+        run: |
+          cp "${{ steps.sync.outputs.tarball }}" dist/
+          cd dist
+          sha256sum "${{ steps.sync.outputs.tarball }}" deckifyr-*-py3-none-any.whl deckifyr-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create release
         if: env.DRY_RUN != 'true' && steps.check.outputs.skip != 'true' && steps.sync.outputs.action == 'new'
         run: |
           gh release create "${{ steps.sync.outputs.tag }}" \
             "${{ steps.sync.outputs.tarball }}" \
+            dist/deckifyr-*-py3-none-any.whl dist/deckifyr-*.tar.gz dist/SHA256SUMS \
             --target "$(git rev-parse HEAD)" \
             --title "${{ steps.sync.outputs.tag }}" \
             --notes-file changelog.md
@@ -130,4 +170,9 @@ jobs:
           git tag -f "${{ steps.sync.outputs.tag }}" "$(git rev-parse HEAD)"
           git push origin "${{ steps.sync.outputs.tag }}" --force
           gh release edit "${{ steps.sync.outputs.tag }}" --notes-file changelog.md
-          gh release upload "${{ steps.sync.outputs.tag }}" "${{ steps.sync.outputs.tarball }}" --clobber
+          # Every asset is replaced together, so a refresh can never leave a
+          # stale wheel or checksum file next to a new tarball.
+          gh release upload "${{ steps.sync.outputs.tag }}" \
+            "${{ steps.sync.outputs.tarball }}" \
+            dist/deckifyr-*-py3-none-any.whl dist/deckifyr-*.tar.gz dist/SHA256SUMS \
+            --clobber

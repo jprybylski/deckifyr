@@ -92,8 +92,24 @@ _EXIT_CODE_BY_ERROR_CODE = {
 
 
 def _examples_dir() -> Path:
-    # inst/python/deckifyr/cli.py -> inst/examples
-    return Path(__file__).resolve().parents[2] / "examples" / "minimal-deck"
+    here = Path(__file__).resolve().parent
+    candidates = (
+        # An installed wheel: setup.py copies the shared example in at build
+        # time (issue #86).
+        here / "_examples" / "minimal-deck",
+        # A repo checkout / editable install / the R package:
+        # inst/python/deckifyr/cli.py -> inst/examples.
+        here.parents[1] / "examples" / "minimal-deck",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise DeckifyrError(
+        "the bundled minimal example project was not found "
+        f"(looked in {', '.join(str(c) for c in candidates)}) -- use "
+        "`deckifyr init --from-dir`/`--from-repo` instead",
+        code=ErrorCode.IO,
+    )
 
 
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
@@ -564,8 +580,9 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         import uvicorn
     except ImportError as exc:
         raise DeckifyrError(
-            "the 'web' extra is not installed -- run `pip install "
-            "deckifyr[web]` (or `uv sync --extra web`)",
+            "the 'web' extra is not installed -- run `uv sync --extra web` "
+            "in a checkout, or install the release wheel with the [web] "
+            "extra (e.g. `uv add \"deckifyr[web] @ <wheel URL>\"`)",
             code=ErrorCode.IO,
         ) from exc
 
