@@ -117,8 +117,13 @@ function useProjectStatus(): { status: ProjectStatus; frontendWarning: string | 
 }
 
 function NoProjectScreen({ message, launcher }: { message: string; launcher: Launcher | null }) {
-  const showCli = launcher !== "r";
-  const showR = launcher !== "cli";
+  // An unknown launcher (health unreachable) shows both CLI and R; the
+  // workspace launcher gets its own host-appropriate guidance instead,
+  // since `deckifyr init`/`deck_serve()` aren't how a workspace user
+  // would be creating or opening a project (issue #83).
+  const showWorkspace = launcher === "workspace";
+  const showCli = launcher === null || launcher === "cli";
+  const showR = launcher === null || launcher === "r";
   const bothShown = showCli && showR;
   return (
     <div className="no-project">
@@ -128,8 +133,15 @@ function NoProjectScreen({ message, launcher }: { message: string; launcher: Lau
       </h1>
       <p className="no-project__message">{message}</p>
       <p>
-        This directory doesn&rsquo;t look like a deckifyr project. Either:
+        This directory doesn&rsquo;t look like a deckifyr project.{showWorkspace ? "" : " Either:"}
       </p>
+      {showWorkspace && (
+        <p className="no-project__via">
+          The workspace that started this editor pointed it at a directory with no{" "}
+          <code>presentation.yaml</code>. Create a deck project there, or open one of your
+          existing deck projects from the workspace.
+        </p>
+      )}
       {showR && (
         <>
           {bothShown && <p className="no-project__via">Using R:</p>}

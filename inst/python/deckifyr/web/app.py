@@ -27,6 +27,8 @@ import copy
 import shutil
 import subprocess
 import sys
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -504,7 +506,19 @@ def create_app(
     *,
     launcher: str = "cli",
     job_timeout_seconds: float | None = DEFAULT_JOB_TIMEOUT_SECONDS,
+    request_shutdown: Callable[[], None] | None = None,
+    allow_frontend_rebuild: bool = True,
 ) -> FastAPI:
+    """Build the FastAPI app bound to one project.
+
+    `request_shutdown` is how `POST /api/shutdown` (issue #83) asks the
+    hosting server to stop; `deckifyr serve` supplies one that sets
+    uvicorn's `should_exit`. `None` (embedded/test use) means the endpoint
+    reports it can't stop anything rather than pretending to.
+    `allow_frontend_rebuild=False` skips the dev-checkout `npm run build`
+    at startup -- a supervised/installed context must never shell out to
+    npm (`--launcher workspace` turns it off).
+    """
     project_root = Path(project_root).resolve()
     presentation_path = project_root / presentation_name
     job_manager = JobManager(job_timeout_seconds=job_timeout_seconds)
@@ -513,7 +527,7 @@ def create_app(
     static_dir = Path(__file__).parent / "static"
     web_src_dir = Path(__file__).resolve().parents[4] / "web" / "src"
     frontend_warning = _frontend_build_warning(static_dir, web_src_dir)
-    if frontend_warning is not None:
+    if frontend_warning is not None and allow_frontend_rebuild:
         rebuild_failure = _rebuild_frontend(web_src_dir.parent)
         if rebuild_failure is not None:
             print(f"deckifyr serve: WARNING: {rebuild_failure}", file=sys.stderr)
@@ -521,7 +535,38 @@ def create_app(
     if frontend_warning is not None:
         print(f"deckifyr serve: WARNING: {frontend_warning}", file=sys.stderr)
 
-    app = FastAPI(title="deckifyr")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        # Runs on every way of stopping (POST /api/shutdown, SIGINT,
+        # SIGTERM) *before* uvicorn re-raises a captured signal -- a check
+        # after `Server.run()` returns never executes for SIGTERM, which
+        # is the very case it exists for. Never drop work silently
+        # (issue #83): kill leftover jobs' process trees (they would
+        # otherwise be orphaned) and say so, and say so if edits were
+        # never written. `POST /api/shutdown` has already refused or
+        # resolved both, so this is quiet on an orderly stop.
+        for job in job_manager.active_jobs():
+            print(
+                f"deckifyr serve: WARNING: stopping with a {job.id} job still "
+                "running -- cancelled it",
+                file=sys.stderr,
+            )
+            job_manager.cancel(job.id)
+        if working_copy.dirty:
+            print(
+                "deckifyr serve: WARNING: stopped with unsaved changes that were "
+                "NOT written to disk (use POST /api/shutdown with if_dirty=save, "
+                "or save in the editor, before stopping)",
+                file=sys.stderr,
+            )
+
+    app = FastAPI(title="deckifyr", lifespan=lifespan)
+    # Exposed so the hosting process (`cli._cmd_serve`) can tell, after the
+    # server stops, whether edits were left unsaved -- it must never lose
+    # them silently (issue #83).
+    app.state.working_copy = working_copy
+    app.state.job_manager = job_manager
 
     @app.exception_handler(DeckifyrError)
     async def _handle_deckifyr_error(request: Request, exc: DeckifyrError) -> JSONResponse:
@@ -582,7 +627,71 @@ def create_app(
         # instructions -- `presentation.yaml`/`design.yaml`/`layouts.yaml`
         # not existing yet is the whole point of that screen, so it can't
         # depend on a route that requires them).
-        return {"status": "ok", "launcher": launcher, "frontend_warning": frontend_warning}
+        #
+        # Readiness contract (issue #83): a 200 here means the server is up
+        # and accepting project requests -- it never depends on the project
+        # loading. `dirty` (unsaved in-memory edits) and `active_jobs`
+        # (queued/running build/preview jobs) are cheap, read-only, and
+        # exist so a supervisor can tell whether stopping is safe without
+        # making an edit to find out.
+        return {
+            "status": "ok",
+            "launcher": launcher,
+            "frontend_warning": frontend_warning,
+            "dirty": working_copy.dirty,
+            "active_jobs": job_manager.active_count(),
+        }
+
+    @app.post("/api/shutdown")
+    def post_shutdown(body: dict[str, Any] = Body(default={})) -> Any:
+        """Orderly stop for a supervising process (issue #83).
+
+        Body (all optional): `if_dirty` -- `"refuse"` (default) or `"save"`;
+        `active_jobs` -- `"refuse"` (default) or `"cancel"`. Both refusals
+        are decided *before* anything is saved or cancelled, so a 409 has no
+        side effects and leaves the server running. Nothing is ever dropped
+        silently: unsaved edits are saved or the stop is refused, and running
+        jobs are cancelled explicitly or the stop is refused.
+        """
+        if_dirty = body.get("if_dirty", "refuse")
+        jobs_mode = body.get("active_jobs", "refuse")
+        if if_dirty not in ("save", "refuse"):
+            raise HTTPException(status_code=422, detail="if_dirty must be 'save' or 'refuse'")
+        if jobs_mode not in ("cancel", "refuse"):
+            raise HTTPException(status_code=422, detail="active_jobs must be 'cancel' or 'refuse'")
+        if request_shutdown is None:
+            raise HTTPException(
+                status_code=501,
+                detail="this server was not started by `deckifyr serve`, so it cannot stop itself",
+            )
+
+        dirty = working_copy.dirty
+        active = job_manager.active_jobs()
+        reasons: list[str] = []
+        parts: list[str] = []
+        if dirty and if_dirty == "refuse":
+            reasons.append("unsaved_changes")
+            parts.append("there are unsaved changes")
+        if active and jobs_mode == "refuse":
+            reasons.append("active_jobs")
+            parts.append(f"{len(active)} job(s) are still running")
+        if reasons:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": "E_SHUTDOWN_REFUSED",
+                    "message": "not stopping: " + " and ".join(parts),
+                    "reasons": reasons,
+                    "dirty": dirty,
+                    "active_jobs": len(active),
+                },
+            )
+
+        saved = working_copy.save() if dirty else []
+        for job in active:
+            job_manager.cancel(job.id)
+        request_shutdown()
+        return {"status": "shutting_down", "saved": saved, "cancelled_jobs": len(active)}
 
     @app.get("/api/project")
     def get_project() -> dict[str, Any]:

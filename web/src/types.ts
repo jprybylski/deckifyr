@@ -109,14 +109,20 @@ export interface ProjectInfo {
 
 /** Who launched this `deckifyr serve` process -- `cli.py`'s `serve
  * --launcher` flag, default `"cli"`; `R/serve.R`'s `deck_serve()` passes
- * `"r"`. Carried on `GET /api/health` (not `/api/project`, which is
+ * `"r"`; a supervising workspace launcher passes `"workspace"` (issue #83).
+ * Carried on `GET /api/health` (not `/api/project`, which is
  * exactly the route that fails when there's no project to show
  * launcher-appropriate "no project found" instructions for). */
-export type Launcher = "cli" | "r";
+export type Launcher = "cli" | "r" | "workspace";
 
 export interface HealthResponse {
   status: string;
   launcher: Launcher;
+  /** Unsaved in-memory edits exist (issue #83) -- lets a supervisor tell
+   * whether stopping would lose work without making an edit to find out. */
+  dirty?: boolean;
+  /** Queued/running build/preview jobs (issue #83). */
+  active_jobs?: number;
   /** Non-null only in a dev checkout whose built `web/static/` bundle is
    * older than `web/src/` (`deckifyr.web.app._frontend_build_warning`) --
    * a real trap this exists to surface instead of leaving a stale-JS

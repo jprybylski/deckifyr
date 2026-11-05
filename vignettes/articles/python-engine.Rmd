@@ -166,6 +166,40 @@ canvas, edit `design`/`layouts`/`presentation.yaml` through a
 schema-driven form (or raw JSON), trigger builds, and download
 artifacts. See `vignette("web-app")` for the full walkthrough.
 
+#### Running `serve` under a supervisor or a reverse proxy
+
+`serve` can also run as a managed child of a launcher (a local workspace
+app, a process supervisor) and be mounted under a URL prefix:
+
+* **Path prefix.** The editor only ever emits page-relative URLs, so a
+  proxy that *strips* a prefix (`/apps/deckifyr/` -> `/`) needs no
+  configuration -- browse to the mount URL **with its trailing slash**.
+  For a proxy that forwards the prefix *without* stripping it, pass
+  `--root-path /apps/deckifyr`. (uvicorn's own `root_path` is not used: it
+  prepends the prefix, which is the opposite of what that case needs.)
+* **`--launcher workspace`** tells the editor a workspace launcher
+  started it (its "no project found" screen then shows workspace
+  guidance instead of CLI/R commands) and implies `--no-frontend-rebuild`,
+  so it never shells out to `npm`, whatever the checkout layout.
+* **Readiness and state.** `GET /api/health` returning 200 means the
+  server is ready to accept project requests; it never depends on the
+  project loading. It also reports `dirty` (unsaved in-memory edits) and
+  `active_jobs` (queued/running build or preview jobs), so a supervisor
+  can tell whether stopping is safe without making an edit to find out.
+* **Orderly stop.** `POST /api/shutdown` with an optional JSON body
+  `{"if_dirty": "refuse" | "save", "active_jobs": "refuse" | "cancel"}`
+  (both default to `"refuse"`). A refusal is a `409` with
+  `E_SHUTDOWN_REFUSED` and the `reasons`; it decides *before* saving or
+  cancelling anything, so a refused stop leaves the server and its edits
+  untouched. `save` writes the edits first; `cancel` kills running jobs'
+  process trees. The process then exits `0`. A plain `SIGTERM`/`SIGINT`
+  cannot ask, so it writes a warning to stderr if edits were left
+  unsaved (and cancels leftover jobs) rather than losing work silently.
+* **Bounded jobs.** `--job-timeout SECONDS` (default 600, `0` for no
+  limit) bounds every background build/preview; an overrun is killed
+  with its whole process tree and reported as `E_TIMEOUT`. Jobs can be
+  cancelled with `POST /api/jobs/{id}/cancel`.
+
 ## Architecture: two decoupled passes
 
 ```mermaid

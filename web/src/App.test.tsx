@@ -94,6 +94,28 @@ describe("App project gate", () => {
     expect(screen.queryAllByText(/deckifyr serve --project/).length).toBe(0);
   });
 
+  it("shows workspace-specific guidance (and neither CLI nor R commands) for the workspace launcher", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "api/health") {
+        return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "workspace" }));
+      }
+      if (url === "api/project") {
+        return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText(/The workspace that started this editor/)).toBeInTheDocument());
+    expect(screen.queryByText(/deckifyr init/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/initialize_deck_project/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Using R:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Using the CLI:")).not.toBeInTheDocument();
+  });
+
   it("shows both instruction sets when the launcher can't be determined", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);

@@ -547,19 +547,34 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
     from deckifyr.web.app import create_app, strip_path_prefix
 
     project_root = Path(args.project or ".").resolve()
+    server_holder: list[Any] = []
+
+    def request_shutdown() -> None:
+        # Called from `POST /api/shutdown` once it has decided stopping is
+        # safe. uvicorn's own flag: the in-flight response finishes, then the
+        # server drains and `Server.run()` returns, so the process exits 0.
+        if server_holder:
+            server_holder[0].should_exit = True
+
     app = create_app(
         project_root,
         args.presentation,
         launcher=args.launcher,
         job_timeout_seconds=args.job_timeout,
+        request_shutdown=request_shutdown,
+        # A supervised/installed context must never shell out to npm at
+        # startup; `--launcher workspace` implies this.
+        allow_frontend_rebuild=not (args.no_frontend_rebuild or args.launcher == "workspace"),
     )
-    if args.root_path:
-        app = strip_path_prefix(app, args.root_path)
-    # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
-    # default graceful shutdown handling, nothing custom here.
-    # `--root-path` (issue #82) is handled by `strip_path_prefix`, not
-    # uvicorn's own `root_path` -- see that function's docstring for why.
-    uvicorn.run(app, host=args.host, port=args.port)
+    served = strip_path_prefix(app, args.root_path) if args.root_path else app
+    # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) or until
+    # `POST /api/shutdown` asks it to stop -- uvicorn's own graceful
+    # shutdown either way. `--root-path` (issue #82) is handled by
+    # `strip_path_prefix`, not uvicorn's own `root_path` -- see that
+    # function's docstring for why.
+    server = uvicorn.Server(uvicorn.Config(served, host=args.host, port=args.port))
+    server_holder.append(server)
+    server.run()
     return {"status": "stopped"}
 
 
@@ -799,12 +814,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument(
         "--launcher",
-        choices=["cli", "r"],
+        choices=["cli", "r", "workspace"],
         default="cli",
         help=(
             "who's launching this (default: cli) -- surfaced via GET /api/health "
             "so the frontend's 'no project found' screen can show deckifyr-CLI vs "
-            "R-facade instructions; R/serve.R's deck_serve() passes --launcher r"
+            "R-facade vs workspace-launcher guidance; R/serve.R's deck_serve() "
+            "passes --launcher r. 'workspace' is for a supervising launcher: it "
+            "also implies --no-frontend-rebuild"
+        ),
+    )
+    serve_parser.add_argument(
+        "--no-frontend-rebuild",
+        action="store_true",
+        help=(
+            "never run `npm run build` at startup, even in a dev checkout whose "
+            "web/src is newer than the committed bundle"
         ),
     )
     serve_parser.set_defaults(handler=_cmd_serve)
