@@ -123,7 +123,7 @@ function NoProjectScreen({ message, launcher }: { message: string; launcher: Lau
   return (
     <div className="no-project">
       <h1>
-        <img src="/logo.png" alt="" className="no-project__logo" />
+        <img src="logo.png" alt="" className="no-project__logo" />
         deckifyr
       </h1>
       <p className="no-project__message">{message}</p>
@@ -186,7 +186,7 @@ export default function App() {
           </div>
         )}
         <header className="app__header">
-          <img src="/logo.png" alt="" className="app__logo" />
+          <img src="logo.png" alt="" className="app__logo" />
           <h1>deckifyr</h1>
           <span className="app__project-path" title={projectStatus.root}>
             {projectStatus.root}

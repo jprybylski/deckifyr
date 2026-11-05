@@ -9,7 +9,7 @@ import react from "@vitejs/plugin-react";
 // run a Node build at install time.
 export default defineConfig({
   plugins: [react()],
-  base: "/",
+  base: "./",
   build: {
     outDir: "../inst/python/deckifyr/web/static",
     emptyOutDir: true,

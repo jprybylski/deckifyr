@@ -40,13 +40,13 @@ function stubFetch() {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url === "/api/config/design" && method === "GET") {
+    if (url === "api/config/design" && method === "GET") {
       return Promise.resolve(jsonResponse(200, DESIGN_DOC));
     }
-    if (url === "/api/schemas/design") {
+    if (url === "api/schemas/design") {
       return Promise.resolve(jsonResponse(200, DESIGN_SCHEMA));
     }
-    if (url === "/api/config/design" && method === "PUT") {
+    if (url === "api/config/design" && method === "PUT") {
       const body = JSON.parse((init!.body as string) ?? "{}");
       return Promise.resolve(jsonResponse(200, { path: "/tmp/design.yaml", dirty: true, ...body }));
     }

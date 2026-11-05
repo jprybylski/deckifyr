@@ -110,7 +110,7 @@ test("Preview shows a progress bar, then rendered images and a collapsed PDF dis
   await panel.getByText("Show PDF preview").click();
   await expect(panel.getByTitle("Preview PDF")).toHaveAttribute(
     "src",
-    "/api/jobs/e2e-preview-job/artifacts/pdf"
+    "api/jobs/e2e-preview-job/artifacts/pdf"
   );
 
   // PNG thumbnails expand on click, one at a time.

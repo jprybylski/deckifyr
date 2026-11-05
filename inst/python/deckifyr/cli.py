@@ -544,12 +544,16 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
             code=ErrorCode.IO,
         ) from exc
 
-    from deckifyr.web.app import create_app
+    from deckifyr.web.app import create_app, strip_path_prefix
 
     project_root = Path(args.project or ".").resolve()
     app = create_app(project_root, args.presentation, launcher=args.launcher)
+    if args.root_path:
+        app = strip_path_prefix(app, args.root_path)
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
     # default graceful shutdown handling, nothing custom here.
+    # `--root-path` (issue #82) is handled by `strip_path_prefix`, not
+    # uvicorn's own `root_path` -- see that function's docstring for why.
     uvicorn.run(app, host=args.host, port=args.port)
     return {"status": "stopped"}
 
@@ -760,6 +764,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument(
+        "--root-path",
+        default="",
+        help=(
+            "mount prefix (e.g. /apps/deckifyr) for a reverse proxy that does NOT "
+            "strip it before forwarding; leave unset behind a prefix-stripping "
+            "proxy or when served directly. Either way, browse to the mount URL "
+            "with its trailing slash -- the frontend uses page-relative URLs"
+        ),
+    )
     serve_parser.add_argument(
         "--project", default=None, help="project directory (default: current directory)"
     )

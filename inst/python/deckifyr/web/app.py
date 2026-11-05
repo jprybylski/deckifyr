@@ -1486,3 +1486,42 @@ def create_app(
             return {"message": "frontend not built - run `npm run build` in web/"}
 
     return app
+
+
+def strip_path_prefix(app: Any, prefix: str) -> Any:
+    """Wrap an ASGI `app` so it also answers under a mount `prefix` (issue #82).
+
+    For a reverse proxy that forwards `/apps/deckifyr/...` *without*
+    stripping the prefix. A request whose path starts with `prefix` is
+    rewritten to the unprefixed path (and `root_path` set to the prefix,
+    per the ASGI spec); anything else passes through unchanged, so direct
+    access keeps working too.
+
+    This is deliberately not uvicorn's own `root_path` option: uvicorn
+    *prepends* `root_path` to every incoming path (it models a proxy that
+    already stripped the prefix), which is the opposite of what a
+    non-stripping proxy needs -- confirmed against uvicorn 0.54, where
+    `--root-path` alone turns `/apps/deckifyr/` into
+    `/apps/deckifyr/apps/deckifyr/` and 404s. The frontend itself needs no
+    help either way: it only ever emits page-relative URLs.
+    """
+    prefix = "/" + prefix.strip("/")
+    if prefix == "/":
+        return app
+
+    async def wrapper(scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] in ("http", "websocket"):
+            path: str = scope["path"]
+            if path == prefix or path.startswith(prefix + "/"):
+                stripped = path[len(prefix) :] or "/"
+                scope = dict(scope)
+                scope["path"] = stripped
+                scope["root_path"] = prefix
+                raw_path = scope.get("raw_path")
+                if raw_path is not None:
+                    raw_prefix = prefix.encode("ascii")
+                    if raw_path == raw_prefix or raw_path.startswith(raw_prefix + b"/"):
+                        scope["raw_path"] = raw_path[len(raw_prefix) :] or b"/"
+        await app(scope, receive, send)
+
+    return wrapper
