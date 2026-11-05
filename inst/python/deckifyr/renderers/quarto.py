@@ -1,4 +1,4 @@
-"""Quarto fragment execution (spec section 8/8.1, issue #3).
+r"""Quarto fragment execution (spec section 8/8.1, issue #3).
 
 A `type: quarto` element binds a single `.qmd` fragment to one element's
 `box` -- not a whole document, per section 8.1's complexity limit. This
@@ -115,6 +115,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from deckifyr._proc import run_in_group
 from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 
 # Rasterization DPI for `render_mode: png` -- high enough to stay crisp
@@ -284,10 +285,11 @@ def _check_size(data: bytes, config: QuartoExecutionConfig, *, label: str) -> No
 def _run_quarto(
     cmd: list[str], *, cwd: Path, config: QuartoExecutionConfig, label: str
 ) -> None:
+    # `run_in_group` (issue #84) rather than `subprocess.run`: on timeout
+    # the latter kills only `quarto` itself, orphaning the pandoc/deno/R
+    # or Jupyter-kernel processes it spawned. This kills the whole tree.
     try:
-        result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True, timeout=config.timeout_seconds
-        )
+        result = run_in_group(cmd, cwd=cwd, timeout=config.timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         raise ContentValidationError(
             f"{label}: quarto render exceeded its {config.timeout_seconds}s "

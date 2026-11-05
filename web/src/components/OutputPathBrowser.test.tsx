@@ -18,7 +18,7 @@ describe("OutputPathBrowser", () => {
   it("opens to the current value's directory and lists its entries", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/project/browse?dir=build") {
+      if (url === "api/project/browse?dir=build") {
         return Promise.resolve(
           jsonResponse(200, { dir: "build", dirs: ["sub"], files: ["existing.pptx"], truncated: false })
         );
@@ -40,12 +40,12 @@ describe("OutputPathBrowser", () => {
   it("navigates into a subdirectory on click, fetching just that level", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/project/browse?dir=") {
+      if (url === "api/project/browse?dir=") {
         return Promise.resolve(
           jsonResponse(200, { dir: "", dirs: ["build"], files: [], truncated: false })
         );
       }
-      if (url === "/api/project/browse?dir=build") {
+      if (url === "api/project/browse?dir=build") {
         return Promise.resolve(
           jsonResponse(200, { dir: "build", dirs: [], files: ["existing.pptx"], truncated: false })
         );
@@ -61,13 +61,13 @@ describe("OutputPathBrowser", () => {
     fireEvent.click(screen.getByText("📁 build"));
 
     await screen.findByText("existing.pptx");
-    expect(fetchMock).toHaveBeenCalledWith("/api/project/browse?dir=build", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("api/project/browse?dir=build", expect.anything());
   });
 
   it("calls onSelect with the joined path and closes on \"Use this path\"", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/project/browse?dir=") {
+      if (url === "api/project/browse?dir=") {
         return Promise.resolve(
           jsonResponse(200, { dir: "", dirs: [], files: [], truncated: false })
         );

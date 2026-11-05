@@ -301,11 +301,11 @@ without checking
 | --- | --- | --- |
 | `R/` | Thin facade (`deck_validate()`, `deck_build()`, `initialize_deck_project()`, ...) delegating to the bundled Python CLI via pyro. `R/run-python.R` is the single bridge point every other `R/*.R` file calls through. | R |
 | `inst/python/deckifyr/` | The canonical engine. Bundled unmodified into the R package (`inst/python`) and also the source directory for the standalone Python wheel (spec §5.3) -- never fork this tree for one facade or the other. | Python |
-| `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. Ships inside the R package/Python wheel (it's under `inst/`). | YAML |
+| `inst/examples/minimal-deck/` | A minimal valid `design.yaml`/`layouts.yaml`/`presentation.yaml` trio. Used by `deckifyr init` as its template, and as the shared test fixture for both `tests/python/` and `tests/testthat/` -- don't duplicate its content elsewhere. Ships inside the R package (it's under `inst/`); the Python wheel gets a build-time copy of it -- see the wheel paragraph below. | YAML |
 | `examples/demo-deck/` | A richer, repo-only demo (in the spirit of quartifyr's `examples/demo-report`) -- a six-slide deck resolving a real `reportifyr`-produced figure via a real `{rpfy}:conc-time.png` reference (with a footer built from its metadata sidecar + this directory's own `standard_footnotes.yaml`), a `table` element, a `{rpfy}:`-sourced native table next to a `{rpfy}:`-sourced `.rds` flextable rendered to a picture (issue #57), a multi-zone layout, rotation, and `z_index`. Not bundled into the package (outside `inst/`); see its own README.md for what it demonstrates. | YAML |
 | `tests/python/` | pytest, unit-level: units, merge, schema loading, CLI exit codes, plan expansion, PPTX composition -- plus `test_demo_deck.py`, an end-to-end build of `examples/demo-deck/`. | Python |
 | `tests/testthat/` | R tests, including `test-wiring.R`, the only test that exercises the real R -> pyro -> Python round trip end-to-end (not just function signatures). Skips cleanly without `uv`/`pyro`. | R |
-| `.github/workflows/ci.yml` | `python-tests` (pytest matrix) + `full-pipeline` (the real R -> pyro -> Python integration proof, `tests/testthat/` run directly against the checkout). | YAML |
+| `.github/workflows/ci.yml` | `python-tests` (pytest matrix) + `wheel-smoke` (builds the release wheel and uses it from a clean venv, issue #86) + `full-pipeline` (the real R -> pyro -> Python integration proof, `tests/testthat/` run directly against the checkout). | YAML |
 | `.github/workflows/R-CMD-check.yaml`, `test-coverage.yaml` | Standard, largely unmodified r-lib templates (`check-r-package`, `test-coverage`), modeled on quartifyr's own versions of the same two files -- package structure/docs/coverage only; `tests/testthat/`'s pyro-dependent tests skip cleanly under both by design (see CLAUDE.md's architecture notes). | YAML |
 
 ## Commands
@@ -1329,6 +1329,102 @@ killed and re-checked) would have, and even that only if it happened to
 restart a server at the same port after stopping one, which it didn't
 do before this fix.
 
+**Supervised/proxied `serve` (issues #82-#84) -- three findings that were
+not what the issues assumed, each caught by a real server or process,
+not by reading code.** *Path prefix:* the editor emits only page-relative
+URLs (Vite `base: "./"`; `web/src/api/client.ts`'s `apiUrl()` strips a
+leading `/` from every request and `jobArtifactUrl()`; the built bundle
+contains no `"/api/` or `"/assets/` string, pinned by
+`test_web_prefix.py`), so a proxy that strips its mount prefix needs no
+app configuration -- but the page must be opened *with its trailing
+slash*, since relative URLs resolve against the document path. The
+issue's suggested `--root-path` -> `uvicorn.run(root_path=...)` is
+backwards for a proxy that does *not* strip: uvicorn *prepends*
+`root_path` to every incoming path (it models a stripping proxy), so
+`/apps/deckifyr/` became `/apps/deckifyr/apps/deckifyr/` and 404ed
+(confirmed against uvicorn 0.54). `--root-path` is therefore
+`deckifyr.web.app.strip_path_prefix`, a small ASGI wrapper that strips a
+leading prefix and sets `root_path`, passing anything else through
+unchanged. *Stopping:* `serve` runs a `uvicorn.Server` (not
+`uvicorn.run`) so `POST /api/shutdown` can set `should_exit`; both
+refusals (`if_dirty`/`active_jobs`, default `refuse`) are decided before
+anything is saved or cancelled, so a 409 has no side effects. The
+"warn about unsaved edits / cancel leftover jobs" logic for
+SIGINT/SIGTERM lives in the app's *lifespan shutdown*, deliberately not
+after `Server.run()` returns: uvicorn re-raises the captured signal at
+the end of `run()`, so code after it never executes for SIGTERM (the
+process exits by signal, -15) -- an earlier version had exactly that bug
+and only a real-process test (`test_web_launcher.py`) showed it.
+`--launcher workspace` implies `--no-frontend-rebuild`
+(`create_app(allow_frontend_rebuild=False)`): a supervised process must
+never shell out to `npm`, and the staleness *warning* is still reported.
+`GET /api/health` is the readiness contract (200 means ready; it never
+loads the project) and now carries `dirty`/`active_jobs`. *Jobs:*
+`deckifyr._proc.run_in_group`/`kill_process_tree` run every job and the
+LibreOffice invocation in their own session and kill the whole tree.
+Killing the job's own process group is not enough, and that was
+non-obvious: the job's CLI child starts `soffice` in *its own* session
+(that is what makes the preview timeout safe on its own), so the job's
+group does not contain it -- `kill_process_tree` also walks the
+parent/child tree (via `ps`, snapshotted *before* killing, since a dead
+launcher re-parents its children to init) and kills every descendant's
+group; `test_jobs_bounded.py` proves a separate-session grandchild dies
+and fails if that walk is disabled. stdout/stderr go to temp files, not
+pipes, so a surviving grandchild can't block collection. Each preview gets
+a private `-env:UserInstallation` profile (the user's own is locked by any
+open LibreOffice, and two concurrent previews would fight over it).
+`deckifyr.renderers.quarto` (`_run_quarto`: pandoc/deno/R or Jupyter
+kernels) and `deckifyr.renderers.flextable` (Rscript) use the same
+`run_in_group`, so a timed-out render leaves nothing behind either;
+`test_renderers_orphans.py` proves it with fake binaries that start a
+separate-session grandchild (and fails if either renderer reverts to
+`subprocess.run`). A new external-tool call should go through
+`run_in_group` too -- a bare `subprocess.run(..., timeout=...)` kills
+only the direct child.
+
+**`--json` results are a versioned contract (issue #85).**
+`deckifyr.schema.results` holds the pydantic result models; every success
+and error payload carries `result_version` (`RESULT_VERSION`, bumped only
+for a break an existing consumer couldn't ignore -- adding a key is not
+one), and `validate`/`build`/`preview`/error have published JSON Schemas
+under `schemas/results/` (a subdirectory, so the documents-only
+`schemas/*.schema.json` set that `test_json_schema_files.py` and IDE
+tooling expect is untouched), regenerated by
+`scripts/generate_json_schemas.py`. `test_cli_results.py` validates real
+CLI output against them. Structured warnings are `deckifyr.diagnostics.
+BuildWarning`, a `str` *subclass* carrying `code`/`slide`/`element`:
+warnings already flow through resolvers, five compose functions, the
+manifest and `inspect` typed `list[str]`, and a subclass is a drop-in
+for all of them (`"LibreOffice" in w`, `json.dumps`) with no parallel
+list to keep in sync. `_compose_element` tags each warning with its slide
+and element id on the way out (fill-only, so a group's child keeps its
+own id), and the CLI serializes them via `warnings_payload`.
+`validate` returns `warnings: []` -- reserved shape, no producers yet.
+
+**The Python wheel is versioned from `VERSION` and ships a working
+`init` (issue #86).** `pyproject.toml` has `dynamic = ["version"]`
+reading `VERSION` (and `[tool.uv] cache-keys` watches it so editable
+metadata refreshes on a bump); `deckifyr.__version__` comes from
+`importlib.metadata`, falling back to `0.0.0.dev0` for the R package
+(`inst/python` is put on the path by pyro, never pip-installed, so there
+is no distribution metadata there). Building the wheel for real exposed
+that it silently omitted the minimal example `deckifyr init` scaffolds
+from (`inst/examples/` is outside the package dir) -- CLAUDE.md used to
+claim it shipped. Rather than relocate a fixture read by R's
+`system.file()`, both test suites and the e2e fixture, `setup.py`'s
+`build_py` override copies it into the wheel's build tree as
+`deckifyr/_examples/minimal-deck/` (and fails the build if it is
+missing), `MANIFEST.in` carries it and `VERSION` in the sdist (`uv build`
+builds the wheel *from* the sdist), and `cli._examples_dir()` tries that
+location, then the repo path. `release.yaml` builds the wheel + sdist
+even in a dry run (no side effects) and fails unless the wheel's version
+equals `VERSION`; `SHA256SUMS` covers the R tarball, wheel and sdist, all
+attached on `new` and replaced together on `refresh`; `.Rbuildignore`
+keeps `setup.py`/`MANIFEST.in`/`dist`/`build` out of the R tarball.
+`ci.yml`'s `wheel-smoke` job builds the wheel and uses it from a clean
+venv (`init`, `validate`, `build`, `serve`, `/api/health`,
+`POST /api/shutdown`).
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three
@@ -1559,7 +1655,9 @@ DESCRIPTION currently says). To actually bump the release version, edit
 `VERSION` (and let the workflow fold the `NEWS.md` "(development
 version)" section into a new dated heading) -- never edit
 `DESCRIPTION`'s `Version:` directly, even when asked to "bump the
-patch version"; that request means `VERSION`, not `DESCRIPTION`.
+patch version"; that request means `VERSION`, not `DESCRIPTION`. `VERSION` is also the single source of the Python package's
+version (`pyproject.toml`'s setuptools dynamic version) -- never add a
+static `version =` there (`tests/python/test_packaging.py` pins this).
 
 **Bundled coding-agent skills (CLI `skills`, R `deck_export_skills()`,
 issue #50) are real: hand-authored Claude Skills-format `SKILL.md` files

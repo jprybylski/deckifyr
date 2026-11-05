@@ -194,7 +194,6 @@ toml = [
 
 [[package]]
 name = "deckifyr"
-version = "0.0.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "pillow" },

@@ -39,10 +39,10 @@ describe("App project gate", () => {
   it("shows only CLI instructions when launched via the CLI and /api/project fails", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/health") {
+      if (url === "api/health") {
         return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "cli" }));
       }
-      if (url === "/api/project") {
+      if (url === "api/project") {
         return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -61,8 +61,8 @@ describe("App project gate", () => {
     // goes on to independently call /api/plan, /api/config/*, etc.
     // after the project check has already failed.
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenCalledWith("/api/health", expect.anything());
-    expect(fetchMock).toHaveBeenCalledWith("/api/project", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("api/health", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("api/project", expect.anything());
 
     expect(screen.queryByRole("button", { name: "Editor" })).not.toBeInTheDocument();
     expect(screen.getByText(/deckifyr init/)).toBeInTheDocument();
@@ -74,10 +74,10 @@ describe("App project gate", () => {
   it("shows only R instructions when launched via deck_serve() and /api/project fails", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/health") {
+      if (url === "api/health") {
         return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "r" }));
       }
-      if (url === "/api/project") {
+      if (url === "api/project") {
         return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -94,16 +94,38 @@ describe("App project gate", () => {
     expect(screen.queryAllByText(/deckifyr serve --project/).length).toBe(0);
   });
 
+  it("shows workspace-specific guidance (and neither CLI nor R commands) for the workspace launcher", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "api/health") {
+        return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "workspace" }));
+      }
+      if (url === "api/project") {
+        return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText(/The workspace that started this editor/)).toBeInTheDocument());
+    expect(screen.queryByText(/deckifyr init/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/initialize_deck_project/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Using R:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Using the CLI:")).not.toBeInTheDocument();
+  });
+
   it("shows both instruction sets when the launcher can't be determined", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/health") {
+      if (url === "api/health") {
         // The server itself is unreachable/erroring for /api/health too,
         // not just "no project" -- a rarer case, but the gate must not
         // crash or silently pick a wrong launcher for it.
         return Promise.reject(new Error("network error"));
       }
-      if (url === "/api/project") {
+      if (url === "api/project") {
         return Promise.resolve(jsonResponse(404, PROJECT_NOT_FOUND_BODY));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -121,10 +143,10 @@ describe("App project gate", () => {
   it("renders the editor tabs once /api/project succeeds", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/health") {
+      if (url === "api/health") {
         return Promise.resolve(jsonResponse(200, { status: "ok", launcher: "cli" }));
       }
-      if (url === "/api/project") {
+      if (url === "api/project") {
         return Promise.resolve(
           jsonResponse(200, {
             root: "/tmp/proj",
@@ -134,21 +156,21 @@ describe("App project gate", () => {
           })
         );
       }
-      if (url === "/api/plan") {
+      if (url === "api/plan") {
         return Promise.resolve(jsonResponse(200, { slides: [] }));
       }
-      if (url === "/api/furniture") {
+      if (url === "api/furniture") {
         return Promise.resolve(jsonResponse(200, { id: "__furniture__", notes: null, elements: [] }));
       }
-      if (url === "/api/layouts") {
+      if (url === "api/layouts") {
         return Promise.resolve(jsonResponse(200, { layouts: [] }));
       }
-      if (url === "/api/config/design") {
+      if (url === "api/config/design") {
         return Promise.resolve(
           jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } })
         );
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(
           jsonResponse(200, { deckifyr: "0.1", status_indicator: "none", slides: [] })
         );
@@ -175,12 +197,12 @@ describe("App project gate", () => {
     const projectFetches = (frontendWarning: string | null) =>
       vi.fn().mockImplementation((input: RequestInfo | URL) => {
         const url = String(input);
-        if (url === "/api/health") {
+        if (url === "api/health") {
           return Promise.resolve(
             jsonResponse(200, { status: "ok", launcher: "cli", frontend_warning: frontendWarning })
           );
         }
-        if (url === "/api/project") {
+        if (url === "api/project") {
           return Promise.resolve(
             jsonResponse(200, {
               root: "/tmp/proj",
@@ -190,17 +212,17 @@ describe("App project gate", () => {
             })
           );
         }
-        if (url === "/api/plan") return Promise.resolve(jsonResponse(200, { slides: [] }));
-        if (url === "/api/furniture") {
+        if (url === "api/plan") return Promise.resolve(jsonResponse(200, { slides: [] }));
+        if (url === "api/furniture") {
           return Promise.resolve(jsonResponse(200, { id: "__furniture__", notes: null, elements: [] }));
         }
-        if (url === "/api/layouts") {
+        if (url === "api/layouts") {
           return Promise.resolve(jsonResponse(200, { layouts: [] }));
         }
-        if (url === "/api/config/design") {
+        if (url === "api/config/design") {
           return Promise.resolve(jsonResponse(200, { slide: { width: "13.333in", height: "7.5in" } }));
         }
-        if (url === "/api/config/presentation") {
+        if (url === "api/config/presentation") {
           return Promise.resolve(
             jsonResponse(200, { deckifyr: "0.1", status_indicator: "none", slides: [] })
           );

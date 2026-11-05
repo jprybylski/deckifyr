@@ -46,7 +46,7 @@ describe("PreviewGallery", () => {
     fireEvent.click(screen.getByText("Show PDF preview"));
     expect(screen.getByTitle("Preview PDF")).toHaveAttribute(
       "src",
-      "/api/jobs/job-1/artifacts/pdf"
+      "api/jobs/job-1/artifacts/pdf"
     );
   });
 });

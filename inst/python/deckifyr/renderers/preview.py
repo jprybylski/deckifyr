@@ -33,6 +33,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from deckifyr._proc import run_in_group
 from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 
 
@@ -132,19 +133,28 @@ def render_slide_previews(
 
     with tempfile.TemporaryDirectory(prefix="deckifyr-preview-") as tmp:
         tmp_dir = Path(tmp)
+        # A fresh, private LibreOffice profile per call (issue #84). Without
+        # it LibreOffice uses the user's own profile, which is locked by any
+        # LibreOffice they have open -- the headless convert then silently
+        # no-ops or hangs on the lock -- and which two concurrent previews
+        # would also fight over. `run_in_group` additionally puts soffice in
+        # its own process group and kills the whole group on timeout, since
+        # the `soffice` launcher's detached `soffice.bin` otherwise outlives
+        # `subprocess.run`'s kill of just the direct child.
+        profile_dir = tmp_dir / "lo-profile"
         try:
-            result = subprocess.run(
+            result = run_in_group(
                 [
                     config.binary,
+                    f"-env:UserInstallation={profile_dir.as_uri()}",
                     "--headless",
+                    "--norestore",
                     "--convert-to",
                     "pdf",
                     "--outdir",
                     str(tmp_dir),
                     str(pptx_path),
                 ],
-                capture_output=True,
-                text=True,
                 timeout=config.timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:

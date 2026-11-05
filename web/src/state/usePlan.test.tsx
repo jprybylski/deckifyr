@@ -1,8 +1,8 @@
 /**
  * Covers `usePlan`'s `sendPatch` dispatcher (issue #21): an element
  * patch/undo/redo for the furniture pseudo-slide (`FURNITURE_SLIDE_ID`)
- * must hit `/api/furniture/elements/{id}`, and everything else must
- * keep hitting the ordinary `/api/slides/{slide}/elements/{id}` route --
+ * must hit `api/furniture/elements/{id}`, and everything else must
+ * keep hitting the ordinary `api/slides/{slide}/elements/{id}` route --
  * `applyElementPatch`/`undo`/`redo` all route through the same
  * dispatcher, so one exercised end-to-end (`applyElementPatch`) plus a
  * direct check of `undo` is enough to cover all three call sites.
@@ -38,13 +38,13 @@ describe("usePlan's patch dispatcher", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
-      if (url === "/api/furniture" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
+      if (url === "api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
-      if (url === "/api/furniture/elements/__furniture_branding" && method === "PATCH") {
+      if (url === "api/furniture/elements/__furniture_branding" && method === "PATCH") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_branding" }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -66,9 +66,9 @@ describe("usePlan's patch dispatcher", () => {
 
     const patchCall = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
     expect(patchCall).toBeDefined();
-    expect(String(patchCall![0])).toBe("/api/furniture/elements/__furniture_branding");
+    expect(String(patchCall![0])).toBe("api/furniture/elements/__furniture_branding");
     expect(
-      fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/api/slides/"))
+      fetchMock.mock.calls.some((call) => String(call[0]).startsWith("api/slides/"))
     ).toBe(false);
   });
 
@@ -76,13 +76,13 @@ describe("usePlan's patch dispatcher", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
-      if (url === "/api/furniture" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
+      if (url === "api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
-      if (url === "/api/slides/title/elements/deck-title" && method === "PATCH") {
+      if (url === "api/slides/title/elements/deck-title" && method === "PATCH") {
         return Promise.resolve(jsonResponse(200, { element: "deck-title" }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -104,9 +104,9 @@ describe("usePlan's patch dispatcher", () => {
 
     const patchCall = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
     expect(patchCall).toBeDefined();
-    expect(String(patchCall![0])).toBe("/api/slides/title/elements/deck-title");
+    expect(String(patchCall![0])).toBe("api/slides/title/elements/deck-title");
     expect(
-      fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/api/furniture/elements/"))
+      fetchMock.mock.calls.some((call) => String(call[0]).startsWith("api/furniture/elements/"))
     ).toBe(false);
   });
 
@@ -114,13 +114,13 @@ describe("usePlan's patch dispatcher", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
-      if (url === "/api/furniture" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
+      if (url === "api/furniture" && method === "GET") {
         return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
       }
-      if (url === "/api/layouts/title-content/elements/title" && method === "PATCH") {
+      if (url === "api/layouts/title-content/elements/title" && method === "PATCH") {
         return Promise.resolve(jsonResponse(200, { element: "title" }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -142,7 +142,7 @@ describe("usePlan's patch dispatcher", () => {
 
     const patchCall = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
     expect(patchCall).toBeDefined();
-    expect(String(patchCall![0])).toBe("/api/layouts/title-content/elements/title");
+    expect(String(patchCall![0])).toBe("api/layouts/title-content/elements/title");
   });
 });
 
@@ -153,10 +153,10 @@ describe("usePlan's layouts", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, layoutsBody));
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, layoutsBody));
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -170,10 +170,10 @@ describe("usePlan's layouts", () => {
   it("a failed layouts fetch doesn't block slides/furniture", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(500, { message: "boom" }));
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(500, { message: "boom" }));
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -192,14 +192,14 @@ describe("usePlan's addLayout/removeLayout", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts" && method === "GET") {
         layoutsCallCount += 1;
         return Promise.resolve(jsonResponse(200, { layouts: [] }));
       }
-      if (url === "/api/layouts" && method === "POST") {
+      if (url === "api/layouts" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { id: "new-layout", dirty: true }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -216,7 +216,7 @@ describe("usePlan's addLayout/removeLayout", () => {
 
     expect(
       fetchMock.mock.calls.some(
-        (call) => String(call[0]) === "/api/layouts" && call[1]?.method === "POST"
+        (call) => String(call[0]) === "api/layouts" && call[1]?.method === "POST"
       )
     ).toBe(true);
     expect(layoutsCallCount).toBeGreaterThan(callsBeforeAdd);
@@ -226,13 +226,13 @@ describe("usePlan's addLayout/removeLayout", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts" && method === "GET") {
         return Promise.resolve(jsonResponse(200, { layouts: [] }));
       }
-      if (url === "/api/layouts/title-content" && method === "DELETE") {
+      if (url === "api/layouts/title-content" && method === "DELETE") {
         return Promise.resolve(
           jsonResponse(200, { id: "title-content", reassigned_slides: [], dirty: true })
         );
@@ -250,7 +250,7 @@ describe("usePlan's addLayout/removeLayout", () => {
 
     expect(
       fetchMock.mock.calls.some(
-        (call) => String(call[0]) === "/api/layouts/title-content" && call[1]?.method === "DELETE"
+        (call) => String(call[0]) === "api/layouts/title-content" && call[1]?.method === "DELETE"
       )
     ).toBe(true);
   });
@@ -261,13 +261,13 @@ describe("usePlan's addElement/removeElement", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts" && method === "GET") {
         return Promise.resolve(jsonResponse(200, { layouts: [] }));
       }
-      if (url === "/api/layouts/title-content/elements" && method === "POST") {
+      if (url === "api/layouts/title-content/elements" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "new-zone", dirty: true }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -284,7 +284,7 @@ describe("usePlan's addElement/removeElement", () => {
     expect(
       fetchMock.mock.calls.some(
         (call) =>
-          String(call[0]) === "/api/layouts/title-content/elements" && call[1]?.method === "POST"
+          String(call[0]) === "api/layouts/title-content/elements" && call[1]?.method === "POST"
       )
     ).toBe(true);
   });
@@ -293,13 +293,13 @@ describe("usePlan's addElement/removeElement", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts" && method === "GET") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts" && method === "GET") {
         return Promise.resolve(jsonResponse(200, { layouts: [] }));
       }
-      if (url === "/api/slides/title/elements/deck-title" && method === "DELETE") {
+      if (url === "api/slides/title/elements/deck-title" && method === "DELETE") {
         return Promise.resolve(jsonResponse(200, { element: "deck-title", dirty: true }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -316,7 +316,7 @@ describe("usePlan's addElement/removeElement", () => {
     expect(
       fetchMock.mock.calls.some(
         (call) =>
-          String(call[0]) === "/api/slides/title/elements/deck-title" &&
+          String(call[0]) === "api/slides/title/elements/deck-title" &&
           call[1]?.method === "DELETE"
       )
     ).toBe(true);
@@ -329,14 +329,14 @@ describe("usePlan's addSlide/removeSlide", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") {
+      if (url === "api/plan") {
         planCallCount += 1;
         return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
       }
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
-      if (url === "/api/slides" && method === "POST") {
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
+      if (url === "api/slides" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { id: "new-slide", slide_count: 3, dirty: true }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -353,7 +353,7 @@ describe("usePlan's addSlide/removeSlide", () => {
 
     expect(
       fetchMock.mock.calls.some(
-        (call) => String(call[0]) === "/api/slides" && call[1]?.method === "POST"
+        (call) => String(call[0]) === "api/slides" && call[1]?.method === "POST"
       )
     ).toBe(true);
     expect(planCallCount).toBeGreaterThan(callsBeforeAdd);
@@ -363,11 +363,11 @@ describe("usePlan's addSlide/removeSlide", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
-      if (url === "/api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
-      if (url === "/api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
-      if (url === "/api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
-      if (url === "/api/slides/content-slide" && method === "DELETE") {
+      if (url === "api/plan") return Promise.resolve(jsonResponse(200, EMPTY_PLAN));
+      if (url === "api/config/design") return Promise.resolve(jsonResponse(200, EMPTY_DESIGN));
+      if (url === "api/furniture") return Promise.resolve(jsonResponse(200, EMPTY_FURNITURE));
+      if (url === "api/layouts") return Promise.resolve(jsonResponse(200, EMPTY_LAYOUTS));
+      if (url === "api/slides/content-slide" && method === "DELETE") {
         return Promise.resolve(jsonResponse(200, { id: "content-slide", slide_count: 1, dirty: true }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -383,7 +383,7 @@ describe("usePlan's addSlide/removeSlide", () => {
 
     expect(
       fetchMock.mock.calls.some(
-        (call) => String(call[0]) === "/api/slides/content-slide" && call[1]?.method === "DELETE"
+        (call) => String(call[0]) === "api/slides/content-slide" && call[1]?.method === "DELETE"
       )
     ).toBe(true);
   });

@@ -70,12 +70,15 @@ from typing import Any
 from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import editor, projectio, templates
+from deckifyr.diagnostics import warnings_payload
 from deckifyr.plan import expand_presentation
-from deckifyr.pptx import compose_and_write
+from deckifyr.pptx import BuildResult, compose_and_write
+from deckifyr.pptx.compose import sha256_file
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
+from deckifyr.schema.results import RESULT_VERSION
 
 EXIT_OK = 0
 EXIT_VALIDATION_ERROR = 1
@@ -89,8 +92,24 @@ _EXIT_CODE_BY_ERROR_CODE = {
 
 
 def _examples_dir() -> Path:
-    # inst/python/deckifyr/cli.py -> inst/examples
-    return Path(__file__).resolve().parents[2] / "examples" / "minimal-deck"
+    here = Path(__file__).resolve().parent
+    candidates = (
+        # An installed wheel: setup.py copies the shared example in at build
+        # time (issue #86).
+        here / "_examples" / "minimal-deck",
+        # A repo checkout / editable install / the R package:
+        # inst/python/deckifyr/cli.py -> inst/examples.
+        here.parents[1] / "examples" / "minimal-deck",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise DeckifyrError(
+        "the bundled minimal example project was not found "
+        f"(looked in {', '.join(str(c) for c in candidates)}) -- use "
+        "`deckifyr init --from-dir`/`--from-repo` instead",
+        code=ErrorCode.IO,
+    )
 
 
 def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
@@ -191,7 +210,22 @@ def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
         "slide_count": len(presentation.slides),
         "layout_count": len(layouts.layouts),
         "schema_version": presentation.deckifyr,
+        # Reserved for a stable result shape (issue #85): validation has no
+        # warning producers today, so this is always empty.
+        "warnings": [],
     }
+
+
+def _artifact_entries(result: BuildResult) -> list[dict[str, str]]:
+    """`artifacts` for a `--json` result (issue #85): each produced file with
+    its SHA-256, so a caller can record provenance without re-hashing."""
+    files: list[tuple[str, Path]] = [("pptx", result.output_path)]
+    if result.manifest_path:
+        files.append(("manifest", result.manifest_path))
+    files.extend(("preview", p) for p in result.preview_paths)
+    if result.preview_pdf_path:
+        files.append(("preview_pdf", result.preview_pdf_path))
+    return [{"kind": kind, "path": str(p), "sha256": sha256_file(p)} for kind, p in files]
 
 
 def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
@@ -230,8 +264,12 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         "manifest": str(result.manifest_path) if result.manifest_path else None,
         "slide_count": result.slide_count,
         "warning_count": len(result.warnings),
+        # The full list (issue #85) -- previously only the count, with the
+        # text reachable only through the optional manifest.
+        "warnings": warnings_payload(result.warnings),
         "previews": [str(p) for p in result.preview_paths],
         "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
+        "artifacts": _artifact_entries(result),
     }
 
 
@@ -424,6 +462,9 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
         "previews": [str(p) for p in result.preview_paths],
         "preview_pdf": str(result.preview_pdf_path) if result.preview_pdf_path else None,
         "slide_count": result.slide_count,
+        "warning_count": len(result.warnings),
+        "warnings": warnings_payload(result.warnings),
+        "artifacts": _artifact_entries(result),
     }
 
 
@@ -539,18 +580,43 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         import uvicorn
     except ImportError as exc:
         raise DeckifyrError(
-            "the 'web' extra is not installed -- run `pip install "
-            "deckifyr[web]` (or `uv sync --extra web`)",
+            "the 'web' extra is not installed -- run `uv sync --extra web` "
+            "in a checkout, or install the release wheel with the [web] "
+            "extra (e.g. `uv add \"deckifyr[web] @ <wheel URL>\"`)",
             code=ErrorCode.IO,
         ) from exc
 
-    from deckifyr.web.app import create_app
+    from deckifyr.web.app import create_app, strip_path_prefix
 
     project_root = Path(args.project or ".").resolve()
-    app = create_app(project_root, args.presentation, launcher=args.launcher)
-    # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) -- uvicorn's own
-    # default graceful shutdown handling, nothing custom here.
-    uvicorn.run(app, host=args.host, port=args.port)
+    server_holder: list[Any] = []
+
+    def request_shutdown() -> None:
+        # Called from `POST /api/shutdown` once it has decided stopping is
+        # safe. uvicorn's own flag: the in-flight response finishes, then the
+        # server drains and `Server.run()` returns, so the process exits 0.
+        if server_holder:
+            server_holder[0].should_exit = True
+
+    app = create_app(
+        project_root,
+        args.presentation,
+        launcher=args.launcher,
+        job_timeout_seconds=args.job_timeout,
+        request_shutdown=request_shutdown,
+        # A supervised/installed context must never shell out to npm at
+        # startup; `--launcher workspace` implies this.
+        allow_frontend_rebuild=not (args.no_frontend_rebuild or args.launcher == "workspace"),
+    )
+    served = strip_path_prefix(app, args.root_path) if args.root_path else app
+    # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) or until
+    # `POST /api/shutdown` asks it to stop -- uvicorn's own graceful
+    # shutdown either way. `--root-path` (issue #82) is handled by
+    # `strip_path_prefix`, not uvicorn's own `root_path` -- see that
+    # function's docstring for why.
+    server = uvicorn.Server(uvicorn.Config(served, host=args.host, port=args.port))
+    server_holder.append(server)
+    server.run()
     return {"status": "stopped"}
 
 
@@ -761,6 +827,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument(
+        "--root-path",
+        default="",
+        help=(
+            "mount prefix (e.g. /apps/deckifyr) for a reverse proxy that does NOT "
+            "strip it before forwarding; leave unset behind a prefix-stripping "
+            "proxy or when served directly. Either way, browse to the mount URL "
+            "with its trailing slash -- the frontend uses page-relative URLs"
+        ),
+    )
+    serve_parser.add_argument(
         "--project", default=None, help="project directory (default: current directory)"
     )
     serve_parser.add_argument(
@@ -769,13 +845,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="presentation.yaml path, relative to --project (default: presentation.yaml)",
     )
     serve_parser.add_argument(
+        "--job-timeout",
+        type=float,
+        default=600.0,
+        help=(
+            "seconds a background build/preview job may run before it is killed "
+            "(process tree included) and reported as an E_TIMEOUT failure; "
+            "0 disables the limit (default: 600)"
+        ),
+    )
+    serve_parser.add_argument(
         "--launcher",
-        choices=["cli", "r"],
+        choices=["cli", "r", "workspace"],
         default="cli",
         help=(
             "who's launching this (default: cli) -- surfaced via GET /api/health "
             "so the frontend's 'no project found' screen can show deckifyr-CLI vs "
-            "R-facade instructions; R/serve.R's deck_serve() passes --launcher r"
+            "R-facade vs workspace-launcher guidance; R/serve.R's deck_serve() "
+            "passes --launcher r. 'workspace' is for a supervising launcher: it "
+            "also implies --no-frontend-rebuild"
+        ),
+    )
+    serve_parser.add_argument(
+        "--no-frontend-rebuild",
+        action="store_true",
+        help=(
+            "never run `npm run build` at startup, even in a dev checkout whose "
+            "web/src is newer than the committed bundle"
         ),
     )
     serve_parser.set_defaults(handler=_cmd_serve)
@@ -804,13 +900,19 @@ def main(argv: list[str] | None = None) -> int:
             # errors on stderr and success on stdout is also just the
             # more conventional CLI split. See R/run-python.R for the R
             # side of this handshake -- the two must not drift apart.
-            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2), file=sys.stderr)
+            print(
+                json.dumps(
+                    {"status": "error", "result_version": RESULT_VERSION, **exc.to_dict()},
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
         else:
             print(f"ERROR [{exc.code}]: {exc}", file=sys.stderr)
         return exit_code
 
     if args.json:
-        print(json.dumps({"status": "ok", **result}, indent=2))
+        print(json.dumps({"status": "ok", "result_version": RESULT_VERSION, **result}, indent=2))
     elif args.command == "schema":
         # A JSON Schema has no nicer "human-readable" form than its own
         # JSON, so print it as-is regardless of --json.

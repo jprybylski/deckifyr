@@ -1,0 +1,170 @@
+{
+  "$defs": {
+    "ArtifactEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "What the file is.",
+          "enum": [
+            "pptx",
+            "manifest",
+            "preview",
+            "preview_pdf"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path of the file.",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "SHA-256 of the file's bytes, so callers can record provenance without re-hashing.",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "sha256"
+      ],
+      "title": "ArtifactEntry",
+      "type": "object"
+    },
+    "WarningEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Stable identifier for the kind of warning (e.g. W_MULTI_FIGURE).",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable text.",
+          "title": "Message",
+          "type": "string"
+        },
+        "slide": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id of the slide it came from, or null for a build-level warning.",
+          "title": "Slide"
+        },
+        "element": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id of the element it came from, or null.",
+          "title": "Element"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "slide",
+        "element"
+      ],
+      "title": "WarningEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "ok",
+      "title": "Status",
+      "type": "string"
+    },
+    "result_version": {
+      "const": 1,
+      "title": "Result Version",
+      "type": "integer"
+    },
+    "output": {
+      "title": "Output",
+      "type": "string"
+    },
+    "manifest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Manifest path, or null when `build.manifest` is not configured.",
+      "title": "Manifest"
+    },
+    "slide_count": {
+      "title": "Slide Count",
+      "type": "integer"
+    },
+    "warning_count": {
+      "description": "len(warnings); kept for compatibility.",
+      "title": "Warning Count",
+      "type": "integer"
+    },
+    "warnings": {
+      "description": "Every build warning, whether or not a manifest is written.",
+      "items": {
+        "$ref": "#/$defs/WarningEntry"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "previews": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Previews",
+      "type": "array"
+    },
+    "preview_pdf": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Preview Pdf"
+    },
+    "artifacts": {
+      "description": "The output, manifest, previews and preview PDF with SHA-256 hashes.",
+      "items": {
+        "$ref": "#/$defs/ArtifactEntry"
+      },
+      "title": "Artifacts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "result_version",
+    "output",
+    "manifest",
+    "slide_count",
+    "warning_count",
+    "warnings",
+    "previews",
+    "preview_pdf",
+    "artifacts"
+  ],
+  "title": "BuildResultPayload",
+  "type": "object"
+}

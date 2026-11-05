@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getConfig, getHealth, pollJobUntilDone, putConfig } from "./client";
+import {
+  ApiError,
+  apiUrl,
+  getConfig,
+  getHealth,
+  jobArtifactUrl,
+  pollJobUntilDone,
+  putConfig,
+} from "./client";
 import type { Job } from "../types";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -13,6 +21,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("path-prefix safety (issue #82)", () => {
+  it("apiUrl strips any leading slash so a request can't escape a mount prefix", () => {
+    expect(apiUrl("/api/health")).toBe("api/health");
+    expect(apiUrl("//api/health")).toBe("api/health");
+    expect(apiUrl("api/health")).toBe("api/health");
+  });
+
+  it("jobArtifactUrl is page-relative, not root-relative", () => {
+    expect(jobArtifactUrl("j 1", "preview-0")).toBe("api/jobs/j%201/artifacts/preview-0");
+  });
+
+  it("request() never hands fetch a root-relative URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await getHealth();
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url.startsWith("/")).toBe(false);
+  });
+});
+
 describe("request() success path", () => {
   it("GETs and parses a JSON body", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { status: "ok" }));
@@ -21,7 +49,7 @@ describe("request() success path", () => {
     const result = await getHealth();
 
     expect(result).toEqual({ status: "ok" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/health", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("api/health", expect.anything());
   });
 
   it("GETs a config document", async () => {
@@ -31,7 +59,7 @@ describe("request() success path", () => {
     const result = await getConfig("design");
 
     expect(result).toEqual({ deckifyr: "0.1" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/config/design", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("api/config/design", expect.anything());
   });
 });
 
@@ -134,5 +162,20 @@ describe("pollJobUntilDone", () => {
     expect(sleep.mock.calls.length).toBeLessThan(10);
 
     vi.restoreAllMocks();
+  });
+});
+
+describe("pollJobUntilDone terminal states (issue #84)", () => {
+  it("stops polling on a cancelled job", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { id: "j", status: "running", result: null, error: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: "j", status: "cancelled", result: null, error: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const job = await pollJobUntilDone("j", { sleep: async () => {} });
+
+    expect(job.status).toBe("cancelled");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

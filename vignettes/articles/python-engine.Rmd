@@ -38,6 +38,19 @@ wording (`0` success, `1` schema/validation failure, `2` argparse usage
 error, `3` I/O failure, `4` feature not implemented yet). No subcommand
 makes network calls.
 
+The `--json` output is a versioned contract. Every success payload (on
+stdout) and every error payload (on stderr) carries `"result_version"`
+(currently `1`); it changes only for a break an existing consumer
+couldn't ignore, and adding a key is not one, so tolerate unknown keys.
+`validate`, `build` and `preview` have published JSON Schemas under
+`inst/python/deckifyr/schemas/results/` (`validate`, `build`, `preview`,
+`error`, plus `ok` for what every other command promises). Notably
+`build` and `preview` return the **full list of warnings** --
+`{code, message, slide, element}` each, whether or not a manifest is
+written -- and an `artifacts` list of `{kind, path, sha256}` for the
+`.pptx`, manifest, previews and preview PDF; `warning_count` and the
+original keys are unchanged.
+
 ### `init`: scaffold a new project
 
 ```bash
@@ -159,12 +172,46 @@ uv run deckifyr serve --project my-deck
 ```
 
 Requires the optional `web` extra (`uv sync --extra web`, or
-`pip install deckifyr[web]`) for `fastapi`/`uvicorn`. Runs a local
+the release wheel with the `[web]` extra, see "Installing the Python engine from a release" below) for `fastapi`/`uvicorn`. Runs a local
 FastAPI backend plus a React/Konva editor over one project directory
 for the life of the process -- drag/resize/rotate elements on a slide
 canvas, edit `design`/`layouts`/`presentation.yaml` through a
 schema-driven form (or raw JSON), trigger builds, and download
 artifacts. See `vignette("web-app")` for the full walkthrough.
+
+#### Running `serve` under a supervisor or a reverse proxy
+
+`serve` can also run as a managed child of a launcher (a local workspace
+app, a process supervisor) and be mounted under a URL prefix:
+
+* **Path prefix.** The editor only ever emits page-relative URLs, so a
+  proxy that *strips* a prefix (`/apps/deckifyr/` -> `/`) needs no
+  configuration -- browse to the mount URL **with its trailing slash**.
+  For a proxy that forwards the prefix *without* stripping it, pass
+  `--root-path /apps/deckifyr`. (uvicorn's own `root_path` is not used: it
+  prepends the prefix, which is the opposite of what that case needs.)
+* **`--launcher workspace`** tells the editor a workspace launcher
+  started it (its "no project found" screen then shows workspace
+  guidance instead of CLI/R commands) and implies `--no-frontend-rebuild`,
+  so it never shells out to `npm`, whatever the checkout layout.
+* **Readiness and state.** `GET /api/health` returning 200 means the
+  server is ready to accept project requests; it never depends on the
+  project loading. It also reports `dirty` (unsaved in-memory edits) and
+  `active_jobs` (queued/running build or preview jobs), so a supervisor
+  can tell whether stopping is safe without making an edit to find out.
+* **Orderly stop.** `POST /api/shutdown` with an optional JSON body
+  `{"if_dirty": "refuse" | "save", "active_jobs": "refuse" | "cancel"}`
+  (both default to `"refuse"`). A refusal is a `409` with
+  `E_SHUTDOWN_REFUSED` and the `reasons`; it decides *before* saving or
+  cancelling anything, so a refused stop leaves the server and its edits
+  untouched. `save` writes the edits first; `cancel` kills running jobs'
+  process trees. The process then exits `0`. A plain `SIGTERM`/`SIGINT`
+  cannot ask, so it writes a warning to stderr if edits were left
+  unsaved (and cancels leftover jobs) rather than losing work silently.
+* **Bounded jobs.** `--job-timeout SECONDS` (default 600, `0` for no
+  limit) bounds every background build/preview; an overrun is killed
+  with its whole process tree and reported as `E_TIMEOUT`. Jobs can be
+  cancelled with `POST /api/jobs/{id}/cancel`.
 
 ## Architecture: two decoupled passes
 
@@ -202,12 +249,44 @@ straight into the same `deckifyr.plan`/`deckifyr.pptx.compose`/
 `deckifyr.editor` pipeline this section describes, not a second
 implementation of it.
 
-## Optional extras
+## Installing the Python engine from a release
+
+Every GitHub release attaches a pure-Python wheel and an sdist next to the
+R source tarball, plus a `SHA256SUMS` file covering all of them. Their
+version always equals the release tag (`VERSION`), so a consumer can pin
+by version **and** by hash instead of tracking a moving git ref:
 
 ```bash
-uv pip install 'deckifyr[tables]'   # Parquet table sources (pyarrow)
-uv pip install 'deckifyr[web]'      # the `serve` command's web editor
-uv pip install 'deckifyr[dev]'      # test suite (pytest, pyarrow)
+VERSION=0.3.4   # the release you want
+BASE=https://github.com/jprybylski/deckifyr/releases/download/v$VERSION
+
+# Add it to a project (uv records the wheel's hash in uv.lock) ...
+uv add "deckifyr[web,preview] @ $BASE/deckifyr-$VERSION-py3-none-any.whl"
+
+# ... or verify a download yourself before installing it:
+curl -LO $BASE/deckifyr-$VERSION-py3-none-any.whl
+curl -LO $BASE/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # `shasum -a 256 -c` on macOS
+uv pip install "./deckifyr-$VERSION-py3-none-any.whl[web,preview]"
+```
+
+The wheel bundles the built web editor, the JSON Schemas (including the
+`--json` result schemas), the coding-agent skills and the example
+project `deckifyr init` scaffolds from, so `deckifyr init`, `validate`,
+`build` and `serve` all work straight after install. External tools
+(LibreOffice for previews, Quarto, R for `.rds` tables) are still
+separate installs; see the extras below.
+
+## Optional extras
+
+Extras are selected with the usual `[extra]` suffix on the wheel (or, in
+a repo checkout, `uv sync --extra <name>`):
+
+```bash
+uv sync --extra tables    # Parquet table sources (pyarrow)
+uv sync --extra web       # the `serve` command's web editor (fastapi/uvicorn)
+uv sync --extra preview   # `preview`/`build.previews` rasterization (pymupdf)
+uv sync --extra dev       # test suite (pytest, pyarrow, ...)
 ```
 
 CSV table sources work with no extra; a project using only CSV

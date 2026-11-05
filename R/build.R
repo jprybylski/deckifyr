@@ -30,14 +30,24 @@
 #'     \item{`manifest`}{The manifest path, or `NULL` if
 #'       `presentation.yaml`'s `build.manifest` is unset.}
 #'     \item{`slide_count`}{Number of slides composed.}
-#'     \item{`warning_count`}{Number of non-fatal build warnings (the
-#'       manifest itself carries their text) -- includes a skipped
-#'       preview render when `build.previews: true` and LibreOffice
-#'       isn't installed.}
+#'     \item{`warning_count`}{Number of non-fatal build warnings --
+#'       includes a skipped preview render when `build.previews: true`
+#'       and LibreOffice isn't installed.}
+#'     \item{`warnings`}{The warnings themselves, a list with one entry
+#'       per warning: `code` (a stable identifier such as
+#'       `"W_MISSING_SIDECAR"`), `message`, and the `slide`/`element` ids
+#'       it came from (`NULL` for a build-level warning). Present
+#'       whether or not a manifest is written.}
 #'     \item{`previews`}{Per-slide preview PNG paths, only non-empty when
 #'       `build.previews: true` actually rendered them.}
 #'     \item{`preview_pdf`}{The intermediate PDF LibreOffice produced
 #'       alongside those PNGs, or `NULL` if previews weren't rendered.}
+#'     \item{`artifacts`}{A list of every file the build produced
+#'       (`kind`, `path`, `sha256`), so provenance can be recorded
+#'       without re-hashing.}
+#'     \item{`status`, `result_version`}{`"ok"` and the version of the
+#'       result schema (currently `1`); new keys may be added within a
+#'       version, so treat unknown entries as ignorable.}
 #'   }
 #' @examples
 #' \dontrun{

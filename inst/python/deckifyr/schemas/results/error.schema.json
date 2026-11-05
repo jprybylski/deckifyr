@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "DependencyEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "install_url": {
+          "title": "Install Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "display_name",
+        "install_url"
+      ],
+      "title": "DependencyEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "error",
+      "title": "Status",
+      "type": "string"
+    },
+    "result_version": {
+      "const": 1,
+      "title": "Result Version",
+      "type": "integer"
+    },
+    "code": {
+      "description": "Stable error code (deckifyr.schema.errors.ErrorCode).",
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "dependency": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DependencyEntry"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Present only for E_MISSING_DEPENDENCY."
+    }
+  },
+  "required": [
+    "status",
+    "result_version",
+    "code",
+    "message"
+  ],
+  "title": "ErrorResult",
+  "type": "object"
+}

@@ -45,7 +45,7 @@ describe("SessionControls", () => {
       "fetch",
       vi.fn().mockImplementation((input: RequestInfo | URL) => {
         const url = String(input);
-        if (url === "/api/config/presentation") {
+        if (url === "api/config/presentation") {
           return Promise.resolve(jsonResponse(200, PRESENTATION));
         }
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -62,10 +62,10 @@ describe("SessionControls", () => {
   it("enables Save/Discard once dirty, and Save clears the dirty flag", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, PRESENTATION));
       }
-      if (url === "/api/save" && init?.method === "POST") {
+      if (url === "api/save" && init?.method === "POST") {
         return Promise.resolve(jsonResponse(200, { saved: ["design"], dirty: false }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -81,16 +81,16 @@ describe("SessionControls", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeInTheDocument());
-    expect(fetchMock).toHaveBeenCalledWith("/api/save", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith("api/save", expect.objectContaining({ method: "POST" }));
   });
 
   it("discard reloads the page after POST /api/discard succeeds", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, PRESENTATION));
       }
-      if (url === "/api/discard" && init?.method === "POST") {
+      if (url === "api/discard" && init?.method === "POST") {
         return Promise.resolve(jsonResponse(200, { dirty: false }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -136,11 +136,11 @@ describe("SessionControls", () => {
   it("reflects presentation.yaml's build.autosave and PUTs a toggle", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         const body = JSON.parse((init!.body as string) ?? "{}");
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml", dirty: false, ...body }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, PRESENTATION));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));

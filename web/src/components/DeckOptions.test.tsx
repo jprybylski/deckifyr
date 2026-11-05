@@ -31,10 +31,10 @@ describe("DeckOptions", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -66,17 +66,17 @@ describe("DeckOptions", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && (!init || init.method === undefined)) {
+      if (url === "api/config/presentation" && (!init || init.method === undefined)) {
         return Promise.resolve(jsonResponse(200, presentation));
       }
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
       // Selecting any placement other than "none" also auto-configures a
       // default style (`selectStatusIndicator`'s own docstring) --
       // stubbed here so that follow-up call succeeds harmlessly; its own
       // behavior is covered by the dedicated auto-configure tests below.
-      if (url === "/api/furniture/elements/__furniture_status" && init?.method === "POST") {
+      if (url === "api/furniture/elements/__furniture_status" && init?.method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -116,13 +116,13 @@ describe("DeckOptions", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "PUT") {
+      if (url === "api/config/presentation" && method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
-      if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+      if (url === "api/furniture/elements/__furniture_status" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -138,7 +138,7 @@ describe("DeckOptions", () => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
+            String(call[0]) === "api/furniture/elements/__furniture_status" &&
             call[1]?.method === "POST"
         )
       ).toBe(true);
@@ -150,10 +150,10 @@ describe("DeckOptions", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "PUT") {
+      if (url === "api/config/presentation" && method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`));
@@ -169,7 +169,7 @@ describe("DeckOptions", () => {
       expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT")).toBe(true);
     });
     expect(
-      fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/furniture/"))
+      fetchMock.mock.calls.some((call) => String(call[0]).includes("api/furniture/"))
     ).toBe(false);
   });
 
@@ -178,13 +178,13 @@ describe("DeckOptions", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "PUT") {
+      if (url === "api/config/presentation" && method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
-      if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+      if (url === "api/furniture/elements/__furniture_status" && method === "POST") {
         return Promise.resolve(
           jsonResponse(422, {
             code: "E_SCHEMA_VALIDATION",
@@ -205,7 +205,7 @@ describe("DeckOptions", () => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
+            String(call[0]) === "api/furniture/elements/__furniture_status" &&
             call[1]?.method === "POST"
         )
       ).toBe(true);
@@ -217,7 +217,7 @@ describe("DeckOptions", () => {
     const presentation = { deckifyr: "0.1", status_indicator: "none", slides: [] };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(
           jsonResponse(422, {
             code: "E_SCHEMA_VALIDATION",
@@ -225,7 +225,7 @@ describe("DeckOptions", () => {
           })
         );
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -253,10 +253,10 @@ describe("DeckOptions", () => {
     const presentation = { deckifyr: "0.1", status_indicator: "watermark", watermark: "old", slides: [] };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -287,7 +287,7 @@ describe("DeckOptions", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -313,10 +313,10 @@ describe("DeckOptions", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(jsonResponse(200, { path: "/tmp/presentation.yaml", dirty: true }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -338,10 +338,10 @@ describe("DeckOptions", () => {
     const presentation = { deckifyr: "0.1", status_indicator: "none", slides: [] };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return Promise.resolve(jsonResponse(422, { code: "E_SCHEMA_VALIDATION", message: "no" }));
       }
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -368,7 +368,7 @@ describe("DeckOptions", () => {
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/config/presentation") {
+      if (url === "api/config/presentation") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));

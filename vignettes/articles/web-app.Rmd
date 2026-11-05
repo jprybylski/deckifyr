@@ -8,8 +8,8 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
 
 Requires the optional `web` extra (`fastapi`/`uvicorn`) to be installed
 in the Python environment `deck_serve()` calls into -- provision it with
-`uv sync --extra web` (or, against a plain Python install,
-`pip install deckifyr[web]`). `deck_serve()` reports a missing extra
+`uv sync --extra web` (or, against a plain Python install, the release
+wheel with the `[web]` extra -- see `vignette("python-engine")`). `deck_serve()` reports a missing extra
 immediately, with the exact command to fix it, rather than failing
 partway into starting the server.
 
@@ -273,6 +273,15 @@ plan and lets you:
   <img src="../man/figures/web-app-build-preview.png" alt="The Build tab after a successful build with previews enabled: an editable Output path field with a Browse button, a checked 'Render slide previews' checkbox, manifest/pptx download links, five rendered slide thumbnails, and a collapsed 'Show PDF preview' disclosure below them" width="700" loading="lazy">
   <p style="font-size:0.85em;">A finished build with previews enabled: expandable per-slide thumbnails plus a collapsed PDF disclosure</p>
   </div>
+* While a Build or Preview is running, a **Cancel** button stops it --
+  the whole process tree, including any LibreOffice it started, not
+  just the top process -- and the job reports `cancelled`. Every job is
+  also bounded by a server-side timeout (`deckifyr serve --job-timeout`,
+  600 seconds by default, `0` for no limit); a job that overruns it is
+  killed the same way and fails with an `E_TIMEOUT` error instead of
+  leaving the editor waiting forever. LibreOffice runs with its own
+  private profile for each preview, so previews no longer collide with a
+  LibreOffice you have open or with each other.
 * Download the resulting `.pptx`, its manifest, and any rendered
   previews once a build finishes.
 

@@ -38,6 +38,57 @@ jobs:
       - name: Run tests/python pytest suite
         run: uv run --extra dev pytest tests/python -v
 
+  # The release wheel (issue #86): build it exactly as release.yaml does,
+  # install it into a clean venv (no repo on the path) and use it. Catches a
+  # wheel that is missing the web bundle, the packaged example or a schema,
+  # or whose version drifts from VERSION, before a release is cut.
+  wheel-smoke:
+    name: python wheel build + clean-venv install
+    # See python-tests' identical condition above.
+    if: github.event_name != 'pull_request' || (!startsWith(github.head_ref, 'dependabot/') && github.head_ref != 'combined-prs-branch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+
+      - name: Wheel version equals VERSION and bundles what it must
+        run: |
+          expected="$(head -n1 VERSION | tr -d '[:space:]')"
+          test -f "dist/deckifyr-${expected}-py3-none-any.whl"
+          test -f "dist/deckifyr-${expected}.tar.gz"
+          listing="$(unzip -l "dist/deckifyr-${expected}-py3-none-any.whl")"
+          for path in \
+            deckifyr/web/static/index.html \
+            deckifyr/_examples/minimal-deck/presentation.yaml \
+            deckifyr/schemas/results/build.schema.json \
+            deckifyr/skills/deckifyr-presentation/SKILL.md \
+            deckifyr/renderers/render_flextable.R; do
+            echo "$listing" | grep -q "$path" || { echo "::error::wheel is missing $path"; exit 1; }
+          done
+
+      - name: Install the wheel with the web extra into a clean venv and use it
+        run: |
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" "$(ls dist/*.whl)[web]"
+          cd "$RUNNER_TEMP"
+          D="$RUNNER_TEMP/smoke/bin/deckifyr"
+          "$D" --json init proj
+          "$D" --json validate proj/presentation.yaml
+          "$D" --json build proj/presentation.yaml
+          cd proj
+          "$D" serve --port 8765 --launcher workspace &
+          pid=$!
+          for _ in $(seq 1 30); do curl -fs http://127.0.0.1:8765/api/health && break; sleep 1; done
+          curl -fs http://127.0.0.1:8765/ | grep -q "<title>deckifyr</title>"
+          curl -fs -X POST http://127.0.0.1:8765/api/shutdown
+          wait "$pid"
+
   # The real R -> pyro -> Python integration proof: runs directly against
   # this checkout (not a staged/reinstalled copy, unlike R-CMD-check.yaml/
   # test-coverage.yaml) so tests/testthat/test-wiring.R's pyro-dependent

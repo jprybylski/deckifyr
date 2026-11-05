@@ -1,9 +1,14 @@
 [project]
 name = "deckifyr"
-version = "0.0.0.dev0"
+# Single source of truth is the repo-root VERSION file (the same one
+# .github/workflows/release.yaml's sync step reads to cut a release), so the
+# wheel/sdist version always equals the release tag -- see
+# [tool.setuptools.dynamic] below. Never hand-edit a version here.
+dynamic = ["version"]
 description = "Declarative, code-first PowerPoint compiler for Quarto content and reportifyr artifacts"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
+readme = "README.md"
 dependencies = [
     "python-pptx>=1.0",
     "pydantic>=2.6",
@@ -64,12 +69,26 @@ web = [
     "uvicorn>=0.29",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jprybylski/deckifyr"
+Repository = "https://github.com/jprybylski/deckifyr"
+Issues = "https://github.com/jprybylski/deckifyr/issues"
+
 [project.scripts]
 deckifyr = "deckifyr.cli:main"
 
 [build-system]
 requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { file = ["VERSION"] }
+
+[tool.uv]
+# The version is dynamic (read from VERSION), so uv must re-resolve this
+# project's own metadata when VERSION changes -- by default it only watches
+# pyproject.toml, which would leave `deckifyr.__version__` stale after a bump.
+cache-keys = [{ file = "pyproject.toml" }, { file = "VERSION" }, { file = "setup.py" }]
 
 [tool.setuptools.packages.find]
 # The Python source is canonical under inst/python/ so it can be bundled
@@ -95,7 +114,7 @@ include = ["deckifyr*"]
 # Claude Skills-format SKILL.md content the `deckifyr skills`/
 # `deck_export_skills()` command copies into a target directory, kept
 # structurally evergreen by tests/python/test_skills_content.py.
-"deckifyr" = ["schemas/*.schema.json", "skills/*/SKILL.md"]
+"deckifyr" = ["schemas/*.schema.json", "schemas/results/*.schema.json", "skills/*/SKILL.md"]
 # The bundled R script deckifyr.renderers.flextable shells out to via
 # Rscript (issue #57) to rasterize a reportifyr .rds flextable artifact
 # to a PNG -- located at runtime via Path(__file__).resolve().parent,

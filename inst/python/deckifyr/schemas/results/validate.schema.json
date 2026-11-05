@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "WarningEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Stable identifier for the kind of warning (e.g. W_MULTI_FIGURE).",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable text.",
+          "title": "Message",
+          "type": "string"
+        },
+        "slide": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id of the slide it came from, or null for a build-level warning.",
+          "title": "Slide"
+        },
+        "element": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id of the element it came from, or null.",
+          "title": "Element"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "slide",
+        "element"
+      ],
+      "title": "WarningEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "ok",
+      "title": "Status",
+      "type": "string"
+    },
+    "result_version": {
+      "const": 1,
+      "title": "Result Version",
+      "type": "integer"
+    },
+    "valid": {
+      "title": "Valid",
+      "type": "boolean"
+    },
+    "presentation": {
+      "title": "Presentation",
+      "type": "string"
+    },
+    "slide_count": {
+      "title": "Slide Count",
+      "type": "integer"
+    },
+    "layout_count": {
+      "title": "Layout Count",
+      "type": "integer"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "warnings": {
+      "description": "Validation warnings. Reserved: validation has no warning producers today, so this is always empty.",
+      "items": {
+        "$ref": "#/$defs/WarningEntry"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "result_version",
+    "valid",
+    "presentation",
+    "slide_count",
+    "layout_count",
+    "schema_version",
+    "warnings"
+  ],
+  "title": "ValidateResult",
+  "type": "object"
+}

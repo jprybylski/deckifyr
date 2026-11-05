@@ -178,7 +178,7 @@ describe("ElementList on an ordinary slide", () => {
   it("routes a .csv reportifyr artifact pick to a native table element", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/project/files?type=reportifyr") {
+      if (url === "api/project/files?type=reportifyr") {
         return Promise.resolve(
           jsonResponse(200, { files: ["pk-summary.csv", "conc-time.png"] })
         );
@@ -214,7 +214,7 @@ describe("ElementList on an ordinary slide", () => {
   it("keeps a non-table reportifyr artifact pick as a reportifyr picture element", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/project/files?type=reportifyr") {
+      if (url === "api/project/files?type=reportifyr") {
         return Promise.resolve(
           jsonResponse(200, { files: ["conc-time.png", "pk-flextable-summary.rds"] })
         );
@@ -260,7 +260,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
     return vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === "/api/config/presentation" && method === "GET") {
+      if (url === "api/config/presentation" && method === "GET") {
         return Promise.resolve(jsonResponse(200, presentation));
       }
       const handled = extra(url, method);
@@ -271,7 +271,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
 
   it("offers Add for an unconfigured branding row and calls the add route", async () => {
     const fetchMock = stubFetch({ status_indicator: "none" }, (url, method) => {
-      if (url === "/api/furniture/elements/__furniture_branding" && method === "POST") {
+      if (url === "api/furniture/elements/__furniture_branding" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_branding" }));
       }
       return undefined;
@@ -289,7 +289,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_branding" &&
+            String(call[0]) === "api/furniture/elements/__furniture_branding" &&
             call[1]?.method === "POST"
         )
       ).toBe(true)
@@ -299,7 +299,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
 
   it("offers Remove for a configured item and calls the remove route", async () => {
     const fetchMock = stubFetch({ status_indicator: "none" }, (url, method) => {
-      if (url === "/api/furniture/elements/__furniture_branding" && method === "DELETE") {
+      if (url === "api/furniture/elements/__furniture_branding" && method === "DELETE") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_branding" }));
       }
       return undefined;
@@ -324,7 +324,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_branding" &&
+            String(call[0]) === "api/furniture/elements/__furniture_branding" &&
             call[1]?.method === "DELETE"
         )
       ).toBe(true)
@@ -336,7 +336,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
     const fetchMock = stubFetch(
       { status_indicator: null, watermark: "test", metadata: { status: "demo" } },
       (url, method) => {
-        if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+        if (url === "api/furniture/elements/__furniture_status" && method === "POST") {
           return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
         }
         return undefined;
@@ -355,7 +355,7 @@ describe("ElementList on the furniture pseudo-slide", () => {
       expect(
         fetchMock.mock.calls.some(
           (call) =>
-            String(call[0]) === "/api/furniture/elements/__furniture_status" &&
+            String(call[0]) === "api/furniture/elements/__furniture_status" &&
             call[1]?.method === "POST"
         )
       ).toBe(true)
@@ -364,10 +364,10 @@ describe("ElementList on the furniture pseudo-slide", () => {
 
   it("calls onStatusIndicatorChanged after Status Add/Remove, never for other kinds", async () => {
     const fetchMock = stubFetch({ status_indicator: null, metadata: { status: "demo" } }, (url, method) => {
-      if (url === "/api/furniture/elements/__furniture_status" && method === "POST") {
+      if (url === "api/furniture/elements/__furniture_status" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_status" }));
       }
-      if (url === "/api/furniture/elements/__furniture_branding" && method === "POST") {
+      if (url === "api/furniture/elements/__furniture_branding" && method === "POST") {
         return Promise.resolve(jsonResponse(200, { element: "__furniture_branding" }));
       }
       return undefined;

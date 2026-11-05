@@ -54,8 +54,18 @@ export class ApiError extends Error {
   }
 }
 
+/** Every request URL goes through here so the editor works when mounted
+ * under a path prefix by a reverse proxy (`/apps/deckifyr/`). Page-relative
+ * (no leading slash) resolves against the document URL -- with the
+ * Vite `base: "./"` build there is no router, so that is always the mount
+ * point. Stripping a leading `/` makes a future root-relative literal
+ * self-heal instead of silently escaping the prefix. */
+export function apiUrl(path: string): string {
+  return path.replace(/^\/+/, "");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -81,30 +91,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function getHealth(): Promise<HealthResponse> {
-  return request("/api/health");
+  return request("api/health");
 }
 
 export function getProject(): Promise<ProjectInfo> {
-  return request("/api/project");
+  return request("api/project");
 }
 
 export function getConfig(doc: ConfigDocName): Promise<ConfigDocument> {
-  return request(`/api/config/${doc}`);
+  return request(`api/config/${doc}`);
 }
 
 export function putConfig(doc: ConfigDocName, body: ConfigDocument): Promise<WriteResult> {
-  return request(`/api/config/${doc}`, {
+  return request(`api/config/${doc}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
 export function getPlan(): Promise<PlanResponse> {
-  return request("/api/plan");
+  return request("api/plan");
 }
 
 export function postValidate(): Promise<ValidateResponse> {
-  return request("/api/validate", { method: "POST" });
+  return request("api/validate", { method: "POST" });
 }
 
 export function patchElement(
@@ -113,7 +123,7 @@ export function patchElement(
   body: ElementPatchBody
 ): Promise<WriteResult> {
   return request(
-    `/api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
+    `api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
     { method: "PATCH", body: JSON.stringify(body) }
   );
 }
@@ -130,11 +140,11 @@ export function postAddSlide(body: {
   after?: string;
   before?: string;
 }): Promise<WriteResult> {
-  return request("/api/slides", { method: "POST", body: JSON.stringify(body) });
+  return request("api/slides", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function deleteSlide(slideId: string): Promise<WriteResult> {
-  return request(`/api/slides/${encodeURIComponent(slideId)}`, { method: "DELETE" });
+  return request(`api/slides/${encodeURIComponent(slideId)}`, { method: "DELETE" });
 }
 
 /** A layout's own zones (issue #23's Content/Layout tab), resolved as
@@ -143,7 +153,7 @@ export function deleteSlide(slideId: string): Promise<WriteResult> {
  * why this is a dedicated resolution path rather than reusing
  * `expand_slide` the way `getFurniture` does. */
 export function getLayoutZones(layoutName: string): Promise<ResolvedSlide> {
-  return request(`/api/layouts/${encodeURIComponent(layoutName)}`);
+  return request(`api/layouts/${encodeURIComponent(layoutName)}`);
 }
 
 export function patchLayoutElement(
@@ -152,7 +162,7 @@ export function patchLayoutElement(
   body: ElementPatchBody
 ): Promise<WriteResult> {
   return request(
-    `/api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
+    `api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
     { method: "PATCH", body: JSON.stringify(body) }
   );
 }
@@ -161,25 +171,25 @@ export function patchLayoutElement(
  * mode) -- the eager list `getLayoutZones` above was originally the
  * on-demand, one-at-a-time version of. */
 export function getLayouts(): Promise<LayoutsResponse> {
-  return request("/api/layouts");
+  return request("api/layouts");
 }
 
 export function postAddLayout(id: string): Promise<WriteResult> {
-  return request("/api/layouts", { method: "POST", body: JSON.stringify({ id }) });
+  return request("api/layouts", { method: "POST", body: JSON.stringify({ id }) });
 }
 
 /** Removes a layout, reassigning any slide that used it to `"blank"` --
  * rejected (422) instead if that reassignment would leave a slide
  * unbuildable (`deckifyr.web.app.remove_layout`'s own docstring). */
 export function deleteLayout(layoutName: string): Promise<RemoveLayoutResult> {
-  return request(`/api/layouts/${encodeURIComponent(layoutName)}`, { method: "DELETE" });
+  return request(`api/layouts/${encodeURIComponent(layoutName)}`, { method: "DELETE" });
 }
 
 /** Add/remove an element on an ordinary slide or a layout's own zones
  * (issue #31) -- geometry is always a server-computed default box; drag/
  * resize afterward the same way any other element already works. */
 export function addSlideElement(slideId: string, body: NewElementBody): Promise<WriteResult> {
-  return request(`/api/slides/${encodeURIComponent(slideId)}/elements`, {
+  return request(`api/slides/${encodeURIComponent(slideId)}/elements`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -187,13 +197,13 @@ export function addSlideElement(slideId: string, body: NewElementBody): Promise<
 
 export function deleteSlideElement(slideId: string, elementId: string): Promise<WriteResult> {
   return request(
-    `/api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
+    `api/slides/${encodeURIComponent(slideId)}/elements/${encodeURIComponent(elementId)}`,
     { method: "DELETE" }
   );
 }
 
 export function addLayoutElement(layoutName: string, body: NewElementBody): Promise<WriteResult> {
-  return request(`/api/layouts/${encodeURIComponent(layoutName)}/elements`, {
+  return request(`api/layouts/${encodeURIComponent(layoutName)}/elements`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -201,7 +211,7 @@ export function addLayoutElement(layoutName: string, body: NewElementBody): Prom
 
 export function deleteLayoutElement(layoutName: string, elementId: string): Promise<WriteResult> {
   return request(
-    `/api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
+    `api/layouts/${encodeURIComponent(layoutName)}/elements/${encodeURIComponent(elementId)}`,
     { method: "DELETE" }
   );
 }
@@ -210,7 +220,7 @@ export function deleteLayoutElement(layoutName: string, elementId: string): Prom
  * placed immediately after it (issue #31 follow-up comment's "duplicate"
  * button). */
 export function duplicateSlide(slideId: string, newId: string): Promise<WriteResult> {
-  return request(`/api/slides/${encodeURIComponent(slideId)}/duplicate`, {
+  return request(`api/slides/${encodeURIComponent(slideId)}/duplicate`, {
     method: "POST",
     body: JSON.stringify({ id: newId }),
   });
@@ -220,7 +230,7 @@ export function duplicateSlide(slideId: string, newId: string): Promise<WriteRes
  * point at (issue #31's "Add element" picker) -- `type` mirrors
  * `deckifyr.resolvers.discovery`'s two list functions. */
 export function getProjectFiles(type: "reportifyr" | "quarto"): Promise<{ files: string[] }> {
-  return request(`/api/project/files?type=${encodeURIComponent(type)}`);
+  return request(`api/project/files?type=${encodeURIComponent(type)}`);
 }
 
 /** One single level of one project-relative directory (issue #32's
@@ -232,7 +242,7 @@ export function getProjectFiles(type: "reportifyr" | "quarto"): Promise<{ files:
  * for why -- a deep, unrelated tree like a populated `renv/library`
  * should never get walked as a whole just because this panel opened). */
 export function browseProject(dir: string): Promise<ProjectBrowseResponse> {
-  return request(`/api/project/browse?dir=${encodeURIComponent(dir)}`);
+  return request(`api/project/browse?dir=${encodeURIComponent(dir)}`);
 }
 
 /** `design.yaml`'s `furniture` block, resolved the same way a real
@@ -241,14 +251,14 @@ export function browseProject(dir: string): Promise<ProjectBrowseResponse> {
  * pseudo-slide entry rather than the fixed placeholder every real slide
  * still renders it as. */
 export function getFurniture(): Promise<ResolvedSlide> {
-  return request("/api/furniture");
+  return request("api/furniture");
 }
 
 export function patchFurnitureElement(
   elementId: string,
   body: ElementPatchBody
 ): Promise<WriteResult> {
-  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}`, {
+  return request(`api/furniture/elements/${encodeURIComponent(elementId)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -269,14 +279,14 @@ export function patchFurnitureElement(
  * deriving the target from `status_indicator` as before. */
 export function addFurnitureElement(elementId: string, field?: string): Promise<WriteResult> {
   const query = field ? `?field=${encodeURIComponent(field)}` : "";
-  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
+  return request(`api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
     method: "POST",
   });
 }
 
 export function removeFurnitureElement(elementId: string, field?: string): Promise<WriteResult> {
   const query = field ? `?field=${encodeURIComponent(field)}` : "";
-  return request(`/api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
+  return request(`api/furniture/elements/${encodeURIComponent(elementId)}${query}`, {
     method: "DELETE",
   });
 }
@@ -285,17 +295,17 @@ export function removeFurnitureElement(elementId: string, field?: string): Promi
  * only the documents actually touched since the last save/discard, per
  * `SaveResult.saved`. */
 export function postSave(): Promise<SaveResult> {
-  return request("/api/save", { method: "POST" });
+  return request("api/save", { method: "POST" });
 }
 
 /** Discards every unsaved edit, reverting the working copy to what's on
  * disk (issue #24) -- the "test freely, throw it away" button. */
 export function postDiscard(): Promise<DiscardResult> {
-  return request("/api/discard", { method: "POST" });
+  return request("api/discard", { method: "POST" });
 }
 
 export function postBuild(): Promise<{ job_id: string }> {
-  return request("/api/build", { method: "POST" });
+  return request("api/build", { method: "POST" });
 }
 
 /** Proactive LibreOffice-availability check (issue #27: "with
@@ -304,7 +314,7 @@ export function postBuild(): Promise<{ job_id: string }> {
  * inline message with an install link *before* Preview is even
  * clickable, not only as an error after a failed attempt. */
 export function getPreviewAvailability(): Promise<PreviewAvailability> {
-  return request("/api/preview/availability");
+  return request("api/preview/availability");
 }
 
 /** Renders a preview build (issue #27) -- `slides` (1-indexed) renders
@@ -313,28 +323,34 @@ export function getPreviewAvailability(): Promise<PreviewAvailability> {
  * generic across kinds) -- the `pdf` artifact key (when present) is the
  * embedded-PDF-viewer support, `preview-N` keys are per-slide PNGs. */
 export function postPreview(slides?: number[]): Promise<{ job_id: string }> {
-  return request("/api/preview", {
+  return request("api/preview", {
     method: "POST",
     body: JSON.stringify(slides && slides.length > 0 ? { slides } : {}),
   });
 }
 
 export function getJob(jobId: string): Promise<Job> {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}`);
+  return request(`api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/** Kills a queued/running job's whole process tree (issue #84). Idempotent
+ * server-side: cancelling a finished job just returns it. */
+export function postCancelJob(jobId: string): Promise<Job> {
+  return request(`api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
 }
 
 export function getJobArtifacts(jobId: string): Promise<JobArtifactsResponse> {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}/artifacts`);
+  return request(`api/jobs/${encodeURIComponent(jobId)}/artifacts`);
 }
 
 /** Same-origin binary download URL -- not fetched through `request()`
  * (no JSON to parse), just handed to an `<a href>` by `BuildPanel.tsx`. */
 export function jobArtifactUrl(jobId: string, key: string): string {
-  return `/api/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(key)}`;
+  return apiUrl(`api/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(key)}`);
 }
 
 export function getSchema(doc: ConfigDocName): Promise<Record<string, unknown>> {
-  return request(`/api/schemas/${doc}`);
+  return request(`api/schemas/${doc}`);
 }
 
 export interface PollJobOptions {
@@ -342,9 +358,9 @@ export interface PollJobOptions {
   intervalMs?: number;
   /** Total wall-clock budget before giving up and resolving with
    * whatever the last-seen job state was (still `"running"`/`"queued"`)
-   * rather than polling forever -- a build that's genuinely stuck
-   * (spec has no server-side timeout on its own subprocess) must not
-   * spin the UI silently forever. */
+   * rather than polling forever. The server also bounds every job
+   * (issue #84's job timeout), but this keeps the UI from depending on
+   * that. */
   timeoutMs?: number;
   /** Injectable for tests; defaults to the real timers. */
   sleep?: (ms: number) => Promise<void>;
@@ -352,8 +368,8 @@ export interface PollJobOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Poll `GET /api/jobs/{id}` until `status` is `"succeeded"`/`"failed"`,
- * or until `timeoutMs` elapses. Resolves with the last-seen `Job` either
+/** Poll `GET /api/jobs/{id}` until the job leaves `"queued"`/`"running"`
+ * (`"succeeded"`, `"failed"` or `"cancelled"`), or until `timeoutMs` elapses. Resolves with the last-seen `Job` either
  * way -- callers distinguish "finished" from "timed out but still
  * running" by checking `job.status` themselves (`"running"`/`"queued"`
  * after this resolves means the timeout was hit, not a terminal state). */
@@ -365,7 +381,7 @@ export async function pollJobUntilDone(
   const deadline = Date.now() + timeoutMs;
 
   let job = await getJob(jobId);
-  while (job.status !== "succeeded" && job.status !== "failed") {
+  while (job.status === "queued" || job.status === "running") {
     if (Date.now() >= deadline) {
       return job;
     }

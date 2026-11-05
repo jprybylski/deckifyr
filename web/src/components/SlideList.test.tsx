@@ -143,7 +143,7 @@ describe("SlideList add/remove (issue #23)", () => {
   it("opens the add-slide form, fetches layout options, and submits a new slide", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/config/layouts") {
+      if (url === "api/config/layouts") {
         return Promise.resolve(
           jsonResponse(200, { deckifyr: "0.1", layouts: { "title-content": {}, blank: {} } })
         );

@@ -1,0 +1,22 @@
+{
+  "additionalProperties": true,
+  "description": "What every successful `--json` payload promises, whatever the command.",
+  "properties": {
+    "status": {
+      "description": "\"ok\" (the `serve` command reports \"stopped\").",
+      "title": "Status",
+      "type": "string"
+    },
+    "result_version": {
+      "description": "Version of the result schema; see deckifyr.schema.results.",
+      "title": "Result Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status",
+    "result_version"
+  ],
+  "title": "OkResult",
+  "type": "object"
+}

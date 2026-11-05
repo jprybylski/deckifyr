@@ -60,10 +60,10 @@ function stubBuildPanelFetch(
 ) {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/api/config/presentation" && (init?.method ?? "GET") === "GET") {
+    if (url === "api/config/presentation" && (init?.method ?? "GET") === "GET") {
       return Promise.resolve(jsonResponse(200, PRESENTATION_DOC));
     }
-    if (url === "/api/preview/availability") {
+    if (url === "api/preview/availability") {
       return Promise.resolve(jsonResponse(200, availability));
     }
     const extraResponse = extra?.(url, init);
@@ -112,7 +112,7 @@ describe("BuildPanel output path (issue #27)", () => {
   it("shows the fetched build.output and saves an edit on blur", async () => {
     let putBody: unknown;
     const fetchMock = stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         putBody = JSON.parse(init.body as string);
         return jsonResponse(200, { path: "presentation.yaml", dirty: true });
       }
@@ -131,7 +131,7 @@ describe("BuildPanel output path (issue #27)", () => {
 
   it("marks the shared app state dirty after a successful save", async () => {
     stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         return jsonResponse(200, { path: "presentation.yaml", dirty: true });
       }
       return undefined;
@@ -155,7 +155,7 @@ describe("BuildPanel previews checkbox (issue #32)", () => {
   it("reflects build.previews and PUTs an edit when toggled", async () => {
     let putBody: unknown;
     stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/config/presentation" && init?.method === "PUT") {
+      if (url === "api/config/presentation" && init?.method === "PUT") {
         putBody = JSON.parse(init.body as string);
         return jsonResponse(200, { path: "presentation.yaml", dirty: true });
       }
@@ -177,12 +177,12 @@ describe("BuildPanel previews checkbox (issue #32)", () => {
   it("starts checked when build.previews is already true", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/config/presentation" && (init?.method ?? "GET") === "GET") {
+      if (url === "api/config/presentation" && (init?.method ?? "GET") === "GET") {
         return Promise.resolve(
           jsonResponse(200, { deckifyr: "0.1", build: { output: "build/deck.pptx", previews: true } })
         );
       }
-      if (url === "/api/preview/availability") {
+      if (url === "api/preview/availability") {
         return Promise.resolve(jsonResponse(200, AVAILABLE));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -200,10 +200,10 @@ describe("BuildPanel previews checkbox (issue #32)", () => {
 describe("BuildPanel build result gallery (issue #32)", () => {
   it("renders a PreviewGallery for the build job's own preview-N/pdf artifacts", async () => {
     stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/build" && init?.method === "POST") {
+      if (url === "api/build" && init?.method === "POST") {
         return jsonResponse(200, { job_id: "build-job-1" });
       }
-      if (url === "/api/jobs/build-job-1") {
+      if (url === "api/jobs/build-job-1") {
         return jsonResponse(200, {
           id: "build-job-1",
           status: "succeeded",
@@ -211,7 +211,7 @@ describe("BuildPanel build result gallery (issue #32)", () => {
           error: null,
         });
       }
-      if (url === "/api/jobs/build-job-1/artifacts") {
+      if (url === "api/jobs/build-job-1/artifacts") {
         return jsonResponse(200, { artifacts: ["pptx", "preview-0", "pdf"] });
       }
       return undefined;
@@ -289,10 +289,10 @@ describe("BuildPanel preview job (issue #27)", () => {
     // pure-function level in `api/client.test.ts`; this only needs to
     // confirm BuildPanel renders correctly once a job finishes.
     stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/preview" && init?.method === "POST") {
+      if (url === "api/preview" && init?.method === "POST") {
         return jsonResponse(200, { job_id: "job-1" });
       }
-      if (url === "/api/jobs/job-1") {
+      if (url === "api/jobs/job-1") {
         return jsonResponse(200, {
           id: "job-1",
           status: "succeeded",
@@ -300,7 +300,7 @@ describe("BuildPanel preview job (issue #27)", () => {
           error: null,
         });
       }
-      if (url === "/api/jobs/job-1/artifacts") {
+      if (url === "api/jobs/job-1/artifacts") {
         return jsonResponse(200, { artifacts: ["pptx", "preview-0", "pdf"] });
       }
       return undefined;
@@ -320,16 +320,16 @@ describe("BuildPanel preview job (issue #27)", () => {
     fireEvent.click(screen.getByText("Show PDF preview"));
     expect(screen.getByTitle("Preview PDF")).toHaveAttribute(
       "src",
-      "/api/jobs/job-1/artifacts/pdf"
+      "api/jobs/job-1/artifacts/pdf"
     );
   });
 
   it("surfaces a missing-dependency error from a failed job", async () => {
     stubBuildPanelFetch(AVAILABLE, (url, init) => {
-      if (url === "/api/preview" && init?.method === "POST") {
+      if (url === "api/preview" && init?.method === "POST") {
         return jsonResponse(200, { job_id: "job-2" });
       }
-      if (url === "/api/jobs/job-2") {
+      if (url === "api/jobs/job-2") {
         return jsonResponse(200, {
           id: "job-2",
           status: "failed",
@@ -345,7 +345,7 @@ describe("BuildPanel preview job (issue #27)", () => {
           },
         });
       }
-      if (url === "/api/jobs/job-2/artifacts") {
+      if (url === "api/jobs/job-2/artifacts") {
         return jsonResponse(200, { artifacts: [] });
       }
       return undefined;
@@ -362,5 +362,79 @@ describe("BuildPanel preview job (issue #27)", () => {
         0
       )
     );
+  });
+});
+
+describe("BuildPanel cancel and timeout (issue #84)", () => {
+  it("offers Cancel while a build runs, POSTs the cancel, and settles on 'cancelled'", async () => {
+    let cancelled = false;
+    const fetchMock = stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "api/build" && init?.method === "POST") {
+        return jsonResponse(200, { job_id: "job-c" });
+      }
+      if (url === "api/jobs/job-c/cancel" && init?.method === "POST") {
+        cancelled = true;
+        return jsonResponse(200, { id: "job-c", status: "cancelled", result: null, error: null });
+      }
+      if (url === "api/jobs/job-c") {
+        return jsonResponse(200, {
+          id: "job-c",
+          status: cancelled ? "cancelled" : "running",
+          result: null,
+          error: null,
+        });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+    await screen.findByDisplayValue("build/deck.pptx");
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Build" }).click();
+    });
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    await act(async () => {
+      cancel.click();
+    });
+
+    await waitFor(() => expect(screen.getByText("Status: cancelled")).toBeInTheDocument(), {
+      timeout: 4000,
+    });
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    // A cancelled job has no artifacts to fetch.
+    expect(fetchMock).not.toHaveBeenCalledWith("api/jobs/job-c/artifacts", expect.anything());
+  });
+
+  it("shows a job-timeout failure's message", async () => {
+    stubBuildPanelFetch(AVAILABLE, (url, init) => {
+      if (url === "api/build" && init?.method === "POST") {
+        return jsonResponse(200, { job_id: "job-t" });
+      }
+      if (url === "api/jobs/job-t") {
+        return jsonResponse(200, {
+          id: "job-t",
+          status: "failed",
+          result: null,
+          error: {
+            code: "E_TIMEOUT",
+            message: "build job exceeded its 600s job timeout and was terminated",
+          },
+        });
+      }
+      if (url === "api/jobs/job-t/artifacts") {
+        return jsonResponse(200, { artifacts: [] });
+      }
+      return undefined;
+    });
+    renderBuildPanel(false);
+    await screen.findByDisplayValue("build/deck.pptx");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Build" }).click();
+    });
+
+    await waitFor(() => expect(screen.getByText(/exceeded its 600s job timeout/)).toBeInTheDocument());
+    expect(screen.getByText("Status: failed")).toBeInTheDocument();
   });
 });
