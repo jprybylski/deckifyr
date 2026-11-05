@@ -52,8 +52,13 @@ def staging_dir_name(token: str) -> str:
 
 
 def fsync_file(path: Path) -> None:
-    """Flush a finished file's bytes to disk before it becomes visible."""
-    with open(path, "rb") as handle:
+    """Flush a finished file's bytes to disk before it becomes visible.
+
+    Opened read-write on purpose: on Windows `os.fsync` is `_commit`, which
+    fails with `EBADF` on a read-only handle (POSIX does not care). The file
+    was just written by us, so write access is always available.
+    """
+    with open(path, "r+b") as handle:
         os.fsync(handle.fileno())
 
 

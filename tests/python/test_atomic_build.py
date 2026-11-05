@@ -312,3 +312,15 @@ def test_killing_a_build_partway_never_leaves_a_mismatched_manifest(minimal_deck
     subprocess.run(command, check=True, capture_output=True)
     assert _staging_leftovers(out_dir) == []
     assert json.loads(manifest.read_text())["output"]["sha256"] == _sha(pptx)
+
+
+def test_fsync_helpers_work_on_a_plain_file_and_directory(tmp_path):
+    # Regression: `fsync_file` once opened the file read-only, which POSIX
+    # tolerates but Windows rejects (`os.fsync` is `_commit` there: EBADF).
+    # Every build failed on the Windows runner while macOS/Linux passed.
+    target = tmp_path / "f.bin"
+    target.write_bytes(b"data")
+    staging_module.fsync_file(target)
+    staging_module.write_text_synced(tmp_path / "t.txt", "text")
+    staging_module.fsync_dir(tmp_path)  # a no-op where directories can't be opened
+    assert target.read_bytes() == b"data" and (tmp_path / "t.txt").read_text() == "text"
