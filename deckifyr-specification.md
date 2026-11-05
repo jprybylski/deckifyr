@@ -1052,6 +1052,15 @@ Recommended controls:
 - Atomic output writes.
 - Content-hash-based caches containing no credentials.
 
+Implemented controls for a local supervising launcher (issues #88-#90): the
+editor server rejects a foreign `Host`, cross-site state-changing requests
+and, when asked, any `/api/*` call without a per-launch token; a trust policy
+lets the launcher supply its own executables, reject project-file `binary`
+settings and require project-file paths to stay inside the project; and
+`build` stages its outputs and promotes them atomically, manifest last. These
+are defence for a *local* launcher, not a substitute for sandboxing hosted or
+multi-tenant execution.
+
 ## 16. Licensing
 
 GPL-3.0-or-later is the natural default because Quartifyr, Reportifyr, Presentifyr, and Pyro are GPL-3-compatible projects.
