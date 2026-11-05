@@ -47,6 +47,7 @@ from deckifyr.diagnostics import (
     as_build_warning,
 )
 from deckifyr.pptx import staging as staging_module
+from deckifyr.policy import PERMISSIVE, TrustPolicy, check_presentation_policy, resolve_in_project
 from deckifyr.plan import (
     ResolvedElement,
     ResolvedGradient,
@@ -223,26 +224,42 @@ def _resolve_footer_style(design: DesignDocument) -> ResolvedTextStyle:
 
 
 def _build_reportifyr_context(
-    presentation: PresentationDocument, design: DesignDocument, *, project_root: Path
+    presentation: PresentationDocument,
+    design: DesignDocument,
+    *,
+    project_root: Path,
+    policy: TrustPolicy = PERMISSIVE,
 ) -> ReportifyrBuildContext:
     footer_style = _resolve_footer_style(design)
     config = presentation.build.reportifyr
     if config is None:
-        return ReportifyrBuildContext(footer_style=footer_style)
+        # No `build.reportifyr` block: every default applies -- except a
+        # launcher's own Rscript, which still has to win (issue #89).
+        return ReportifyrBuildContext(
+            footer_style=footer_style,
+            flextable_config=FlextableExecutionConfig(binary=policy.binary("rscript", None)),
+        )
     standard_footnotes = (
-        load_standard_footnotes(project_root / config.standard_footnotes)
+        load_standard_footnotes(
+            resolve_in_project(
+                project_root,
+                config.standard_footnotes,
+                "build.reportifyr.standard_footnotes",
+                policy,
+            )
+        )
         if config.standard_footnotes
         else None
     )
     flextable_config = (
         FlextableExecutionConfig(
-            binary=config.flextable.binary,
+            binary=policy.binary("rscript", config.flextable.binary),
             timeout_seconds=config.flextable.timeout_seconds,
             max_output_bytes=config.flextable.max_output_bytes,
             dpi=config.flextable.dpi,
         )
         if config.flextable is not None
-        else FlextableExecutionConfig()
+        else FlextableExecutionConfig(binary=policy.binary("rscript", None))
     )
     return ReportifyrBuildContext(
         outputs_dir=config.outputs_dir,
@@ -253,7 +270,9 @@ def _build_reportifyr_context(
     )
 
 
-def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionConfig:
+def _build_quarto_config(
+    presentation: PresentationDocument, policy: TrustPolicy = PERMISSIVE
+) -> QuartoExecutionConfig:
     """Assembled once per build from `presentation.build.quarto` (spec
     section 8.1), mirroring `_build_reportifyr_context` -- a build with
     no `quarto` element never reads it, and an absent `build.quarto`
@@ -261,15 +280,17 @@ def _build_quarto_config(presentation: PresentationDocument) -> QuartoExecutionC
     """
     config = presentation.build.quarto
     if config is None:
-        return QuartoExecutionConfig()
+        return QuartoExecutionConfig(binary=policy.binary("quarto", None))
     return QuartoExecutionConfig(
-        binary=config.binary,
+        binary=policy.binary("quarto", config.binary),
         timeout_seconds=config.timeout_seconds,
         max_output_bytes=config.max_output_bytes,
     )
 
 
-def _build_preview_config(presentation: PresentationDocument) -> PreviewRenderConfig:
+def _build_preview_config(
+    presentation: PresentationDocument, policy: TrustPolicy = PERMISSIVE
+) -> PreviewRenderConfig:
     """Assembled once per build from `presentation.build.preview`,
     mirroring `_build_quarto_config` -- a build that never renders
     previews (neither `build.previews: true` nor `force_previews`) never
@@ -278,9 +299,11 @@ def _build_preview_config(presentation: PresentationDocument) -> PreviewRenderCo
     """
     config = presentation.build.preview
     if config is None:
-        return PreviewRenderConfig()
+        return PreviewRenderConfig(binary=policy.binary("soffice", None))
     return PreviewRenderConfig(
-        binary=config.binary, dpi=config.dpi, timeout_seconds=config.timeout_seconds
+        binary=policy.binary("soffice", config.binary),
+        dpi=config.dpi,
+        timeout_seconds=config.timeout_seconds,
     )
 
 
@@ -1140,14 +1163,23 @@ def compose(
     resolved_slides: list[ResolvedSlide],
     *,
     project_root: Path,
+    policy: TrustPolicy | None = None,
 ) -> tuple[PptxPresentation, list[dict[str, Any]], list[str]]:
+    policy = policy or PERMISSIVE
+    # Defence in depth (issue #89): the CLI and web layers already checked the
+    # policy when they loaded the project, but this is the last point before
+    # anything is executed, so a caller that reached `compose` another way
+    # still cannot run a binary or touch a path the policy forbids.
+    check_presentation_policy(presentation, project_root, policy)
     prs = PptxPresentation()
     prs.slide_width = Emu(parse_length(design.slide.width, strict=True))
     prs.slide_height = Emu(parse_length(design.slide.height, strict=True))
     blank_layout = _find_blank_layout(prs)
 
-    reportifyr_ctx = _build_reportifyr_context(presentation, design, project_root=project_root)
-    quarto_config = _build_quarto_config(presentation)
+    reportifyr_ctx = _build_reportifyr_context(
+        presentation, design, project_root=project_root, policy=policy
+    )
+    quarto_config = _build_quarto_config(presentation, policy)
 
     element_manifest: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -1217,6 +1249,7 @@ def compose_and_write(
     preview_slides: list[int] | None = None,
     keep_preview_pdf: bool = False,
     initial_warnings: list[str] | None = None,
+    policy: TrustPolicy | None = None,
 ) -> BuildResult:
     """Compose the deck and write the PPTX, previews and manifest atomically.
 
@@ -1227,21 +1260,24 @@ def compose_and_write(
     exactly as they were, and the manifest is always promoted last, so one on
     disk never describes files that are not there.
     """
+    policy = policy or PERMISSIVE
     started_at = datetime.now(timezone.utc)
     prs, element_manifest, compose_warnings = compose(
-        presentation, design, resolved_slides, project_root=project_root
+        presentation, design, resolved_slides, project_root=project_root, policy=policy
     )
     # Warnings produced before composing (e.g. `--warn-only` geometry
     # coercions, issue #91) come first and land in the manifest too.
     warnings = [*(initial_warnings or []), *compose_warnings]
 
-    output_path = (project_root / presentation.build.output).resolve()
+    output_path = resolve_in_project(project_root, presentation.build.output, "build.output", policy)
     output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
     previews_dir = output_dir / "previews"
     manifest_path: Path | None = None
     if presentation.build.manifest:
-        manifest_path = (project_root / presentation.build.manifest).resolve()
+        manifest_path = resolve_in_project(
+            project_root, presentation.build.manifest, "build.manifest", policy
+        )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
     # A killed build (job cancel/timeout is SIGKILL, so no `finally` ran) can
@@ -1273,7 +1309,7 @@ def compose_and_write(
                 preview_result = render_slide_previews(
                     staged_pptx,
                     staging / "previews",
-                    config=_build_preview_config(presentation),
+                    config=_build_preview_config(presentation, policy),
                     slides=preview_slides,
                     keep_pdf=keep_preview_pdf,
                 )

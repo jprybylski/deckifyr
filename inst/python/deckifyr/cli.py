@@ -74,6 +74,13 @@ from pydantic import ValidationError as PydanticValidationError
 from deckifyr import editor, projectio, templates
 from deckifyr.diagnostics import warnings_payload
 from deckifyr.plan import expand_presentation
+from deckifyr.policy import (
+    ALLOW_OUTSIDE_PROJECT_ENV,
+    BINARY_KINDS,
+    TRUSTED_BINARIES_ONLY_ENV,
+    TrustPolicy,
+    resolve_policy,
+)
 from deckifyr.pptx import BuildResult, compose_and_write
 from deckifyr.pptx.compose import sha256_file
 from deckifyr.schema.design import DesignDocument
@@ -91,6 +98,13 @@ _EXIT_CODE_BY_ERROR_CODE = {
     ErrorCode.IO: EXIT_IO_ERROR,
     ErrorCode.NOT_IMPLEMENTED: EXIT_NOT_IMPLEMENTED,
 }
+
+
+def _policy(args: argparse.Namespace) -> TrustPolicy:
+    """The launcher's trust policy (issue #89): flag, else environment, else
+    off. Subcommands without trust flags (the edit commands) get it from the
+    environment alone, which is how a supervising launcher reaches them."""
+    return resolve_policy(args, os.environ)
 
 
 def _examples_dir() -> Path:
@@ -204,7 +218,7 @@ def _cmd_skills(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_validate(args: argparse.Namespace) -> dict[str, Any]:
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=_policy(args)
     )
     # Only a `--warn-only` run can have anything to warn about: strict mode
     # already rejected every unitless length inside `load_project`.
@@ -236,8 +250,9 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
     # Fail on schema/geometry problems before planning/composing, so
     # `build` on a broken project reports the real validation error
     # rather than a confusing failure downstream.
+    policy = _policy(args)
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=policy
     )
 
     project_root = presentation_path.parent
@@ -266,6 +281,7 @@ def _cmd_build(args: argparse.Namespace) -> dict[str, Any]:
         layouts_path=(project_root / presentation.layouts).resolve(),
         keep_preview_pdf=True,
         initial_warnings=geometry_warnings,
+        policy=policy,
     )
 
     return {
@@ -323,7 +339,7 @@ def _cmd_set(args: argparse.Namespace) -> dict[str, Any]:
 
     doc_type = projectio.resolve_document_type(args.type, data)
     if doc_type == "presentation":
-        extra = projectio.validate_and_write_presentation(path, data)
+        extra = projectio.validate_and_write_presentation(path, data, policy=_policy(args))
     else:
         model = projectio.DOCUMENT_MODELS[doc_type]
         try:
@@ -369,7 +385,7 @@ def _cmd_slide_add(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
@@ -379,7 +395,7 @@ def _cmd_slide_remove(args: argparse.Namespace) -> dict[str, Any]:
         editor.remove_slide(data, args.id)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
@@ -402,7 +418,7 @@ def _cmd_slide_update(args: argparse.Namespace) -> dict[str, Any]:
         editor.update_slide(data, args.id, **kwargs)
     except editor.SlideNotFoundError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
@@ -416,7 +432,7 @@ def _cmd_slide_move(args: argparse.Namespace) -> dict[str, Any]:
         raise DeckifyrError(str(exc), code=ErrorCode.REFERENCE_NOT_FOUND) from exc
     except editor.AmbiguousPlacementError as exc:
         raise DeckifyrError(str(exc), code=ErrorCode.CONTENT_VALIDATION) from exc
-    return projectio.validate_and_write_presentation(path, data)
+    return projectio.validate_and_write_presentation(path, data, policy=_policy(args))
 
 
 def _parse_slides_arg(raw: str | None) -> list[int] | None:
@@ -437,8 +453,9 @@ def _parse_slides_arg(raw: str | None) -> list[int] | None:
 
 def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     presentation_path = Path(args.presentation).resolve()
+    policy = _policy(args)
     presentation, design, layouts = projectio.load_project(
-        Path(args.presentation), strict=args.strict
+        Path(args.presentation), strict=args.strict, policy=policy
     )
 
     project_root = presentation_path.parent
@@ -464,6 +481,7 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
         force_previews=True,
         preview_slides=_parse_slides_arg(args.slides),
         keep_preview_pdf=True,
+        policy=policy,
     )
 
     return {
@@ -477,8 +495,10 @@ def _cmd_preview(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _inspect_presentation(path: Path, *, strict: bool) -> dict[str, Any]:
-    presentation, design, layouts = projectio.load_project(path, strict=strict)
+def _inspect_presentation(
+    path: Path, *, strict: bool, policy: TrustPolicy | None = None
+) -> dict[str, Any]:
+    presentation, design, layouts = projectio.load_project(path, strict=strict, policy=policy)
     resolved_slides = expand_presentation(presentation, design, layouts, strict=strict)
     return {
         "target": "presentation",
@@ -570,7 +590,7 @@ def _cmd_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
     suffix = target.suffix.lower()
     if suffix in (".yaml", ".yml"):
-        return _inspect_presentation(target, strict=args.strict)
+        return _inspect_presentation(target, strict=args.strict, policy=_policy(args))
     if suffix == ".pptx":
         return _inspect_pptx(target)
     raise DeckifyrError(
@@ -616,6 +636,7 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
         # A supervised/installed context must never shell out to npm at
         # startup; `--launcher workspace` implies this.
         allow_frontend_rebuild=not (args.no_frontend_rebuild or args.launcher == "workspace"),
+        policy=_policy(args),
     )
     served = strip_path_prefix(app, args.root_path) if args.root_path else app
     # Blocks until interrupted (Ctrl-C / SIGINT/SIGTERM) or until
@@ -710,16 +731,57 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         )
         group.add_argument("--warn-only", dest="strict", action="store_false")
 
+    def add_trust_flags(p: argparse.ArgumentParser) -> None:
+        """What a supervising launcher uses to stop a project file choosing
+        executables or paths (issue #89, `deckifyr.policy`). Every flag also
+        has an environment variable, which is how the edit commands (`get`,
+        `set`, `slide`) -- which take no flags -- see the same policy."""
+        group = p.add_argument_group(
+            "trust policy",
+            "for launchers that treat project files as untrusted user data; all off by default",
+        )
+        for kind, (flag, env_name) in BINARY_KINDS.items():
+            group.add_argument(
+                flag,
+                dest=f"{kind}_bin",
+                metavar="PATH",
+                default=None,
+                help=(
+                    f"run this executable instead of the project file's own setting "
+                    f"(env: {env_name})"
+                ),
+            )
+        group.add_argument(
+            "--trusted-binaries-only",
+            action="store_true",
+            help=(
+                "reject a project file whose build.*.binary differs from the default bare "
+                "name (E_UNTRUSTED_BINARY) and require design.base, layouts, build.output, "
+                "build.manifest and build.reportifyr paths to stay inside the project "
+                f"(E_PATH_OUTSIDE_PROJECT) (env: {TRUSTED_BINARIES_ONLY_ENV})"
+            ),
+        )
+        group.add_argument(
+            "--allow-outside-project",
+            action="store_true",
+            help=(
+                "with --trusted-binaries-only, permit those paths to resolve outside the "
+                f"project (env: {ALLOW_OUTSIDE_PROJECT_ENV})"
+            ),
+        )
+
     validate_parser = subparsers.add_parser(
         "validate", help="validate a presentation.yaml and its referenced files"
     )
     validate_parser.add_argument("presentation")
     add_strict_flag(validate_parser)
+    add_trust_flags(validate_parser)
     validate_parser.set_defaults(handler=_cmd_validate)
 
     build_parser = subparsers.add_parser("build", help="build a .pptx and manifest")
     build_parser.add_argument("presentation")
     add_strict_flag(build_parser)
+    add_trust_flags(build_parser)
     build_parser.set_defaults(handler=_cmd_build)
 
     preview_parser = subparsers.add_parser(
@@ -732,6 +794,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="comma-separated 1-indexed slide numbers to render (default: all), e.g. 1,3",
     )
     add_strict_flag(preview_parser)
+    add_trust_flags(preview_parser)
     preview_parser.set_defaults(handler=_cmd_preview)
 
     inspect_parser = subparsers.add_parser(
@@ -739,6 +802,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument("target")
     add_strict_flag(inspect_parser)
+    add_trust_flags(inspect_parser)
     inspect_parser.set_defaults(handler=_cmd_inspect)
 
     schema_parser = subparsers.add_parser("schema", help="print a document type's JSON Schema")
@@ -891,6 +955,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "web/src is newer than the committed bundle"
         ),
     )
+    add_trust_flags(serve_parser)
     serve_parser.set_defaults(handler=_cmd_serve)
 
     return parser

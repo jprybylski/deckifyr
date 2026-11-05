@@ -11,6 +11,7 @@
 #' hard failure here.
 #'
 #' @param presentation Path to `presentation.yaml`.
+#' @inheritParams deck_build
 #' @return A parsed list from the CLI's JSON output:
 #'   \describe{
 #'     \item{`output`}{The built `.pptx` path.}
@@ -24,6 +25,11 @@
 #' deck_preview("presentation.yaml")
 #' }
 #' @export
-deck_preview <- function(presentation) {
-  .run_deckifyr_cli(c("preview", presentation))
+deck_preview <- function(presentation,
+                         rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                         trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
+  args <- c("preview", presentation, .trust_args(
+    rscript_bin, quarto_bin, soffice_bin, trusted_binaries_only, allow_outside_project
+  ))
+  .run_deckifyr_cli(args)
 }

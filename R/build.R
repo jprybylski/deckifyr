@@ -24,6 +24,20 @@
 #'
 #' @param presentation Path to `presentation.yaml`.
 #' @param strict Reject unitless geometry when `TRUE` (default).
+#' @param rscript_bin,quarto_bin,soffice_bin Run this executable instead of
+#'   whatever `presentation.yaml`'s `build.reportifyr.flextable.binary`,
+#'   `build.quarto.binary` or `build.preview.binary` says (`NULL`, the
+#'   default, keeps the project file's own setting). For a launcher that
+#'   treats project files as untrusted user data (`deckifyr.policy`).
+#' @param trusted_binaries_only If `TRUE`, a project file that names a
+#'   non-default `binary` (and no override was given for it) fails with
+#'   `E_UNTRUSTED_BINARY` before anything runs, and `design.base`,
+#'   `layouts`, `build.output`, `build.manifest` and `build.reportifyr`'s
+#'   paths must stay inside the project (`E_PATH_OUTSIDE_PROJECT`).
+#'   Default `FALSE`: existing projects behave exactly as before.
+#' @param allow_outside_project With `trusted_binaries_only = TRUE`, let those
+#'   paths resolve outside the project (e.g. a shared organization design).
+#'   Default `FALSE`.
 #' @return A parsed list from the CLI's JSON output:
 #'   \describe{
 #'     \item{`output`}{The written `.pptx` path.}
@@ -61,10 +75,15 @@
 #' result$output
 #' }
 #' @export
-deck_build <- function(presentation, strict = TRUE) {
+deck_build <- function(presentation, strict = TRUE,
+                       rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                       trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
   args <- c("build", presentation)
   if (!isTRUE(strict)) {
     args <- c(args, "--warn-only")
   }
+  args <- c(args, .trust_args(
+    rscript_bin, quarto_bin, soffice_bin, trusted_binaries_only, allow_outside_project
+  ))
   .run_deckifyr_cli(args)
 }

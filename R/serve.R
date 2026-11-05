@@ -8,6 +8,7 @@
 #' summary of its sibling `<stem>.manifest.json`, if one exists.
 #'
 #' @param target Path to a `presentation.yaml` or a built `.pptx`.
+#' @inheritParams deck_build
 #' @return A parsed list from the CLI's JSON output.
 #' @examples
 #' \dontrun{
@@ -15,8 +16,13 @@
 #' deck_inspect("build/my-deck.pptx")
 #' }
 #' @export
-deck_inspect <- function(target) {
-  .run_deckifyr_cli(c("inspect", target))
+deck_inspect <- function(target,
+                         rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                         trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
+  args <- c("inspect", target, .trust_args(
+    rscript_bin, quarto_bin, soffice_bin, trusted_binaries_only, allow_outside_project
+  ))
+  .run_deckifyr_cli(args)
 }
 
 #' Print a document type's JSON Schema
@@ -417,6 +423,7 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @param force If `host`:`port` is already occupied by another deckifyr
 #'   server, kill it first instead of erroring. Never kills a process that
 #'   doesn't look like a deckifyr server, `force` or not. Default `FALSE`.
+#' @inheritParams deck_build
 #' @return A `deckifyr_server` object (a list with class
 #'   `"deckifyr_server"`): `process` (the `processx::process`), `host`,
 #'   `port`, `url`, and `project`. Pass it to [deck_stop_server()] to shut
@@ -432,8 +439,15 @@ deck_schema <- function(document = c("design", "layouts", "presentation")) {
 #' @export
 deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
                         presentation = "presentation.yaml",
-                        open_browser = TRUE, timeout = 15, force = FALSE) {
+                        open_browser = TRUE, timeout = 15, force = FALSE,
+                        rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                        trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
   project <- normalizePath(project, mustWork = TRUE)
+  # Checked up front so a malformed argument fails before a port is probed or
+  # a process is spawned.
+  trust_args <- .trust_args(
+    rscript_bin, quarto_bin, soffice_bin, trusted_binaries_only, allow_outside_project
+  )
 
   if (.port_is_open(host, port)) {
     if (!isTRUE(force)) {
@@ -491,7 +505,8 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
     # rather than deckifyr init/deckifyr serve (CLI) next-step
     # instructions -- see inst/python/deckifyr/web/app.py's own comment
     # on why this rides on /api/health specifically.
-    "--launcher", "r"
+    "--launcher", "r",
+    trust_args
   )
   env_vars <- c("current", VIRTUAL_ENV = paths$venv, PYTHONPATH = python_src)
 

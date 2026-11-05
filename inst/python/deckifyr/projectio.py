@@ -22,6 +22,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import editor
 from deckifyr.diagnostics import W_UNITLESS_LENGTH, BuildWarning
+from deckifyr.policy import PERMISSIVE, TrustPolicy, check_presentation_policy
 from deckifyr.schema.colors import resolve_color_tokens
 from deckifyr.schema.design import DesignDocument
 from deckifyr.schema.errors import DeckifyrError, ErrorCode
@@ -115,6 +116,7 @@ def load_project(
     presentation_data: dict[str, Any] | None = None,
     design_data: dict[str, Any] | None = None,
     layouts_data: dict[str, Any] | None = None,
+    policy: TrustPolicy | None = None,
 ) -> tuple[PresentationDocument, DesignDocument, LayoutsDocument]:
     """Load and validate design.yaml + layouts.yaml + presentation.yaml.
 
@@ -131,6 +133,12 @@ def load_project(
     in-memory working copy through this same function -- the sole plan/
     validation engine -- instead of duplicating any of this logic against
     already-parsed dicts.
+
+    `policy` (issue #89, `deckifyr.policy`): what the project file is trusted
+    to choose. `None` is the permissive default every pre-existing caller gets.
+    It is enforced right after `presentation.yaml` itself validates and
+    *before* `design.yaml`/`layouts.yaml` are read, because a `design.base`
+    pointing outside the project is exactly the read being prevented.
     """
     if presentation_data is not None:
         try:
@@ -155,6 +163,7 @@ def load_project(
             ) from exc
 
     base_dir = presentation_path.parent
+    check_presentation_policy(presentation, base_dir, policy or PERMISSIVE)
     design_path = base_dir / presentation.design.base
     layouts_path = base_dir / presentation.layouts
 
@@ -263,7 +272,11 @@ def load_presentation_raw(path: Path) -> dict[str, Any]:
 
 
 def validate_presentation_data(
-    path: Path, data: dict, *, layouts_data: Any | None = None
+    path: Path,
+    data: dict,
+    *,
+    layouts_data: Any | None = None,
+    policy: TrustPolicy | None = None,
 ) -> PresentationDocument:
     """Validate `data` against `PresentationDocument`, then best-effort
     cross-check any `slide.layout` against `layouts.yaml` (mirroring
@@ -280,6 +293,11 @@ def validate_presentation_data(
     disk read here would incorrectly reject it. `layouts_data=None`
     (every pre-existing caller) keeps the original disk-read behavior
     exactly.
+
+    `policy` (issue #89) rejects an edit that would introduce an untrusted
+    `binary` or an out-of-project path *before* it is accepted -- the editor's
+    config PUT and every element/slide mutation reach it through here, so a
+    project file cannot be edited into one the launcher would refuse to load.
     """
     try:
         presentation = PresentationDocument.model_validate(data)
@@ -287,6 +305,7 @@ def validate_presentation_data(
         raise DeckifyrError(
             format_pydantic_error(exc, str(path)), code=ErrorCode.SCHEMA_VALIDATION
         ) from exc
+    check_presentation_policy(presentation, path.parent, policy or PERMISSIVE)
 
     if layouts_data is None:
         layouts_path = path.parent / presentation.layouts
@@ -312,12 +331,14 @@ def validate_presentation_data(
     return presentation
 
 
-def validate_and_write_presentation(path: Path, data: dict) -> dict[str, Any]:
+def validate_and_write_presentation(
+    path: Path, data: dict, *, policy: TrustPolicy | None = None
+) -> dict[str, Any]:
     """Shared tail of every `slide` mutation and a `set` targeting a
     presentation.yaml: validate (`validate_presentation_data`) and only
     then write -- never on a document that would fail its own schema.
     """
-    presentation = validate_presentation_data(path, data)
+    presentation = validate_presentation_data(path, data, policy=policy)
     write_yaml(path, data)
     return {"presentation": str(path), "slide_count": len(presentation.slides)}
 

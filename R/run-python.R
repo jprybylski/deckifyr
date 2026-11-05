@@ -48,6 +48,48 @@ system2 <- NULL
 # multi-second sleep.
 Sys.time <- NULL
 
+#' CLI flags for a launcher's trust policy (issue #89)
+#'
+#' The one place the R facade turns `deck_build()`/`deck_validate()`/
+#' `deck_preview()`/`deck_inspect()`/`deck_serve()`'s trust arguments into
+#' `deckifyr` CLI flags. R does no validation of the policy itself -- what a
+#' flag means (and the `E_UNTRUSTED_BINARY`/`E_PATH_OUTSIDE_PROJECT` errors)
+#' lives only in the Python engine (`deckifyr.policy`); this only rejects an
+#' argument of the wrong *type* before shelling out, per spec section 11.2's
+#' "validate arguments in R when inexpensive".
+#'
+#' @param rscript_bin,quarto_bin,soffice_bin `NULL` or a single path.
+#' @param trusted_binaries_only,allow_outside_project A single `TRUE`/`FALSE`.
+#' @return A character vector of CLI arguments (possibly empty).
+#' @keywords internal
+.trust_args <- function(rscript_bin = NULL, quarto_bin = NULL, soffice_bin = NULL,
+                        trusted_binaries_only = FALSE, allow_outside_project = FALSE) {
+  bins <- list(
+    rscript_bin = rscript_bin, quarto_bin = quarto_bin, soffice_bin = soffice_bin
+  )
+  args <- character()
+  for (name in names(bins)) {
+    value <- bins[[name]]
+    if (is.null(value)) next
+    if (!is.character(value) || length(value) != 1L || is.na(value) || !nzchar(value)) {
+      stop(sprintf("`%s` must be NULL or a single path string.", name), call. = FALSE)
+    }
+    args <- c(args, paste0("--", gsub("_", "-", name)), value)
+  }
+  flags <- list(
+    trusted_binaries_only = trusted_binaries_only,
+    allow_outside_project = allow_outside_project
+  )
+  for (name in names(flags)) {
+    value <- flags[[name]]
+    if (!is.logical(value) || length(value) != 1L || is.na(value)) {
+      stop(sprintf("`%s` must be a single TRUE or FALSE.", name), call. = FALSE)
+    }
+    if (value) args <- c(args, paste0("--", gsub("_", "-", name)))
+  }
+  args
+}
+
 #' Invoke the bundled Python CLI via pyro
 #'
 #' Internal helper every exported `deck_*()`/`initialize_deck_project()`
