@@ -226,7 +226,7 @@ def test_built_bundle_has_no_root_relative_api_or_asset_urls():
     """Issue #82's CI-greppable guarantee on the committed bundle."""
     offenders = []
     for path in [STATIC_DIR / "index.html", *sorted((STATIC_DIR / "assets").glob("*.js"))]:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for needle in ('"/api/', "`/api/", "'/api/", '"/assets/', '"/logo.png'):
             if needle in text:
                 offenders.append((path.name, needle))
