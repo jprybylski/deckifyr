@@ -26,6 +26,8 @@
   Preview rendering also uses a private LibreOffice profile per call, so
   it no longer collides with an open LibreOffice or with a concurrent
   preview.
+  Timed-out Quarto and flextable (`Rscript`) renders now kill their whole
+  process tree too, instead of leaving pandoc/R children running.
 * The CLI's `--json` output is a versioned contract (issue #85): every
   success and error payload carries `result_version` (`1`); `build` and
   `preview` return the full `warnings` list (`code`, `message`, `slide`,

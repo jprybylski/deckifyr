@@ -1373,8 +1373,14 @@ and fails if that walk is disabled. stdout/stderr go to temp files, not
 pipes, so a surviving grandchild can't block collection. Each preview gets
 a private `-env:UserInstallation` profile (the user's own is locked by any
 open LibreOffice, and two concurrent previews would fight over it).
-`deckifyr.renderers.quarto`/`flextable` still use plain `subprocess.run`
-with the same orphan-on-timeout weakness -- a known, untouched gap.
+`deckifyr.renderers.quarto` (`_run_quarto`: pandoc/deno/R or Jupyter
+kernels) and `deckifyr.renderers.flextable` (Rscript) use the same
+`run_in_group`, so a timed-out render leaves nothing behind either;
+`test_renderers_orphans.py` proves it with fake binaries that start a
+separate-session grandchild (and fails if either renderer reverts to
+`subprocess.run`). A new external-tool call should go through
+`run_in_group` too -- a bare `subprocess.run(..., timeout=...)` kills
+only the direct child.
 
 **`--json` results are a versioned contract (issue #85).**
 `deckifyr.schema.results` holds the pydantic result models; every success

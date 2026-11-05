@@ -47,6 +47,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from deckifyr._proc import run_in_group
 from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
 
 _R_INSTALL_URL = "https://cran.r-project.org/"
@@ -119,14 +120,10 @@ def render_flextable_png(rds_path: Path, *, config: FlextableExecutionConfig) ->
         str(out_path),
         str(config.dpi),
     ]
+    # `run_in_group` (issue #84): kills the whole Rscript process tree on
+    # timeout, not just the direct child.
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=rds_path.parent,
-            capture_output=True,
-            text=True,
-            timeout=config.timeout_seconds,
-        )
+        result = run_in_group(cmd, cwd=rds_path.parent, timeout=config.timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         out_path.unlink(missing_ok=True)
         raise ContentValidationError(
