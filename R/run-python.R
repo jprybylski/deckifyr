@@ -129,8 +129,9 @@ Sys.time <- NULL
     )
   }
 
-  paths <- pyro::get_venv_uv_paths()
-  cli_args <- c("run", "-m", "deckifyr", "--json", args)
+  # A pre-provisioned environment (options(deckifyr.python_env) /
+  # DECKIFYR_PYTHON_ENV) runs without pyro or uv at all.
+  python_env <- .configured_python_env()
 
   stderr_lines <- character(0)
   capture_stderr <- function(chunk, proc) {
@@ -148,18 +149,32 @@ Sys.time <- NULL
   # way: an earlier version of this function used exactly that pattern
   # and silently left its "captured" stdout permanently NULL.
   outcome <- tryCatch(
-    pyro::run_python_script(
-      uv_path = paths$uv,
-      venv_path = paths$venv,
-      args = cli_args,
-      script_name = "deckifyr",
-      pythonpath = python_src,
-      stderr_callback = capture_stderr
+    .with_offline_env(
+      if (is.null(python_env)) {
+        paths <- pyro::get_venv_uv_paths()
+        pyro::run_python_script(
+          uv_path = paths$uv,
+          venv_path = paths$venv,
+          args = c(.uv_run_args(), "--json", args),
+          script_name = "deckifyr",
+          pythonpath = python_src,
+          stderr_callback = capture_stderr
+        )
+      } else {
+        .run_in_python_env(python_env, c("--json", args), python_src, capture_stderr)
+      }
     ),
     error = function(e) e
   )
 
-  command_desc <- paste("uv run -m deckifyr", paste(args, collapse = " "))
+  command_desc <- paste(
+    if (is.null(python_env)) {
+      paste(c("uv", .uv_run_args()), collapse = " ")
+    } else {
+      paste(.python_exe(python_env), "-m deckifyr")
+    },
+    paste(args, collapse = " ")
+  )
 
   if (inherits(outcome, "error")) {
     # The process exited non-zero; pyro's own error message is generic
@@ -188,6 +203,7 @@ Sys.time <- NULL
     stop(
       "deckifyr ", args[[1]], " failed and did not produce a parseable ",
       "error payload.\n  command: ", command_desc, "\n  stderr: ", stderr_text,
+      .offline_hint(),
       call. = FALSE
     )
   }

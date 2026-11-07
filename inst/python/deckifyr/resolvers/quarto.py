@@ -27,6 +27,7 @@ from deckifyr.renderers.quarto import (
 )
 from deckifyr.resolvers import BuildContext, ResolvedContent
 from deckifyr.schema.errors import ContentValidationError
+from deckifyr.textio import read_project_text
 
 
 @dataclass
@@ -81,7 +82,7 @@ class QuartoResolver:
 
         resolved_mode = requested_render_mode
         if resolved_mode == "auto":
-            resolved_mode = select_auto_render_mode(path.read_text(encoding="utf-8"))
+            resolved_mode = select_auto_render_mode(read_project_text(path))
 
         if resolved_mode == "native":
             markdown = render_native(path, config=self.config)

@@ -1,5 +1,51 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* Offline mode for the R wrappers (issue #93). With `options(deckifyr.offline
+  = TRUE)`, `DECKIFYR_OFFLINE=1` or uv's own `UV_OFFLINE=1`, `deck_validate()`,
+  `deck_build()`, `deck_preview()`, `deck_serve()` and the other wrappers run
+  `uv run --no-sync` with `UV_OFFLINE`, `UV_NO_INDEX` and
+  `UV_PYTHON_DOWNLOADS=never` set, so a stale lock is used as it is instead of
+  being re-locked and synced against the index (which also downloaded a Python
+  when none was cached). `init --from-repo` -- `initialize_deck_project(from_repo
+  =)` and `deckifyr init --from-repo` -- is refused with a message pointing at
+  `--from-dir`, since it needs a `git clone`. Provisioning in
+  `initialize_deck_project()` runs with `UV_OFFLINE=1` and stops, instead of
+  letting pyro download it, when `uv` is not installed. Online behaviour is
+  unchanged.
+* `python_env` (`initialize_deck_project(python_env =)`,
+  `options(deckifyr.python_env)` or `DECKIFYR_PYTHON_ENV`): run an existing
+  Python environment (a venv, or a project directory with a `.venv`) directly,
+  with no pyro or uv at all. It is verified for `python-pptx`, `pydantic`,
+  `pyyaml` and `pillow` and never modified; every wrapper, including
+  `deck_serve()`, uses it.
+
+## Changed
+
+* The `deckifyr` dependency group `initialize_deck_project()` writes to
+  `pyproject.toml` now includes the packages behind the `web` and `preview`
+  extras (`fastapi`, `uvicorn`, `pymupdf`), so `deck_serve()` and previews work
+  straight after initialization instead of failing on a missing module. An
+  existing group is merged, so re-running it adds them. The "extra is not
+  installed" errors name `initialize_deck_project()` when run from R.
+
+## Fixed
+
+* Project files that start with a UTF-8 byte order mark load (issue #94).
+  Windows PowerShell 5.1 (`Set-Content -Encoding utf8`) and older Notepad write
+  one, and it became part of the first key, so `design.yaml`, `layouts.yaml` or
+  `presentation.yaml` failed with `E_SCHEMA_VALIDATION` (`deckifyr: Field
+  required` / `Extra inputs are not permitted`). Project YAML and JSON, a table
+  CSV (a BOM no longer lands in the first column name), `standard_footnotes.yaml`,
+  reportifyr metadata sidecars and Quarto fragments are now read as UTF-8 with
+  an optional BOM. They were also read with the locale's default encoding, which
+  on Windows is cp1252, so non-ASCII text in a UTF-8 file was mis-decoded; and
+  `deckifyr set`/`slide` wrote with that same default. Both are explicit UTF-8
+  now (written files stay BOM-free). Files without a BOM are unaffected.
+
 # deckifyr 0.3.5
 
 ## Added

@@ -11,7 +11,8 @@ initialize_deck_project(
   from_repo = NULL,
   ref = NULL,
   subdir = NULL,
-  type = NULL
+  type = NULL,
+  python_env = getOption("deckifyr.python_env")
 )
 }
 \arguments{
@@ -37,6 +38,15 @@ subdirectory embedded in its shorthand.}
 
 \item{type}{Template name under a source's \verb{templates/<name>/}
 structure. Only valid alongside \code{from_dir}/\code{from_repo}.}
+
+\item{python_env}{Path to an existing Python environment (a venv, or a
+project directory holding a \code{.venv}) with \code{python-pptx}, \code{pydantic},
+\code{pyyaml} and \code{pillow}. It is verified and used as it is: pyro and uv are
+skipped, nothing is installed and \code{pyproject.toml} is not touched.
+Defaults to \code{getOption("deckifyr.python_env")}, then the
+\code{DECKIFYR_PYTHON_ENV} environment variable. Every deckifyr function
+(\code{deck_build()}, \code{deck_serve()}, ...) uses the same setting, so set the
+option in the project's \code{.Rprofile} as well.}
 }
 \value{
 A list describing the created files (invisibly).
@@ -59,6 +69,37 @@ holding its own named flat template -- select one with \code{type}; its
 \code{presentation.yaml} is copied verbatim as a real minimal starter,
 not emptied).
 }
+\section{Offline mode}{
+
+Offline mode is on when \code{options(deckifyr.offline = TRUE)},
+\code{DECKIFYR_OFFLINE=1} or uv's own \code{UV_OFFLINE=1} is set, and nothing in
+deckifyr then reaches the network:
+\itemize{
+\item \code{deck_validate()}, \code{deck_build()}, \code{deck_preview()}, \code{deck_serve()} and
+the other wrappers run \verb{uv run --no-sync}, with \code{UV_OFFLINE},
+\code{UV_NO_INDEX} and \code{UV_PYTHON_DOWNLOADS=never} set, so a stale lock is
+used as it is instead of being re-locked and synced against the index.
+\item \code{from_repo} is refused (clone the repository yourself while you have
+access and pass the checkout as \code{from_dir}), here and in
+\verb{deckifyr init --from-repo}.
+\item Provisioning the environment here runs with \code{UV_OFFLINE=1} (uv's cache
+only) and stops with a message, rather than letting pyro download it,
+when \code{uv} is not installed.
+}
+
+Alternatively, \code{python_env} skips uv altogether.
+}
+
+\section{Python packages}{
+
+The \code{deckifyr} dependency group written to \code{pyproject.toml} includes the
+packages behind the \code{web} extra (\code{fastapi}, \code{uvicorn}, for \code{deck_serve()})
+and the \code{preview} extra (\code{pymupdf}, for \code{deck_preview()} and
+\code{build.previews}), so both work after a plain initialization. Parquet table
+sources need \code{pyarrow}, which is not added; add it to the group if you use
+them. An existing group is merged, so re-running this adds what is missing.
+}
+
 \examples{
 \dontrun{
 # Scaffold a new project into a scratch directory (this mutates the

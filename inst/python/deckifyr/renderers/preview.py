@@ -128,7 +128,9 @@ def render_slide_previews(
         raise ContentValidationError(
             "rendering slide previews requires the optional 'pymupdf' "
             "package (not installed) -- install deckifyr's 'preview' "
-            "extra to render previews"
+            "extra to render previews (from R, re-run "
+            "`initialize_deck_project()`, which adds pymupdf to the "
+            "project's deckifyr dependency group)"
         ) from exc
 
     with tempfile.TemporaryDirectory(prefix="deckifyr-preview-") as tmp:

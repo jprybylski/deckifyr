@@ -117,6 +117,7 @@ from uuid import uuid4
 
 from deckifyr._proc import run_in_group
 from deckifyr.schema.errors import ContentValidationError, MissingDependencyError
+from deckifyr.textio import read_project_text
 
 # Rasterization DPI for `render_mode: png` -- high enough to stay crisp
 # at typical slide-figure sizes without ballooning file size.
@@ -319,7 +320,7 @@ def render_native(qmd_path: Path, *, config: QuartoExecutionConfig) -> str:
     would come out as several short, prematurely-broken paragraphs
     instead of one.
     """
-    source_text = qmd_path.read_text(encoding="utf-8")
+    source_text = read_project_text(qmd_path)
     check_fragment_complexity(source_text, label=str(qmd_path))
     _require_quarto(config)
 
@@ -452,7 +453,7 @@ def render_image(
     are optional style hints applied to the fragment's prose, not its
     math -- see `_inject_typst_autosize`'s own docstring for why.
     """
-    source_text = qmd_path.read_text(encoding="utf-8")
+    source_text = read_project_text(qmd_path)
     check_fragment_complexity(source_text, label=str(qmd_path))
     _require_quarto(config)
 

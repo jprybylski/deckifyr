@@ -73,6 +73,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import editor, projectio, templates
 from deckifyr.diagnostics import warnings_payload
+from deckifyr.offline import offline_from_repo_message, offline_mode
 from deckifyr.plan import expand_presentation
 from deckifyr.policy import (
     ALLOW_OUTSIDE_PROJECT_ENV,
@@ -88,6 +89,7 @@ from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
 from deckifyr.schema.results import RESULT_VERSION
+from deckifyr.textio import read_project_text
 
 EXIT_OK = 0
 EXIT_VALIDATION_ERROR = 1
@@ -144,6 +146,11 @@ def _cmd_init(args: argparse.Namespace) -> dict[str, Any]:
     if args.from_dir and args.from_repo:
         raise DeckifyrError(
             "--from-dir and --from-repo are mutually exclusive", code=ErrorCode.IO
+        )
+
+    if args.from_repo and offline_mode():
+        raise DeckifyrError(
+            offline_from_repo_message(args.from_repo), code=ErrorCode.IO
         )
 
     target = Path(args.directory)
@@ -561,7 +568,7 @@ def _inspect_pptx(path: Path) -> dict[str, Any]:
     manifest_path = path.with_name(path.stem + ".manifest.json")
     if manifest_path.is_file():
         try:
-            manifest_data = json.loads(manifest_path.read_text())
+            manifest_data = json.loads(read_project_text(manifest_path))
         except (OSError, json.JSONDecodeError):
             manifest_data = None
         if isinstance(manifest_data, dict):
@@ -608,10 +615,20 @@ def _cmd_serve(args: argparse.Namespace) -> dict[str, Any]:
     try:
         import uvicorn
     except ImportError as exc:
+        if args.launcher == "r":
+            how = (
+                "re-run `initialize_deck_project()`, which adds fastapi and "
+                "uvicorn to the project's deckifyr dependency group (or "
+                "install them into the Python environment in use)"
+            )
+        else:
+            how = (
+                "run `uv sync --extra web` in a checkout, or install the "
+                "release wheel with the [web] extra "
+                "(e.g. `uv add \"deckifyr[web] @ <wheel URL>\"`)"
+            )
         raise DeckifyrError(
-            "the 'web' extra is not installed -- run `uv sync --extra web` "
-            "in a checkout, or install the release wheel with the [web] "
-            "extra (e.g. `uv add \"deckifyr[web] @ <wheel URL>\"`)",
+            f"the 'web' extra is not installed -- {how}",
             code=ErrorCode.IO,
         ) from exc
 

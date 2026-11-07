@@ -21,6 +21,7 @@ from pathlib import Path
 
 from deckifyr.resolvers import BuildContext, ResolvedContent
 from deckifyr.schema.errors import ContentValidationError
+from deckifyr.textio import READ_ENCODING
 
 _SUPPORTED_SUFFIXES = {".csv", ".parquet"}
 
@@ -51,7 +52,7 @@ def _resolve_local_path(value: str, context: BuildContext) -> Path:
 
 
 def _read_csv(path: Path) -> TableData:
-    with path.open(newline="", encoding="utf-8") as handle:
+    with path.open(newline="", encoding=READ_ENCODING) as handle:
         rows = list(csv.reader(handle))
     if not rows:
         raise ContentValidationError(f"table source {path} is empty")
