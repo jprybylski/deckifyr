@@ -480,3 +480,50 @@ test_that("initialize_deck_project(python_env=) refuses an environment missing m
     )
   )
 })
+
+# ---- remaining python_env branches ----------------------------------------
+
+test_that(".absolute_path() resolves relative paths against `dir`, leaves absolute ones", {
+  expect_equal(.absolute_path("envs/py", dir = "/work"), "/work/envs/py")
+  expect_equal(.absolute_path("/opt/py", dir = "/work"), "/opt/py")
+  expect_equal(.absolute_path("C:/envs/py", dir = "/work"), "C:/envs/py")
+  expect_equal(.absolute_path("C:\\envs\\py", dir = "/work"), "C:\\envs\\py")
+})
+
+test_that(".python_exe() accepts a relative environment path", {
+  skip_on_os("windows")
+  env <- make_fake_env()
+  parent <- dirname(env)
+  old <- setwd(parent)
+  on.exit(setwd(old))
+  expect_equal(
+    normalizePath(.python_exe(basename(env))),
+    normalizePath(file.path(env, "bin", "python"))
+  )
+})
+
+test_that(".python_env_vars() keeps an existing PYTHONPATH after the bundled source", {
+  old <- Sys.getenv("PYTHONPATH", unset = NA_character_)
+  on.exit(if (is.na(old)) Sys.unsetenv("PYTHONPATH") else Sys.setenv(PYTHONPATH = old))
+
+  Sys.unsetenv("PYTHONPATH")
+  expect_equal(.python_env_vars("/src")[["PYTHONPATH"]], "/src")
+
+  Sys.setenv(PYTHONPATH = "/already/there")
+  expect_equal(
+    .python_env_vars("/src")[["PYTHONPATH"]],
+    paste("/src", "/already/there", sep = .Platform$path.sep)
+  )
+})
+
+test_that(".verify_python_env() reports an interpreter that cannot run", {
+  skip_on_os("windows")
+  env <- tempfile("fake-env-")
+  dir.create(file.path(env, "bin"), recursive = TRUE)
+  python <- file.path(env, "bin", "python")
+  writeLines(c("#!/bin/sh", "echo 'segfault, or similar' >&2", "exit 3"), python)
+  Sys.chmod(python, "0755")
+
+  expect_error(.verify_python_env(env), class = "deckifyr_python_env_invalid")
+  expect_error(.verify_python_env(env), "could not be run.*segfault")
+})
