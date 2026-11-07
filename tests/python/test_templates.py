@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -5,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from deckifyr import templates
+from deckifyr.cli import main
 from deckifyr.schema.errors import DeckifyrError, MissingDependencyError
 from deckifyr.templates import (
     detect_template,
@@ -278,3 +281,53 @@ def test_fetch_git_template_requires_git_on_path(tmp_path, monkeypatch):
     with pytest.raises(MissingDependencyError):
         with fetch_git_template(str(tmp_path), ref=None, subdir=None):
             pass
+
+
+# --- Offline mode (issue #93) ---------------------------------------------
+
+
+@pytest.mark.parametrize("var", ["DECKIFYR_OFFLINE", "UV_OFFLINE"])
+def test_init_from_repo_is_refused_offline(tmp_path, monkeypatch, capsys, var):
+    monkeypatch.setenv(var, "1")
+
+    def boom(*args, **kwargs):  # a clone must never be attempted
+        raise AssertionError("git was invoked in offline mode")
+
+    monkeypatch.setattr(templates, "_run_git", boom)
+    monkeypatch.setattr(templates.subprocess, "run", boom)
+
+    exit_code = main(["--json", "init", str(tmp_path / "p"), "--from-repo", "acme/decks"])
+
+    assert exit_code != 0
+    error = json.loads(capsys.readouterr().err)
+    assert error["status"] == "error"
+    assert "offline mode" in error["message"]
+    assert "--from-dir" in error["message"]
+
+
+def test_fetch_git_template_refuses_offline_before_touching_git(monkeypatch):
+    monkeypatch.setenv("DECKIFYR_OFFLINE", "true")
+    monkeypatch.setattr(templates, "_require_git", lambda: pytest.fail("git was looked up"))
+
+    with pytest.raises(DeckifyrError, match="offline mode"):
+        with templates.fetch_git_template("https://example.invalid/x.git", ref=None, subdir=None):
+            pass
+
+
+def test_init_from_dir_still_works_offline(minimal_deck_dir, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DECKIFYR_OFFLINE", "1")
+
+    exit_code = main(
+        ["--json", "init", str(tmp_path / "p"), "--from-dir", str(minimal_deck_dir)]
+    )
+
+    assert exit_code == 0
+
+
+@pytest.mark.parametrize("value", ["0", "", "false", "no"])
+def test_offline_mode_off_for_falsy_values(monkeypatch, value):
+    from deckifyr.offline import offline_mode
+
+    monkeypatch.setenv("DECKIFYR_OFFLINE", value)
+    monkeypatch.setenv("UV_OFFLINE", value)
+    assert offline_mode() is False

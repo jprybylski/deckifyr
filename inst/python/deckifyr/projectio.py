@@ -29,6 +29,7 @@ from deckifyr.schema.errors import DeckifyrError, ErrorCode
 from deckifyr.schema.layouts import LayoutsDocument
 from deckifyr.schema.presentation import PresentationDocument
 from deckifyr.schema.units import UnitParseError, is_unitless, parse_length
+from deckifyr.textio import WRITE_ENCODING, read_project_text
 
 
 def format_pydantic_error(exc: PydanticValidationError, source: str) -> str:
@@ -154,7 +155,7 @@ def load_project(
                 f"presentation file not found: {presentation_path}", code=ErrorCode.IO
             )
         try:
-            presentation_data = yaml.safe_load(presentation_path.read_text())
+            presentation_data = yaml.safe_load(read_project_text(presentation_path))
             presentation = PresentationDocument.model_validate(presentation_data)
         except PydanticValidationError as exc:
             raise DeckifyrError(
@@ -170,7 +171,7 @@ def load_project(
     if design_data is None:
         if not design_path.is_file():
             raise DeckifyrError(f"design file not found: {design_path}", code=ErrorCode.IO)
-        design_data = yaml.safe_load(design_path.read_text())
+        design_data = yaml.safe_load(read_project_text(design_path))
 
     try:
         design = DesignDocument.model_validate(design_data)
@@ -200,7 +201,7 @@ def load_project(
             raise DeckifyrError(
                 f"layouts file not found: {layouts_path}", code=ErrorCode.IO
             )
-        layouts_data = yaml.safe_load(layouts_path.read_text())
+        layouts_data = yaml.safe_load(read_project_text(layouts_path))
 
     try:
         layouts = LayoutsDocument.model_validate(layouts_data)
@@ -234,7 +235,7 @@ def read_yaml(path: Path) -> Any:
     if not path.is_file():
         raise DeckifyrError(f"file not found: {path}", code=ErrorCode.IO)
     try:
-        return yaml.safe_load(path.read_text())
+        return yaml.safe_load(read_project_text(path))
     except yaml.YAMLError as exc:
         raise DeckifyrError(f"{path}: invalid YAML: {exc}", code=ErrorCode.IO) from exc
 
@@ -250,7 +251,7 @@ def write_yaml(path: Path, data: Any) -> None:
     # not just round-trip machine state.
     text = yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
     tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(text)
+    tmp_path.write_text(text, encoding=WRITE_ENCODING)
     tmp_path.replace(path)
 
 
@@ -311,7 +312,7 @@ def validate_presentation_data(
         layouts_path = path.parent / presentation.layouts
         if layouts_path.is_file():
             try:
-                layouts_data = yaml.safe_load(layouts_path.read_text())
+                layouts_data = yaml.safe_load(read_project_text(layouts_path))
             except yaml.YAMLError:
                 layouts_data = None
 

@@ -1526,6 +1526,42 @@ unitless box length as `W_UNITLESS_LENGTH` (`projectio.
 collect_geometry_warnings`; strict mode already rejects them in
 `load_project`).
 
+**Offline mode and `python_env` (issue #93, 0.3.6) -- what decided the
+shape.** `R/offline.R` holds all of it. Offline is `options(deckifyr.offline)`,
+`DECKIFYR_OFFLINE` or `UV_OFFLINE`; on, `.uv_run_args()` inserts `--no-sync` and
+`.with_offline_env()` sets `UV_OFFLINE`/`UV_NO_INDEX`/`UV_PYTHON_DOWNLOADS=never`/
+`DECKIFYR_OFFLINE` **in the R process** for the duration of the call and restores
+them. The variables cannot be passed to pyro: `run_python_script()` builds its
+subprocess environment as `"current"` plus its own, so the process environment
+is the only channel (and `deck_serve()`, which builds `env_vars` itself, appends
+`.offline_env_vars()` explicitly). Setting `DECKIFYR_OFFLINE` is also how the
+Python side learns about an R option, so `init --from-repo` is refused by the
+engine (`deckifyr.offline`, `_cmd_init` and `fetch_git_template`) however it was
+reached -- `E_IO`, reusing the existing code because nothing needs to branch on
+it. Provisioning in `initialize_deck_project()` leaves `UV_NO_INDEX` unset:
+syncing a fresh environment from uv's cache still has to resolve index names,
+only the network must be off; `--no-sync` runs never resolve anything, so they
+get both. Proven against a real stale lock and a dead `HTTPS_PROXY`: without
+offline mode `uv run` tried `pypi.org` and failed, with it the call succeeded and
+`uv.lock` was untouched. `python_env` runs `<env>/bin/python -m deckifyr` through
+`processx::run` with the same stderr-callback handshake (so structured errors
+still surface) and `PYTHONPATH` set to the bundled engine; `.absolute_path()`
+must not follow symlinks (a venv's `bin/python` is one, and Python finds
+`pyvenv.cfg` from the path it was invoked as). The group `initialize_deck_project()`
+writes now carries the `web` and `preview` extras' packages
+(`.deckifyr_group_deps()`; a test pins that against `pyproject.toml`).
+
+**Project text files are read as UTF-8 with an optional BOM (issue #94,
+`deckifyr.textio`).** `read_project_text()`/`READ_ENCODING` (`utf-8-sig`) is used
+for every project YAML/JSON/CSV/`.qmd` read; never reintroduce a bare
+`Path.read_text()` for project input. The bug was not visible on macOS/Linux:
+PyYAML skips a leading U+FEFF itself, so it only reproduces where the default
+encoding is cp1252 (Windows), where the BOM's three bytes become literal
+characters at the start of the first key -- confirmed on a real Windows host with
+PowerShell 5.1's `Set-Content -Encoding utf8`. `tests/python/test_bom.py`
+therefore simulates a cp1252 default (autouse fixture) so it fails without the
+fix on any OS. Writers (`write_yaml`) stay BOM-less UTF-8 (`WRITE_ENCODING`).
+
 **Every schema document requires an explicit `deckifyr:` version field
 (spec §7.1), checked by one shared validator.**
 `deckifyr.schema.version.check_schema_version()` is reused by all three

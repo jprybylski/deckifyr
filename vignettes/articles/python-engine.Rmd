@@ -315,6 +315,31 @@ uv sync --extra dev       # test suite (pytest, pyarrow, ...)
 CSV table sources work with no extra; a project using only CSV
 `table` elements never pays for `pyarrow`.
 
+## Offline use
+
+Nothing in deckifyr reaches the network unless you ask it to, but `uv` does by
+default: `uv run` re-locks and syncs a project whose lock is stale, and can
+download a Python. For a firewalled machine, turn on offline mode with
+`options(deckifyr.offline = TRUE)`, `DECKIFYR_OFFLINE=1` or `UV_OFFLINE=1`. The
+R wrappers then run `uv run --no-sync` with `UV_OFFLINE`, `UV_NO_INDEX` and
+`UV_PYTHON_DOWNLOADS=never`, so the environment that is already there is used
+as it is. The Python CLI honours `DECKIFYR_OFFLINE`/`UV_OFFLINE` as well:
+`init --from-repo` is refused (it needs a `git clone`); clone the repository
+while you have access and use `--from-dir`.
+
+To skip uv entirely, point deckifyr at an environment you already have (a venv,
+or a project directory holding a `.venv`) with `python-pptx`, `pydantic`,
+`pyyaml` and `pillow`; add `fastapi`/`uvicorn` for `deck_serve()` and `pymupdf`
+for previews:
+
+```r
+options(deckifyr.python_env = "/opt/envs/deckifyr")  # or DECKIFYR_PYTHON_ENV
+```
+
+`initialize_deck_project()` writes `fastapi`, `uvicorn` and `pymupdf` to the
+project's `deckifyr` dependency group along with the core packages, so `serve`
+and previews work after a plain initialization.
+
 ## Tests
 
 ```bash

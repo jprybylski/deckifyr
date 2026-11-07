@@ -38,6 +38,7 @@ from deckifyr.diagnostics import (
 )
 from deckifyr.resolvers import BuildContext, ResolvedContent
 from deckifyr.schema.errors import ContentValidationError
+from deckifyr.textio import read_project_text
 
 MAGIC_PREFIX = "{rpfy}:"
 
@@ -176,7 +177,7 @@ def _load_metadata(
         ]
 
     try:
-        metadata = json.loads(sidecar.read_text())
+        metadata = json.loads(read_project_text(sidecar))
     except json.JSONDecodeError as exc:
         if fail_on_missing:
             raise ContentValidationError(f"{sidecar}: invalid JSON metadata sidecar: {exc}") from exc
@@ -222,7 +223,7 @@ def load_standard_footnotes(path: Path) -> dict[str, Any]:
 
     if not path.is_file():
         raise ContentValidationError(f"standard_footnotes.yaml not found: {path}")
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(read_project_text(path))
     return data or {}
 
 

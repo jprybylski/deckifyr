@@ -495,9 +495,8 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
     )
   }
 
-  paths <- pyro::get_venv_uv_paths()
-  cli_args <- c(
-    "run", "-m", "deckifyr", "serve",
+  serve_args <- c(
+    "serve",
     "--host", host, "--port", as.character(port),
     "--project", project, "--presentation", presentation,
     # Surfaced back via GET /api/health so the web editor's "no project
@@ -508,9 +507,23 @@ deck_serve <- function(project = ".", host = "127.0.0.1", port = 8000,
     "--launcher", "r",
     trust_args
   )
-  env_vars <- c("current", VIRTUAL_ENV = paths$venv, PYTHONPATH = python_src)
+  python_env <- .configured_python_env()
+  if (is.null(python_env)) {
+    paths <- pyro::get_venv_uv_paths()
+    command <- paths$uv
+    cli_args <- c(.uv_run_args(), serve_args)
+    env_vars <- c("current", VIRTUAL_ENV = paths$venv, PYTHONPATH = python_src)
+  } else {
+    # A pre-provisioned environment: run its interpreter directly, no uv.
+    command <- .python_exe(python_env)
+    cli_args <- c("-m", "deckifyr", serve_args)
+    env_vars <- .python_env_vars(python_src)
+  }
+  # The server is a separate process, so offline mode has to be passed to it
+  # explicitly (it is not run through .with_offline_env()).
+  env_vars <- c(env_vars, .offline_env_vars())
 
-  process <- .launch_server_process(paths$uv, cli_args, env_vars)
+  process <- .launch_server_process(command, cli_args, env_vars)
   .wait_for_server(host, port, process, timeout)
 
   url <- sprintf("http://%s:%s", host, port)

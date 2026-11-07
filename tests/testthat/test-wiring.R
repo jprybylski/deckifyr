@@ -30,6 +30,40 @@ test_that("deck_validate() reports a valid project as valid", {
   expect_equal(result$slide_count, 2)
 })
 
+test_that("offline mode works through the real bridge and reaches the Python engine (issue #93)", {
+  skip_if_not(nzchar(Sys.which("uv")), "uv not on PATH")
+
+  old <- options(deckifyr.offline = TRUE)
+  old_env <- Sys.getenv(c("UV_OFFLINE", "UV_CACHE_DIR", "HTTPS_PROXY", "HTTP_PROXY"), unset = NA_character_)
+  on.exit({
+    options(old)
+    for (n in names(old_env)) {
+      if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, as.list(old_env[n]))
+    }
+  })
+  # Nothing may be reachable: a dead proxy for anything that tries, and an
+  # empty uv cache so a sync could not be satisfied locally either.
+  Sys.setenv(
+    HTTPS_PROXY = "http://127.0.0.1:9", HTTP_PROXY = "http://127.0.0.1:9",
+    UV_CACHE_DIR = file.path(tempdir(), "deckifyr-wiring-empty-uv-cache")
+  )
+
+  # `uv run --no-sync` runs the existing environment as it is...
+  result <- deck_validate(file.path(minimal_deck, "presentation.yaml"))
+  expect_true(result$valid)
+
+  # ...and DECKIFYR_OFFLINE got through to the Python CLI, which refuses a
+  # git clone (so this fails fast instead of reaching for the network).
+  target <- file.path(tempdir(), "deckifyr-wiring-offline-init")
+  unlink(target, recursive = TRUE)
+  expect_error(
+    .run_deckifyr_cli(c("init", target, "--from-repo", "acme/decks")),
+    "offline mode.*--from-dir"
+  )
+  expect_false(dir.exists(target))
+  expect_equal(Sys.getenv("DECKIFYR_OFFLINE", unset = "unset"), "unset")
+})
+
 test_that("deck_build() writes a real .pptx and manifest", {
   skip_if_not(nzchar(Sys.which("uv")), "uv not on PATH")
 

@@ -78,6 +78,7 @@ from typing import Any, Iterator, Literal
 from pydantic import ValidationError as PydanticValidationError
 
 from deckifyr import projectio
+from deckifyr.offline import offline_from_repo_message, offline_mode
 from deckifyr.schema.errors import DeckifyrError, ErrorCode, MissingDependencyError
 from deckifyr.schema.presentation import PresentationDocument
 from deckifyr.schema.version import CURRENT_SCHEMA_VERSION
@@ -194,6 +195,10 @@ def fetch_git_template(
     anything they need out of the yielded path before the `with` block
     ends.
     """
+    # Defense in depth: `_cmd_init` already refuses before getting here, but
+    # this is the one place a clone happens, whoever the caller is.
+    if offline_mode():
+        raise DeckifyrError(offline_from_repo_message(clone_url), code=ErrorCode.IO)
     _require_git()
     with tempfile.TemporaryDirectory(prefix="deckifyr-template-") as tmp:
         repo_dir = Path(tmp) / "repo"
