@@ -935,7 +935,11 @@ def _add_table_shape(
     ) -> None:
         cell = table.cell(row, col)
         cell.text = text
-        run = cell.text_frame.paragraphs[0].runs[0]
+        paragraph = cell.text_frame.paragraphs[0]
+        # python-pptx creates no run for an empty string (an empty CSV
+        # field, issue #96), so add one: the cell stays empty but keeps the
+        # table's font/size for anyone typing into it later in PowerPoint.
+        run = paragraph.runs[0] if paragraph.runs else paragraph.add_run()
         run.font.name = font_name
         run.font.size = Pt(font_size_pt)
         run.font.bold = bold

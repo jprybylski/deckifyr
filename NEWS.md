@@ -1,5 +1,16 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Fixed
+
+* A `table` element whose CSV has an empty header or data cell builds (issue
+  #96). It failed at build time with `E_INTERNAL: IndexError: tuple index out
+  of range`, because python-pptx creates no run for an empty string and the
+  cell's font was applied to `runs[0]`. The cell stays empty in the PPTX and
+  now carries an empty, styled run, so text typed into it later in PowerPoint
+  keeps the table's font. Non-empty cells are unchanged.
+
 # deckifyr 0.3.6
 
 ## Added
