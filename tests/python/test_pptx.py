@@ -396,6 +396,42 @@ def test_table_element_builds_a_native_table_from_csv(project):
     assert "sha256" in element_entry
 
 
+@pytest.mark.parametrize(
+    ("csv_text", "empty_cell", "filled_cell", "expected_rows"),
+    [
+        # An empty data cell (issue #96).
+        ("metric,value\na,1\nb,\n", (2, 1), (1, 1), [["metric", "value"], ["a", "1"], ["b", ""]]),
+        # An empty header cell.
+        ("metric,\na,1\n", (0, 1), (1, 1), [["metric", ""], ["a", "1"]]),
+    ],
+    ids=["empty-data-cell", "empty-header-cell"],
+)
+def test_table_with_an_empty_cell_builds_and_keeps_it_empty_and_styled(
+    project, csv_text, empty_cell, filled_cell, expected_rows
+):
+    (project / "data.csv").write_text(csv_text)
+
+    result = _build(project, _table_presentation(), _design())
+
+    prs = Presentation(str(result.output_path))
+    (slide,) = list(prs.slides)
+    (graphic_frame,) = list(slide.shapes)
+    table = graphic_frame.table
+    assert [[cell.text for cell in row.cells] for row in table.rows] == expected_rows
+
+    # The empty cell stays empty but carries the table's font, so text typed
+    # into it later in PowerPoint is not unstyled.
+    (empty_run,) = table.cell(*empty_cell).text_frame.paragraphs[0].runs
+    assert empty_run.text == ""
+    assert empty_run.font.name == "Arial"
+    assert empty_run.font.size is not None
+    # A non-empty cell is styled exactly as before.
+    (filled_run,) = table.cell(*filled_cell).text_frame.paragraphs[0].runs
+    assert filled_run.text == "1"
+    assert filled_run.font.name == "Arial"
+    assert filled_run.font.size == empty_run.font.size
+
+
 def test_table_style_applies_fills_header_text_color_and_borders(project):
     (project / "data.csv").write_text("name,score\nAda,10\nGrace,9\n")
     design = DesignDocument(
