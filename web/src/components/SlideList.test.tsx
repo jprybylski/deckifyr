@@ -333,3 +333,70 @@ describe("SlideList Layouts mode (issue #30)", () => {
     await waitFor(() => expect(addLayout).toHaveBeenCalledWith("new-layout"));
   });
 });
+
+describe("SlideList incomplete slides (issue #101)", () => {
+  const INCOMPLETE: ResolvedSlide = {
+    id: "new-slide",
+    notes: null,
+    elements: [
+      element({ id: "title", unfilled: true, required: true }),
+      element({ id: "content", type: "slot", unfilled: true }),
+    ],
+  };
+
+  it("flags a slide with an empty required zone and says what is missing", () => {
+    renderList(makePlan({ slides: [SLIDE, INCOMPLETE] }));
+
+    expect(screen.getByLabelText("Needs content: title")).toBeInTheDocument();
+    // Only the incomplete slide is flagged.
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+  });
+
+  it("flags a slide that could not be planned, with the reason", () => {
+    const broken: ResolvedSlide = {
+      id: "broken",
+      notes: null,
+      elements: [],
+      error: "slide 'broken': unknown style 'nope'",
+    };
+    renderList(makePlan({ slides: [SLIDE, broken] }));
+
+    expect(screen.getByLabelText(/unknown style 'nope'/)).toBeInTheDocument();
+    // Still listed (and removable) like any other slide.
+    expect(screen.getByText(/2\. broken/)).toBeInTheDocument();
+    expect(screen.getByTitle('Remove slide "broken"')).toBeInTheDocument();
+  });
+
+  it("does not count unfilled zones as the slide's elements", () => {
+    renderList(makePlan({ slides: [INCOMPLETE] }));
+
+    expect(screen.getByText("(0)*")).toBeInTheDocument();
+  });
+
+  it("selects the new slide after adding it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, { layouts: { "title-content": {}, blank: {} } })
+      )
+    );
+    // The mocked plan already lists the slide `addSlide` would create, as
+    // the real refetch would by the time the form closes.
+    const fresh: ResolvedSlide = { id: "fresh", notes: null, elements: [] };
+    const addSlide = vi.fn().mockResolvedValue(undefined);
+    renderList(makePlan({ slides: [SLIDE, fresh], addSlide }));
+
+    fireEvent.click(screen.getByText("+ Add slide"));
+    fireEvent.change(screen.getByLabelText("New slide id"), { target: { value: "fresh" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(addSlide).toHaveBeenCalledWith({ id: "fresh", layout: null })
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/2\. fresh/).closest("button")).toHaveClass(
+        "slide-list__item--active"
+      )
+    );
+  });
+});

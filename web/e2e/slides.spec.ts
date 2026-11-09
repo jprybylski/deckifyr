@@ -21,15 +21,8 @@ test("adds a slide with a picked layout, then it's selectable in the list", asyn
 
   await list.getByText("+ Add slide").click();
   await list.getByLabel("New slide id").fill("e2e-new-slide");
-  // "blank" (a real, named, empty layout, spec section 7.5) rather than
-  // "title-content" -- that layout's own "title" zone is `required:
-  // true`, which a freshly-added slide with no content overrides of its
-  // own can never satisfy, so `GET /api/plan`'s real-slide resolution
-  // would (correctly) reject the whole plan until content is added. Not
-  // a bug this feature needs to route around -- see the original
-  // issue's own "quick layout (or empty except for furniture)" framing,
-  // which already expects Add's common case to be exactly this kind of
-  // still-needs-content-filled-in starting point.
+  // "blank" keeps this test about add/select only; filling a layout with a
+  // required zone (title-content) has its own tests below (issue #101).
   await list.locator(".slide-list__add-form").getByLabel("Layout").selectOption("blank");
   await list.getByRole("button", { name: "Add" }).click();
 
@@ -89,4 +82,72 @@ test("duplicating a slide inserts a '-copy' immediately after it, no confirm nee
 
   await expect(list.getByText(/2\. title-copy/)).toBeVisible();
   await expect(list.getByText(/3\. content-slide/)).toBeVisible();
+});
+
+test("a title-content slide can be filled in entirely in the app (issue #101)", async ({
+  page,
+}) => {
+  const list = page.locator(".slide-list");
+  await list.getByText("+ Add slide").click();
+  await list.getByLabel("New slide id").fill("e2e-filled");
+  await list.locator(".slide-list__add-form").getByLabel("Layout").selectOption("title-content");
+  await list.getByRole("button", { name: "Add" }).click();
+
+  // Lands on the new slide, flagged as needing its required title.
+  const row = list.locator(".slide-list__row", { hasText: "e2e-filled" });
+  await expect(row.getByLabel("Needs content: title")).toBeVisible();
+  const elements = page.locator(".element-list");
+  await expect(elements.getByText("title (required) -- empty")).toBeVisible();
+  await expect(elements.getByText("content -- empty")).toBeVisible();
+
+  // Title: a text zone, filled from the inspector's Content field.
+  await elements.getByText("title (required) -- empty").click();
+  await elements.getByLabel("Content").fill("A brand new title");
+  await elements.getByRole("button", { name: "Set content" }).click();
+  await expect(elements.getByText("text: title")).toBeVisible();
+  await expect(row.getByLabel("Needs content: title")).toHaveCount(0);
+
+  // Content: a slot, which needs a type chosen -- Fill... keeps the layout's box.
+  await elements.getByRole("button", { name: "Fill…" }).click();
+  await elements.getByLabel("Value").fill("Some body text");
+  await elements.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(elements.getByText("markdown: content")).toBeVisible();
+  await expect(row.getByText("(2)*")).toBeVisible();
+
+  // Nothing left to fill, and the whole deck builds-clean plan-wise.
+  const plan = await (await page.request.get("/api/plan")).json();
+  const slide = plan.slides.find((s: { id: string }) => s.id === "e2e-filled");
+  expect(slide.error).toBeUndefined();
+  expect(slide.elements.some((e: { unfilled?: boolean }) => e.unfilled)).toBe(false);
+});
+
+test("an incomplete slide never hides the others after a reload, and can be removed (issue #101)", async ({
+  page,
+}) => {
+  const list = page.locator(".slide-list");
+  await list.getByText("+ Add slide").click();
+  await list.getByLabel("New slide id").fill("e2e-incomplete");
+  await list.locator(".slide-list__add-form").getByLabel("Layout").selectOption("title-content");
+  await list.getByRole("button", { name: "Add" }).click();
+  await expect(list.getByText(/3\. e2e-incomplete/)).toBeVisible();
+
+  // The working copy (and its incomplete slide) survives a reload -- that
+  // is the case that used to blank the whole editor.
+  await page.reload();
+
+  await expect(list.getByText(/1\. title/)).toBeVisible();
+  await expect(list.getByText(/2\. content-slide/)).toBeVisible();
+  const row = list.locator(".slide-list__row", { hasText: "e2e-incomplete" });
+  await expect(row.getByLabel("Needs content: title")).toBeVisible();
+  await expect(page.locator(".slide-list__error")).toHaveCount(0);
+
+  // Other slides are still editable ...
+  await list.getByText(/2\. content-slide/).click();
+  await expect(page.locator(".slide-canvas canvas").first()).toBeVisible();
+
+  // ... and the incomplete one can simply be removed.
+  await row.getByTitle('Remove slide "e2e-incomplete"').click();
+  await row.getByRole("button", { name: "Confirm" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(list.getByText(/2\. content-slide/)).toBeVisible();
 });

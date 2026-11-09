@@ -47,6 +47,9 @@ export default function ElementInspector({ plan }: Props) {
   // selected element (or its server-side value) changes -- otherwise a
   // stale input value could linger after an undo/redo or a drag commit.
   const [fields, setFields] = useState({ x: "", y: "", width: "", height: "", rotation: "", z_index: "" });
+  // The element's own text (issue #101): the keyboard-accessible way to fill
+  // a slide's title/body, alongside the canvas's click-to-edit.
+  const [contentText, setContentText] = useState("");
 
   useEffect(() => {
     if (!element) return;
@@ -59,6 +62,7 @@ export default function ElementInspector({ plan }: Props) {
       rotation: String(element.rotation),
       z_index: String(element.z_index),
     });
+    setContentText(typeof element.value === "string" ? element.value : "");
   }, [element]);
 
   if (!element || !slide) {
@@ -91,6 +95,13 @@ export default function ElementInspector({ plan }: Props) {
   const rotationSupported = !isFurnitureSlideSelected || furnitureElementSupportsRotation(element.id);
   const zIndexSupported = !isFurnitureSlideSelected || furnitureElementSupportsZIndex(element.id);
   const valueSupported = !isFurnitureSlideSelected || furnitureElementSupportsValue(element.id);
+  // Only a real slide's own `text`/`markdown` element: furniture text comes
+  // from presentation.yaml, and a layout zone's value belongs to the slides.
+  const contentEditable =
+    !isFurniture &&
+    !isFurnitureSlideSelected &&
+    !isLayoutsMode &&
+    (element.type === "text" || element.type === "markdown");
   // Re-bind as plain (non-optional) locals right after the guard above
   // -- TypeScript can't carry narrowing from an outer `if` into a
   // nested function declaration (the closure could, in principle, run
@@ -118,6 +129,17 @@ export default function ElementInspector({ plan }: Props) {
     const inverse = inverseForBoxPatch(currentElement, patch);
     try {
       await plan.applyElementPatch(currentSlide.id, currentElement.id, patch, inverse, "edit geometry");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function submitContent() {
+    const patch = { value: contentText };
+    const inverse = inverseForBoxPatch(currentElement, patch);
+    try {
+      await plan.applyElementPatch(currentSlide.id, currentElement.id, patch, inverse, "edit text");
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -173,6 +195,21 @@ export default function ElementInspector({ plan }: Props) {
         )
       )}
 
+      {contentEditable && (
+        <>
+          <label>
+            Content
+            <textarea
+              value={contentText}
+              rows={3}
+              onChange={(e) => setContentText(e.target.value)}
+            />
+          </label>
+          <button type="button" onClick={() => void submitContent()}>
+            Set content
+          </button>
+        </>
+      )}
       <label>
         X (in)
         <input value={fields.x} onChange={(e) => setFields({ ...fields, x: e.target.value })} />

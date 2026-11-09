@@ -142,6 +142,11 @@ export function isDraggableLayoutZone(): boolean {
 }
 
 export function elementLabel(element: ResolvedElement): string {
+  // An unfilled layout zone (issue #101) says what is missing, not what
+  // it is: this is the prompt the user acts on.
+  if (element.unfilled) {
+    return `${element.id}${element.required ? " (required)" : ""} -- empty`;
+  }
   if (isFurnitureElement(element)) {
     return `furniture: ${element.id.slice(FURNITURE_PREFIX.length)}`;
   }
@@ -466,6 +471,12 @@ export default function SlideCanvas({ plan }: Props) {
           Status indicator in Deck Options.
         </div>
       )}
+      {slide.error && !isLayoutsMode && !isFurnitureSlideSelected && (
+        <div className="slide-canvas__warning" role="alert">
+          This slide can&rsquo;t be previewed: {slide.error} &mdash; fix it in Config, or remove
+          the slide from the list. The other slides are unaffected.
+        </div>
+      )}
       {mutationError && (
         <div className="slide-canvas__error" role="alert">
           {mutationError}
@@ -568,21 +579,40 @@ export default function SlideCanvas({ plan }: Props) {
                   <Rect
                     width={width}
                     height={height}
-                    fill={isContentPlaceholderElement(element) ? "#e8eef7" : "#ffffff"}
-                    stroke={isSelected ? "#2457a6" : "#dddddd"}
+                    fill={
+                      element.unfilled
+                        ? "#fff8e6"
+                        : isContentPlaceholderElement(element)
+                          ? "#e8eef7"
+                          : "#ffffff"
+                    }
+                    stroke={isSelected ? "#2457a6" : element.unfilled ? "#c9a227" : "#dddddd"}
                     strokeWidth={isSelected ? 2 : 1}
+                    dash={element.unfilled ? [6, 4] : undefined}
                   />
                   <KonvaText
-                    text={isContentPlaceholderElement(element) ? elementLabel(element) : displayText(element)}
+                    text={
+                      element.unfilled || isContentPlaceholderElement(element)
+                        ? elementLabel(element)
+                        : displayText(element)
+                    }
                     width={width}
                     height={height}
                     padding={4}
                     fontSize={element.style?.size_pt ?? 14}
                     fontStyle={element.style?.bold ? "bold" : "normal"}
-                    fill={element.style?.color ?? "#202124"}
-                    opacity={element.style?.opacity ?? 1}
-                    align={isContentPlaceholderElement(element) ? "left" : konvaTextAlign(element)}
-                    verticalAlign={isContentPlaceholderElement(element) ? "top" : konvaVerticalAlign(element)}
+                    fill={element.unfilled ? "#6b5300" : (element.style?.color ?? "#202124")}
+                    opacity={element.unfilled ? 1 : (element.style?.opacity ?? 1)}
+                    align={
+                      element.unfilled || isContentPlaceholderElement(element)
+                        ? "left"
+                        : konvaTextAlign(element)
+                    }
+                    verticalAlign={
+                      element.unfilled || isContentPlaceholderElement(element)
+                        ? "top"
+                        : konvaVerticalAlign(element)
+                    }
                     wrap="word"
                     listening={false}
                   />

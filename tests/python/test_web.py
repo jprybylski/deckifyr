@@ -549,6 +549,94 @@ def test_add_slide_element_inserts_with_a_default_box(client):
     assert new_el["box"]["width"]
 
 
+# --- incomplete slides (issue #101) --------------------------------------
+
+
+def _add_title_content_slide(client, slide_id="incomplete"):
+    response = client.post("/api/slides", json={"id": slide_id, "layout": "title-content"})
+    assert response.status_code == 200, response.text
+
+
+def test_plan_survives_an_incomplete_slide_and_shows_its_zones_as_unfilled(client):
+    _add_title_content_slide(client)
+
+    response = client.get("/api/plan")
+    assert response.status_code == 200
+    slides = {s["id"]: s for s in response.json()["slides"]}
+    # The other slides are still there, untouched.
+    assert {"title", "content-slide", "incomplete"} <= set(slides)
+    assert "error" not in slides["content-slide"]
+    zones = {e["id"]: e for e in slides["incomplete"]["elements"]}
+    assert zones["title"]["unfilled"] is True and zones["title"]["required"] is True
+    assert zones["content"]["unfilled"] is True and zones["content"]["type"] == "slot"
+
+
+def test_plan_isolates_a_slide_that_cannot_be_planned(client):
+    # A slide the schema accepts but planning rejects: a style name that
+    # design.yaml does not define.
+    presentation = client.get("/api/config/presentation").json()
+    for slide in presentation["slides"]:
+        if slide["id"] == "content-slide":
+            slide["elements"]["title"]["style"] = "no-such-style"
+    assert client.put("/api/config/presentation", json=presentation).status_code == 200
+
+    response = client.get("/api/plan")
+    assert response.status_code == 200
+    slides = {s["id"]: s for s in response.json()["slides"]}
+    assert "no-such-style" in slides["content-slide"]["error"]
+    assert slides["content-slide"]["elements"] == []
+    assert "error" not in slides["title"] and slides["title"]["elements"]
+
+
+def test_patch_on_an_unoverridden_layout_zone_creates_the_override(client, project_dir):
+    _add_title_content_slide(client)
+    response = client.patch(
+        "/api/slides/incomplete/elements/title", json={"value": "My title"}
+    )
+    assert response.status_code == 200, response.text
+
+    slides = {s["id"]: s for s in client.get("/api/plan").json()["slides"]}
+    title = next(e for e in slides["incomplete"]["elements"] if e["id"] == "title")
+    assert title["unfilled"] is False and title["value"] == "My title"
+    # The override carries only what was set; the layout still owns geometry.
+    working = client.get("/api/config/presentation").json()
+    incomplete = next(s for s in working["slides"] if s["id"] == "incomplete")
+    assert incomplete["elements"]["title"] == {"value": "My title"}
+
+
+def test_patch_still_404s_for_an_id_that_is_not_a_layout_zone(client):
+    _add_title_content_slide(client)
+    response = client.patch("/api/slides/incomplete/elements/nope", json={"value": "x"})
+    assert response.status_code == 404
+
+
+def test_filling_a_slot_with_inherit_box_keeps_the_layout_geometry(client):
+    _add_title_content_slide(client)
+    response = client.post(
+        "/api/slides/incomplete/elements",
+        json={"id": "content", "type": "markdown", "value": "Body", "inherit_box": True},
+    )
+    assert response.status_code == 200, response.text
+    working = client.get("/api/config/presentation").json()
+    incomplete = next(s for s in working["slides"] if s["id"] == "incomplete")
+    assert "box" not in incomplete["elements"]["content"]
+
+    slides = {s["id"]: s for s in client.get("/api/plan").json()["slides"]}
+    content = next(e for e in slides["incomplete"]["elements"] if e["id"] == "content")
+    assert content["unfilled"] is False and content["value"] == "Body"
+    assert content["box"]["width"] == "11.9in"
+
+
+def test_an_incomplete_slide_still_fails_validation_and_build(client, project_dir):
+    _add_title_content_slide(client)
+    # The editor tolerates it, but the strict path must not: a required
+    # element with no content is still a build error.
+    assert client.post("/api/save").status_code == 200
+    from deckifyr.cli import main
+
+    assert main(["build", str(project_dir / "presentation.yaml")]) != 0
+
+
 def test_add_slide_element_duplicate_id_is_422(client):
     response = client.post(
         "/api/slides/title/elements", json={"id": "deck-title", "type": "text", "value": "hi"}

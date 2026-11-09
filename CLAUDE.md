@@ -1128,6 +1128,35 @@ subtle `×`/`⧉` icon pair in each row's own corner (replacing a full-width
 ...) with no naming prompt, since it's non-destructive and needs no
 confirm step the way Remove still does.
 
+**An incomplete slide must not break the editor (issue #101): `GET /api/plan`
+plans leniently and per slide, while build/validate stay strict.**
+`deckifyr.plan.expand_slide`/`expand_presentation` take `lenient` (default
+`False`): an empty layout zone comes back as a `ResolvedElement` with
+`unfilled=True` (a placeholder, including a *required* one, which strict mode
+raises on) instead of being skipped or raising -- except `footnotes` zones,
+`__furniture_*` ids and zones with no box. `expand_presentation(slide_errors=
+{})` additionally records one slide's `DeckifyrError` under its id and returns
+that slide empty, so `get_plan` reports it as `error` on that slide alone. The
+furniture check stays whole-plan on purpose (it is deck-wide: a bad
+`status_indicator` fails every slide identically and is fixed in Deck Options),
+so `expand_presentation` runs `_furniture_layout` once, outside the per-slide
+`try`, when `slide_errors` is given -- an existing test pins that `GET
+/api/plan` still returns 422 for it. Filling a placeholder needed two backend
+changes, both easy to lose: `patch_element` materializes an empty override
+when the id is a zone of the slide's layout (it used to 404 for anything not
+already in `slide.elements`), and `POST .../elements` accepts `inherit_box` so
+filling a `slot` keeps the layout's geometry instead of getting the default
+centered box. The editor never builds from this plan, so `unfilled` never
+reaches `deckifyr.pptx.compose`; `test_an_incomplete_slide_still_fails_
+validation_and_build` pins that. Frontend: `SlideList` flags a slide with
+`error` or an unfilled required zone (`slideProblem`) and excludes `unfilled`
+from the `(N)*` count; `ElementInspector` has a **Content** textarea for a
+slide's own `text`/`markdown` element (button is "Set content", not "Apply
+content" -- the latter made `getByRole("button", {name: "Apply"})` ambiguous
+in `discard.spec.ts`); `ElementList`'s **Fill...** reuses `AddElementForm` with
+the zone id fixed, only for non-text placeholders (a `slot`). `slot` is now in
+`ElementType` because the plan can emit it.
+
 **Build-tab improvements (issue #32) -- a real output-path directory
 browser, a build-time PDF-keeping change, and a shared preview-gallery
 component -- landed together as one issue but are three independent

@@ -284,4 +284,13 @@ describe("elementLabel", () => {
   it("labels any other ordinary element as type: id", () => {
     expect(elementLabel(element({ id: "box1", type: "shape" }))).toBe("shape: box1");
   });
+
+  it("labels an unfilled zone by what is missing, not what it is (issue #101)", () => {
+    expect(elementLabel(element({ id: "title", unfilled: true, required: true }))).toBe(
+      "title (required) -- empty"
+    );
+    expect(elementLabel(element({ id: "content", type: "slot", unfilled: true }))).toBe(
+      "content -- empty"
+    );
+  });
 });

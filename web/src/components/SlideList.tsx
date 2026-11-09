@@ -60,6 +60,7 @@ interface Props {
 }
 
 function AddSlideForm({ plan, onDone }: { plan: UsePlanResult; onDone: () => void }) {
+  const { dispatch } = useAppContext();
   const [layoutNames, setLayoutNames] = useState<string[] | null>(null);
   const [id, setId] = useState("");
   const [layout, setLayout] = useState("");
@@ -88,7 +89,11 @@ function AddSlideForm({ plan, onDone }: { plan: UsePlanResult; onDone: () => voi
     setBusy(true);
     setError(null);
     try {
-      await plan.addSlide({ id: id.trim(), layout: layout === "" ? null : layout });
+      const newId = id.trim();
+      await plan.addSlide({ id: newId, layout: layout === "" ? null : layout });
+      // Land on the new slide: a layout with required zones starts out
+      // incomplete, and filling it in is the very next thing to do.
+      dispatch({ type: "SELECT_SLIDE", slideId: newId });
       onDone();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -175,10 +180,19 @@ function AddLayoutForm({ plan, onDone }: { plan: UsePlanResult; onDone: () => vo
 }
 
 function elementCountLabel(item: ResolvedSlide, excludeFurniture: boolean): string {
+  // Unfilled zones (issue #101) are placeholders, not content.
   const count = excludeFurniture
-    ? item.elements.filter((el) => !isFurnitureElement(el)).length
+    ? item.elements.filter((el) => !isFurnitureElement(el) && !el.unfilled).length
     : item.elements.length;
   return excludeFurniture ? `(${count})*` : `(${count})`;
+}
+
+/** Why a slide needs attention (issue #101), or `null`: it couldn't be
+ * planned at all, or a required zone has no content yet. */
+export function slideProblem(item: ResolvedSlide): string | null {
+  if (item.error) return item.error;
+  const missing = item.elements.filter((el) => el.unfilled && el.required).map((el) => el.id);
+  return missing.length > 0 ? `Needs content: ${missing.join(", ")}` : null;
 }
 
 /** `"<id>-copy"`, or `"<id>-copy-2"`/`"-3"`/... if that's already taken
@@ -317,6 +331,16 @@ export default function SlideList({ plan }: Props) {
                 onClick={() => dispatch({ type: "SELECT_SLIDE", slideId: item.id })}
               >
                 {index + 1}. {layoutName}
+                {!isLayoutsMode && slideProblem(item) && (
+                  <span
+                    className="slide-list__warn"
+                    role="img"
+                    aria-label={slideProblem(item) ?? undefined}
+                    title={slideProblem(item) ?? undefined}
+                  >
+                    ⚠
+                  </span>
+                )}
                 <span className="slide-list__count" title={isLayoutsMode ? undefined : "not including furniture"}>
                   {elementCountLabel(item, !isLayoutsMode)}
                 </span>
