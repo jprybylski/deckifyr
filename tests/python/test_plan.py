@@ -53,6 +53,83 @@ def test_required_zone_without_override_raises():
         expand_slide(slide, layout, design, strict=True)
 
 
+def test_lenient_shows_a_required_empty_zone_as_an_unfilled_placeholder():
+    # Issue #101: the web editor must be able to show (and so fill) a
+    # required zone with no content, where strict expansion raises.
+    design = _design()
+    layout = Layout(
+        elements={"title": Element(type="text", box=_box(), required=True)}
+    )
+    slide = Slide(id="s1", layout="main", elements={})
+    resolved = expand_slide(slide, layout, design, strict=True, lenient=True)
+    assert [(e.id, e.type, e.unfilled, e.required) for e in resolved.elements] == [
+        ("title", "text", True, True)
+    ]
+
+
+def test_lenient_shows_an_empty_slot_but_not_footnotes():
+    design = _design()
+    layout = Layout(
+        elements={
+            "content": Element(type="slot", box=_box()),
+            "footnotes": Element(type="footnotes", box=_box()),
+        }
+    )
+    slide = Slide(id="s1", layout="main", elements={})
+    resolved = expand_slide(slide, layout, design, strict=True, lenient=True)
+    assert [(e.id, e.type, e.unfilled) for e in resolved.elements] == [
+        ("content", "slot", True)
+    ]
+
+
+def test_lenient_leaves_filled_elements_exactly_as_strict_does():
+    design = _design()
+    layout = Layout(
+        elements={"title": Element(type="text", box=_box(), required=True)}
+    )
+    slide = Slide(id="s1", layout="main", elements={"title": Element(value="Hi")})
+    strict = expand_slide(slide, layout, design, strict=True)
+    lenient = expand_slide(slide, layout, design, strict=True, lenient=True)
+    assert strict == lenient
+    assert lenient.elements[0].unfilled is False
+
+
+def test_expand_presentation_records_a_failing_slide_without_losing_the_others():
+    from deckifyr.plan import expand_presentation
+    from deckifyr.schema.layouts import LayoutsDocument
+    from deckifyr.schema.presentation import PresentationDocument
+
+    design = _design()
+    layouts = LayoutsDocument(
+        deckifyr="0.1",
+        layouts={
+            "blank": Layout(elements={}),
+            "main": Layout(
+                elements={"title": Element(type="text", box=_box(), required=True)}
+            ),
+        },
+    )
+    presentation = PresentationDocument(
+        deckifyr="0.1",
+        design={"base": "design.yaml"},
+        layouts="layouts.yaml",
+        metadata={"title": "t"},
+        build={"output": "out.pptx", "manifest": "out.manifest.json"},
+        slides=[Slide(id="ok", layout="blank"), Slide(id="bad", layout="main")],
+    )
+    # Strict (the build path) still fails outright ...
+    with pytest.raises(ContentValidationError):
+        expand_presentation(presentation, design, layouts, strict=True)
+    # ... while the editor's per-slide mode keeps every slide.
+    errors: dict[str, str] = {}
+    resolved = expand_presentation(
+        presentation, design, layouts, strict=True, slide_errors=errors
+    )
+    assert [s.id for s in resolved] == ["ok", "bad"]
+    assert list(errors) == ["bad"]
+    assert "required element 'title'" in errors["bad"]
+
+
 def test_unfilled_optional_zone_is_skipped():
     design = _design()
     layout = Layout(elements={"content": Element(type="slot", box=_box())})

@@ -38,9 +38,9 @@ import {
   removeFurnitureElement,
 } from "../api/client";
 import { useAppContext } from "../state/AppContext";
-import { isFurnitureElement } from "./SlideCanvas";
+import { elementLabel, isFurnitureElement } from "./SlideCanvas";
 import { findElement, type UsePlanResult } from "../state/usePlan";
-import type { NewElementBody, ResolvedSlide } from "../types";
+import type { NewElementBody, ResolvedElement, ResolvedSlide } from "../types";
 import ElementInspector from "./ElementInspector";
 
 interface Props {
@@ -136,17 +136,28 @@ function AddElementForm({
   isLayoutsMode,
   onAdd,
   onDone,
+  fillZone,
 }: {
   slide: ResolvedSlide;
   isLayoutsMode: boolean;
   onAdd: (body: NewElementBody) => Promise<void>;
   onDone: () => void;
+  /** Filling an unfilled layout zone (issue #101) instead of adding a new
+   * element: the id is the zone's and fixed, the type starts at something
+   * sensible for it, and the layout's own box is kept (`inherit_box`). */
+  fillZone?: ResolvedElement;
 }) {
   const availableTypes = isLayoutsMode
     ? [...CONTENT_ELEMENT_TYPES, ...LAYOUT_ONLY_TYPES]
     : CONTENT_ELEMENT_TYPES;
-  const [id, setId] = useState("");
-  const [type, setType] = useState<string>(availableTypes[0]);
+  const [id, setId] = useState(fillZone?.id ?? "");
+  const [type, setType] = useState<string>(
+    fillZone
+      ? (availableTypes as readonly string[]).includes(fillZone.type)
+        ? fillZone.type
+        : "markdown"
+      : availableTypes[0]
+  );
   const [value, setValue] = useState("");
   const [source, setSource] = useState("");
   const [shapeKind, setShapeKind] = useState<string>(SHAPE_KINDS[0]);
@@ -175,7 +186,11 @@ function AddElementForm({
     };
   }, [type]);
 
-  const existingIds = new Set(slide.elements.map((el) => el.id));
+  // An unfilled zone is a placeholder, not an element -- its id is free
+  // to be used (that's exactly what filling it does).
+  const existingIds = new Set(
+    slide.elements.filter((el) => !el.unfilled || el.id !== fillZone?.id).map((el) => el.id)
+  );
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -184,6 +199,7 @@ function AddElementForm({
     setError(null);
     try {
       const body: NewElementBody = { id: id.trim(), type: type as NewElementBody["type"] };
+      if (fillZone) body.inherit_box = true;
       if (type === "text" || type === "markdown") body.value = value;
       if (type === "image" || type === "table") body.source = source;
       if (type === "shape") body.shape_kind = shapeKind;
@@ -213,8 +229,13 @@ function AddElementForm({
   return (
     <form className="element-list__add-form" onSubmit={(e) => void submit(e)}>
       <label>
-        New element id
-        <input value={id} onChange={(e) => setId(e.target.value)} autoFocus />
+        {fillZone ? "Zone" : "New element id"}
+        <input
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          autoFocus={!fillZone}
+          readOnly={fillZone !== undefined}
+        />
       </label>
       <label>
         Type
@@ -369,6 +390,9 @@ export default function ElementList({ plan, onStatusIndicatorChanged }: Props) {
   const { state, dispatch } = useAppContext();
   const { slides, layouts, furnitureSlide } = plan;
   const [addOpen, setAddOpen] = useState(false);
+  // The unfilled layout zone currently being filled (issue #101).
+  const [fillTarget, setFillTarget] = useState<ResolvedElement | null>(null);
+  useEffect(() => setFillTarget(null), [state.selectedSlideId]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -565,16 +589,36 @@ export default function ElementList({ plan, onStatusIndicatorChanged }: Props) {
                   }
                   onClick={() => dispatch({ type: "SELECT_ELEMENT", elementId: el.id })}
                 >
-                  {el.type}: {el.id}
+                  {el.unfilled ? elementLabel(el) : `${el.type}: ${el.id}`}
                 </button>
-                <button
-                  type="button"
-                  className="element-list__remove"
-                  disabled={busyId === el.id}
-                  onClick={() => void removeElement(el.id)}
-                >
-                  Remove
-                </button>
+                {el.unfilled ? (
+                  // Nothing to remove -- it's a layout zone with no content
+                  // yet. A `text`/`markdown` zone is filled from the
+                  // inspector's Content field; anything else (a `slot`)
+                  // needs a type chosen first.
+                  el.type !== "text" &&
+                  el.type !== "markdown" && (
+                    <button
+                      type="button"
+                      className="element-list__fill"
+                      onClick={() => {
+                        setAddOpen(false);
+                        setFillTarget(el);
+                      }}
+                    >
+                      Fill…
+                    </button>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    className="element-list__remove"
+                    disabled={busyId === el.id}
+                    onClick={() => void removeElement(el.id)}
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
               {isSelected && (
                 <div className="element-list__expanded">
@@ -593,7 +637,16 @@ export default function ElementList({ plan, onStatusIndicatorChanged }: Props) {
           <ElementInspector plan={plan} />
         </div>
       )}
-      {addOpen ? (
+      {fillTarget ? (
+        <AddElementForm
+          key={fillTarget.id}
+          slide={slide}
+          isLayoutsMode={isLayoutsMode}
+          onAdd={addElement}
+          onDone={() => setFillTarget(null)}
+          fillZone={fillTarget}
+        />
+      ) : addOpen ? (
         <AddElementForm
           slide={slide}
           isLayoutsMode={isLayoutsMode}

@@ -1,5 +1,22 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Fixed
+
+* The web editor's **+ Add slide** with a layout that has a required zone
+  (`title-content`'s `title`) no longer leaves an uneditable slide that blanks
+  the editor on reload (issue #101). `GET /api/plan` now plans leniently for the
+  editor: an empty layout zone shows as a dashed placeholder ("title (required)
+  -- empty"), a slide that cannot be planned is reported on its own (`error`)
+  without taking the other slides down, and the slide list flags the slide that
+  needs attention. A text zone is filled from the inspector's new **Content**
+  field (or by clicking it on the canvas), and a `slot` with **Fill...**, which
+  keeps the layout's geometry (`inherit_box`). Patching a layout zone the slide
+  has not overridden yet creates the override instead of returning 404. The
+  new slide is selected after adding. `build` and `validate` are unchanged: a
+  required element with no content still fails them.
+
 # deckifyr 0.3.7
 
 ## Fixed

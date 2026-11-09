@@ -11,7 +11,10 @@ export type ElementType =
   | "group"
   | "table"
   | "reportifyr"
-  | "quarto";
+  | "quarto"
+  // A layout zone type: only ever seen on an unfilled placeholder in the
+  // editor's plan (issue #101) -- a built slide never has one.
+  | "slot";
 
 /** Every box field is a formatted unit string, e.g. `"1.5000in"`
  * (`format_length` in `app.py`) -- always inches, always parseable back
@@ -55,12 +58,18 @@ export interface ResolvedElement {
   center: boolean;
   align: string | null;
   children: ResolvedElement[];
+  /** A layout zone the slide hasn't filled yet (issue #101) -- only the
+   * editor's lenient `GET /api/plan` ever returns one. */
+  unfilled?: boolean;
 }
 
 export interface ResolvedSlide {
   id: string;
   notes: string | null;
   elements: ResolvedElement[];
+  /** Why this slide couldn't be planned (issue #101); `elements` is empty
+   * when set. The rest of the plan is unaffected. */
+  error?: string;
 }
 
 export interface PlanResponse {
@@ -170,7 +179,7 @@ export interface ElementPatchBody {
  * here the way there is on `ElementPatchBody`. */
 export interface NewElementBody {
   id: string;
-  type: ElementType | "slot" | "footnotes";
+  type: ElementType | "footnotes";
   value?: string;
   source?: string;
   shape_kind?: string;
@@ -178,6 +187,9 @@ export interface NewElementBody {
   footer_placement?: string;
   render_mode?: string;
   alt_text?: string;
+  /** Filling a layout zone (issue #101): write no `box`, so the layout's
+   * own geometry still applies. */
+  inherit_box?: boolean;
 }
 
 export interface WriteResult {

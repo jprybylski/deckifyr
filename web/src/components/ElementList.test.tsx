@@ -426,3 +426,74 @@ describe("ElementList on the furniture pseudo-slide", () => {
     expect(within(backgroundItem).getByText(/not set -- edit via Config tab/)).toBeInTheDocument();
   });
 });
+
+describe("ElementList on an incomplete slide (issue #101)", () => {
+  const SLIDE: ResolvedSlide = {
+    id: "new-slide",
+    notes: null,
+    elements: [
+      element({ id: "title", type: "text", unfilled: true, required: true }),
+      element({ id: "content", type: "slot", unfilled: true }),
+    ],
+  };
+
+  it("lists unfilled zones by what is missing, with nothing to Remove", () => {
+    renderList(makePlan({ slides: [SLIDE] }), "new-slide");
+
+    expect(screen.getByText("title (required) -- empty")).toBeInTheDocument();
+    expect(screen.getByText("content -- empty")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
+  it("fills a text zone from the inspector's Content field", async () => {
+    const applyElementPatch = vi.fn().mockResolvedValue(undefined);
+    renderList(makePlan({ slides: [SLIDE], applyElementPatch }), "new-slide");
+
+    fireEvent.click(screen.getByText("title (required) -- empty"));
+    fireEvent.change(screen.getByLabelText("Content"), { target: { value: "My title" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set content" }));
+
+    await waitFor(() =>
+      expect(applyElementPatch).toHaveBeenCalledWith(
+        "new-slide",
+        "title",
+        { value: "My title" },
+        { value: "" },
+        "edit text"
+      )
+    );
+  });
+
+  it("fills a slot with a chosen type, keeping the layout's box", async () => {
+    const addElement = vi.fn().mockResolvedValue(undefined);
+    renderList(makePlan({ slides: [SLIDE], addElement }), "new-slide");
+
+    // Only the slot offers Fill; the text zone is filled via Content.
+    expect(screen.getAllByRole("button", { name: "Fill…" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Fill…" }));
+
+    expect(screen.getByLabelText("Zone")).toHaveValue("content");
+    expect(screen.getByLabelText("Zone")).toHaveAttribute("readonly");
+    // A slot has no type of its own to keep, so it starts at markdown.
+    expect(screen.getByLabelText("Type")).toHaveValue("markdown");
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "Body text" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(addElement).toHaveBeenCalledWith("new-slide", {
+        id: "content",
+        type: "markdown",
+        value: "Body text",
+        inherit_box: true,
+      })
+    );
+  });
+
+  it("does not report the zone's own id as already taken when filling it", () => {
+    renderList(makePlan({ slides: [SLIDE] }), "new-slide");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fill…" }));
+
+    expect(screen.queryByText("an element with this id already exists")).not.toBeInTheDocument();
+  });
+});

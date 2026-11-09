@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from deckifyr.schema.design import DesignDocument, Gradient
-from deckifyr.schema.errors import ContentValidationError
+from deckifyr.schema.errors import ContentValidationError, DeckifyrError
 from deckifyr.schema.layouts import Box, Element, Layout, LayoutsDocument
 from deckifyr.schema.merge import deep_merge
 from deckifyr.schema.presentation import PresentationDocument, Slide
@@ -170,6 +170,11 @@ class ResolvedElement:
     # `group`-only: already-resolved children, sorted by paint order the
     # same way `ResolvedSlide.elements` is.
     children: list["ResolvedElement"] = field(default_factory=list)
+    # Only ever `True` for a placeholder emitted by a `lenient` expansion
+    # (the web editor's `GET /api/plan`): a layout zone the slide has not
+    # filled yet. Never set on the strict build path, so compose/manifest
+    # never see one.
+    unfilled: bool = False
 
 
 @dataclass
@@ -417,6 +422,52 @@ def _iter_child_entries(
         yield child_id, child
 
 
+# Zone types that are never user-fillable as a slide override, so a
+# lenient expansion does not surface them as placeholders.
+_NON_FILLABLE_ZONE_TYPES = frozenset({"footnotes"})
+
+
+def _unfilled_placeholder(
+    element_id: str,
+    element_type: str | None,
+    merged: dict[str, Any],
+    *,
+    strict: bool,
+    order: int,
+    required: bool,
+) -> ResolvedElement | None:
+    """A `ResolvedElement` standing in for a layout zone with no content
+    yet (lenient expansion only), or `None` when there is nothing to show:
+    furniture, a `footnotes` zone, or a zone with no box to draw."""
+    if element_id.startswith("__furniture_") or element_type in _NON_FILLABLE_ZONE_TYPES:
+        return None
+    box = merged.get("box")
+    if box is None:
+        return None
+    rotation = merged.get("rotation")
+    z_index = merged.get("z_index")
+    return ResolvedElement(
+        id=element_id,
+        type=element_type or "text",
+        value=None,
+        source=None,
+        x=parse_length(box["x"], strict=strict),
+        y=parse_length(box["y"], strict=strict),
+        width=parse_length(box["width"], strict=strict),
+        height=parse_length(box["height"], strict=strict),
+        rotation=rotation if rotation is not None else 0,
+        z_index=z_index if z_index is not None else 0,
+        order=order,
+        style=None,
+        fit="contain",
+        overflow="error",
+        render_mode="native",
+        alt_text=None,
+        required=required,
+        unfilled=True,
+    )
+
+
 def _resolve_element(
     slide_id: str,
     element_id: str,
@@ -425,11 +476,23 @@ def _resolve_element(
     *,
     strict: bool,
     order: int,
+    lenient: bool = False,
 ) -> ResolvedElement | None:
     element_type = merged.get("type")
     required = bool(merged.get("required", False))
 
     if not _has_content(element_type, merged):
+        if lenient:
+            # The web editor needs to *show* an unfilled zone (so it can be
+            # filled in), including a required one -- raising here would
+            # fail the whole plan for a slide that is merely incomplete.
+            # Build/validate never pass `lenient`, so a required element
+            # with no content still fails there.
+            placeholder = _unfilled_placeholder(
+                element_id, element_type, merged, strict=strict, order=order, required=required
+            )
+            if placeholder is not None:
+                return placeholder
         # Covers both an untouched layout zone (`slot`/`footnotes`,
         # spec section 7.5's `content`/`footnotes` example) and any
         # other element type left empty -- either way, an unfilled,
@@ -768,6 +831,7 @@ def expand_slide(
     corner_text: str | None = None,
     watermark_text: str | None = None,
     furniture_lenient: bool = False,
+    lenient: bool = False,
 ) -> ResolvedSlide:
     furniture_layout = _furniture_layout(
         design,
@@ -792,7 +856,7 @@ def expand_slide(
 
         merged = _merge_element(layout_element, override)
         resolved_element = _resolve_element(
-            slide.id, element_id, merged, design, strict=strict, order=order
+            slide.id, element_id, merged, design, strict=strict, order=order, lenient=lenient
         )
         if resolved_element is not None:
             resolved.append(resolved_element)
@@ -836,21 +900,54 @@ def expand_presentation(
     layouts: LayoutsDocument,
     *,
     strict: bool,
+    lenient: bool = False,
+    slide_errors: dict[str, str] | None = None,
 ) -> list[ResolvedSlide]:
+    """Plan every slide.
+
+    `lenient` (the web editor's `GET /api/plan`) shows unfilled layout zones
+    as placeholders instead of raising for an empty required one.
+    `slide_errors`, when given, makes one slide's failure not fatal to the
+    rest: the slide comes back empty and its message is recorded under its
+    id. Both default off, so build/validate stay strict.
+    """
     total_pages = len(presentation.slides)
     watermark_text = resolve_watermark_text(presentation)
     corner_text = presentation.metadata.status
-    return [
-        expand_slide(
-            slide,
-            layouts.layouts[slide.layout] if slide.layout is not None else None,
+    if slide_errors is not None:
+        # Furniture is deck-wide, not a property of any one slide: a
+        # `status_indicator` pointing at an unconfigured placement fails
+        # every slide identically, so it must stay a whole-plan error
+        # (Deck Options is where it is fixed) rather than being reported
+        # as N identical per-slide errors.
+        _furniture_layout(
             design,
-            strict=strict,
-            page_number=index + 1,
+            page_number=1,
             total_pages=total_pages,
             status_indicator=presentation.status_indicator,
             corner_text=corner_text,
             watermark_text=watermark_text,
         )
-        for index, slide in enumerate(presentation.slides)
-    ]
+    resolved: list[ResolvedSlide] = []
+    for index, slide in enumerate(presentation.slides):
+        try:
+            resolved.append(
+                expand_slide(
+                    slide,
+                    layouts.layouts[slide.layout] if slide.layout is not None else None,
+                    design,
+                    strict=strict,
+                    page_number=index + 1,
+                    total_pages=total_pages,
+                    status_indicator=presentation.status_indicator,
+                    corner_text=corner_text,
+                    watermark_text=watermark_text,
+                    lenient=lenient,
+                )
+            )
+        except DeckifyrError as exc:
+            if slide_errors is None:
+                raise
+            slide_errors[slide.id] = str(exc)
+            resolved.append(ResolvedSlide(id=slide.id, elements=[], notes=slide.notes))
+    return resolved

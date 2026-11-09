@@ -297,13 +297,19 @@ def _new_element_fields(body: dict[str, Any], design_data: dict[str, Any]) -> di
     body: a default box centered on the slide (`design.yaml`'s own
     dimensions, via the same `_default_box`/`_slide_size_in` helpers
     `_default_furniture_value` already uses) plus whichever
-    type-specific fields the request actually supplied.
+    type-specific fields the request actually supplied (or, with
+    `inherit_box`, no box at all).
     """
-    width_in, height_in = _slide_size_in(design_data)
-    box_w, box_h = min(4.0, width_in * 0.4), min(2.0, height_in * 0.3)
-    fields: dict[str, Any] = {
-        "box": _default_box((width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h),
-    }
+    fields: dict[str, Any] = {}
+    # `inherit_box`: filling a layout zone (issue #101) must keep the
+    # layout's own geometry, so no `box` is written and the slide's
+    # override merges onto the zone's.
+    if not body.get("inherit_box"):
+        width_in, height_in = _slide_size_in(design_data)
+        box_w, box_h = min(4.0, width_in * 0.4), min(2.0, height_in * 0.3)
+        fields["box"] = _default_box(
+            (width_in - box_w) / 2, (height_in - box_h) / 2, box_w, box_h
+        )
     for field_name in _NEW_ELEMENT_FIELDS:
         if body.get(field_name) is not None:
             fields[field_name] = body[field_name]
@@ -651,6 +657,19 @@ def create_app(
         except editor.PathError as exc:
             raise DeckifyrError(str(exc), code=ErrorCode.PATH_NOT_FOUND) from exc
 
+    def _layout_zone_ids(slide: dict[str, Any]) -> set[str]:
+        """Ids of the zones in `slide`'s layout (empty for a freeform slide)."""
+        layout_name = slide.get("layout")
+        if not layout_name:
+            return set()
+        layouts_data = working_copy.get("layouts") or {}
+        zones = ((layouts_data.get("layouts") or {}).get(layout_name) or {}).get("elements")
+        if isinstance(zones, dict):
+            return set(zones)
+        if isinstance(zones, list):
+            return {z["id"] for z in zones if isinstance(z, dict) and z.get("id")}
+        return set()
+
     def _autosave_enabled() -> bool:
         presentation_data = working_copy.get("presentation") or {}
         build = presentation_data.get("build") or {}
@@ -832,9 +851,22 @@ def create_app(
     @app.get("/api/plan")
     def get_plan() -> dict[str, Any]:
         presentation, design, layouts = _load_working_project()
-        resolved_slides = expand_presentation(presentation, design, layouts, strict=True)
+        # Lenient + per-slide errors (issue #101): the editor must be able to
+        # show an incomplete slide (an empty required zone is a placeholder,
+        # not an exception) and must not lose every other slide because one
+        # cannot be planned. Build/validate stay strict.
+        slide_errors: dict[str, str] = {}
+        resolved_slides = expand_presentation(
+            presentation, design, layouts, strict=True, lenient=True, slide_errors=slide_errors
+        )
+        slides_json = []
+        for slide in resolved_slides:
+            entry = _serialize_slide(slide)
+            if slide.id in slide_errors:
+                entry["error"] = slide_errors[slide.id]
+            slides_json.append(entry)
         return {
-            "slides": [_serialize_slide(slide) for slide in resolved_slides],
+            "slides": slides_json,
             "dirty": working_copy.dirty,
             # `slide.layout` per real slide id (issue #23's Layout tab) --
             # `ResolvedSlide` itself carries no `layout` field (spec's own
@@ -876,6 +908,22 @@ def create_app(
         )
         if slide_index is None:
             raise HTTPException(status_code=404, detail=f"no slide with id {slide_id!r}")
+
+        # A layout zone the slide has not overridden yet (issue #101) has no
+        # entry to patch -- create an empty override so it can be filled or
+        # moved, rather than 404ing on something the editor is showing.
+        target_slide = slides[slide_index]
+        current = target_slide.get("elements")
+        already_present = (
+            element_id in current
+            if isinstance(current, dict)
+            else any(isinstance(e, dict) and e.get("id") == element_id for e in current or [])
+        )
+        if not already_present and element_id in _layout_zone_ids(target_slide):
+            if isinstance(current, list):
+                current.append({"id": element_id})
+            else:
+                target_slide["elements"] = {**(current or {}), element_id: {}}
 
         elements = slides[slide_index].get("elements")
         if isinstance(elements, dict):
