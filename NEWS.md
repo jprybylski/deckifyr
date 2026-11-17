@@ -1,5 +1,32 @@
 # deckifyr
 
+# deckifyr (development version)
+
+## Added
+
+* `init --from-dir`/`--from-repo` copies the local files a template
+  references (issue #103): the design's `slide.background_image`, every
+  layout element's `source` (images, `.csv`/`.parquet` tables, `.qmd`
+  fragments, including inside `group` elements) and, for a typed source, its
+  `build.reportifyr.standard_footnotes` and its starter slides' element
+  sources. Each is copied to the same relative path, so the new project
+  builds without bringing assets over by hand, and the `--json` result lists
+  them under `created`. A reference that is missing, absolute, uses `..`,
+  goes through a symlink or resolves outside the source is not copied and is
+  reported as a warning. Files the template holds but nothing references
+  (a README, a spare image) are not copied. Existing files at those paths
+  count as conflicts, as the YAML files already did; `--force` overwrites.
+* The web editor answers an embedding host's guidance requests (issue #105).
+  A page on the editor's own origin that frames it can ask, with a
+  `postMessage`, for one of three controls to be highlighted:
+  `deckifyr.session.save` (Save), `deckifyr.nav.build` (the Build tab) and
+  `deckifyr.build.run` (Build). The editor draws its own outline and replies
+  `shown`, `absent` (not on screen, such as Build while another tab is open)
+  or `unknown`. It reads only messages from its parent window on its own
+  origin, and a highlight never moves focus, switches tabs or clicks.
+  `GET /api/health` lists the ids under `guidance`. Running the editor on its
+  own is unchanged.
+
 # deckifyr 0.3.8
 
 ## Fixed

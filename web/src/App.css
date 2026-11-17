@@ -1810,3 +1810,15 @@ pre.config-editor__error {
   border: 1px solid #dddddd;
   border-radius: 4px;
 }
+
+/* Guidance hook (issue #105): the ring an embedding host asks for. Visual
+   only, no animation; system Highlight colour under forced colours. */
+.deckifyr-guidance-target {
+  outline: 3px solid var(--sf-primary, #2457a6) !important;
+  outline-offset: 3px;
+}
+@media (forced-colors: active) {
+  .deckifyr-guidance-target {
+    outline-color: Highlight !important;
+  }
+}

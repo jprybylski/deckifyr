@@ -204,6 +204,15 @@ app, a process supervisor) and be mounted under a URL prefix:
   project usable?), `dirty` (unsaved in-memory edits) and
   `active_jobs` (queued/running build or preview jobs), so a supervisor
   can tell whether stopping is safe without making an edit to find out.
+* **Guidance highlights.** A host page on the editor's own origin that frames
+  it can point a walkthrough at the Save button, the Build tab and the Build
+  button. It posts `{type: "guidance", v: 1, op: "highlight", id, seq}` to the
+  frame (`op: "clear"` removes the outline), with `id` one of
+  `deckifyr.session.save`, `deckifyr.nav.build` or `deckifyr.build.run`, and
+  the editor replies `{type: "guidance-reply", v: 1, op, id, seq, state}`
+  with `state` `shown`, `absent` or `unknown`. Only messages from the parent
+  window on the same origin are read, and a highlight never moves focus,
+  switches tabs or clicks. `GET /api/health` lists the ids under `guidance`.
 * **Orderly stop.** `POST /api/shutdown` with an optional JSON body
   `{"if_dirty": "refuse" | "save", "active_jobs": "refuse" | "cancel"}`
   (both default to `"refuse"`). A refusal is a `409` with

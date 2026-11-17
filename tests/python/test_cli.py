@@ -314,6 +314,25 @@ def test_init_from_dir_surfaces_asset_warnings(tmp_path, capsys):
     assert any("bg.png" in w for w in output["warnings"])
 
 
+def test_init_from_dir_copies_referenced_assets_and_lists_them(tmp_path, capsys):
+    source = _write_flat_template_source(tmp_path / "source")
+    (source / "styleguide.yaml").write_text(
+        yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": "bg.png"}})
+    )
+    (source / "bg.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (source / "notes.md").write_text("not referenced")
+    target = tmp_path / "new-deck"
+
+    exit_code = main(["--json", "init", str(target), "--from-dir", str(source)])
+
+    assert exit_code == EXIT_OK
+    output = json.loads(capsys.readouterr().out)
+    assert output["warnings"] == []
+    assert str(target / "bg.png") in output["created"]
+    assert (target / "bg.png").is_file()
+    assert not (target / "notes.md").exists()
+
+
 def _git(*args: str, cwd: Path) -> None:
     subprocess.run(
         ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", *args],

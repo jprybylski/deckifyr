@@ -211,7 +211,11 @@ export default function App() {
             <button className={tab === "config" ? "active" : ""} onClick={() => setTab("config")}>
               Config
             </button>
-            <button className={tab === "build" ? "active" : ""} onClick={() => setTab("build")}>
+            <button
+              className={tab === "build" ? "active" : ""}
+              data-target="deckifyr.nav.build"
+              onClick={() => setTab("build")}
+            >
               Build
             </button>
           </nav>
