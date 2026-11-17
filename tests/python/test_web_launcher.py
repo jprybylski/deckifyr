@@ -81,8 +81,8 @@ def test_guidance_ids_match_the_markup_and_the_hook():
     for path in web_src.rglob("*.tsx"):
         if path.name.endswith(".test.tsx"):
             continue
-        marked |= set(re.findall(r'data-target="([a-z0-9.-]+)"', path.read_text()))
-    hook = (web_src / "guidance.ts").read_text()
+        marked |= set(re.findall(r'data-target="([a-z0-9.-]+)"', path.read_text(encoding="utf-8")))
+    hook = (web_src / "guidance.ts").read_text(encoding="utf-8")
     listed = re.search(r"GUIDANCE_TARGETS: readonly string\[\] = \[(.*?)\];", hook, re.S)
     assert listed is not None
     assert set(re.findall(r'"([a-z0-9.-]+)"', listed.group(1))) == set(GUIDANCE_TARGETS)
