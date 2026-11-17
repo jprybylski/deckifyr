@@ -1388,7 +1388,13 @@ and only a real-process test (`test_web_launcher.py`) showed it.
 (`create_app(allow_frontend_rebuild=False)`): a supervised process must
 never shell out to `npm`, and the staleness *warning* is still reported.
 `GET /api/health` is the readiness contract (200 means ready; it never
-loads the project) and now carries `dirty`/`active_jobs`. *Jobs:*
+loads the project) and now carries `dirty`/`active_jobs`. *Guidance hook
+(issue #105):* `web/src/guidance.ts` answers a framing host's
+`postMessage` highlight requests for the `data-target` ids in
+`GUIDANCE_TARGETS`; `web/app.py`'s `GUIDANCE_TARGETS` lists the same ids on
+`/api/health`, and `test_guidance_ids_match_the_markup_and_the_hook`
+fails if the two lists or the markup drift apart. Adding an id means all
+three, plus a NEWS entry: hosts depend on these names. *Jobs:*
 `deckifyr._proc.run_in_group`/`kill_process_tree` run every job and the
 LibreOffice invocation in their own session and kill the whole tree.
 Killing the job's own process group is not enough, and that was

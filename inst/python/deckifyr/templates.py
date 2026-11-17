@@ -55,13 +55,20 @@ path's segments look exactly like `owner/repo/subdir`), and
 checkout can still be cloned through `--from-repo` by spelling it as a
 `file://` URL, which correctly takes the full-URL branch.
 
-v1 deliberately copies only the design/layouts (and, for a typed
-source, presentation) YAML files -- never the local assets they
-reference (a background image, `standard_footnotes.yaml`, fonts).
-`_scan_asset_warnings` reports what it finds instead of trying to
-resolve and copy it, the same "well-scoped, documented gap" posture the
-Quarto SVG/native-equation limitations already established elsewhere in
-this codebase.
+Besides the YAML files, `init` copies the local files they reference
+(issue #103): the design's `slide.background_image`, every layout
+element's `source` (images, `.csv`/`.parquet` tables, `.qmd`
+fragments, recursing into `group` elements) and, for a typed source,
+its `build.reportifyr.standard_footnotes` and its starter slides'
+element `source`s. Each path is read the way a build reads it --
+relative to the directory holding `presentation.yaml`, which becomes
+the project root -- and is copied to the same relative path in the
+new project. A URL or `{rpfy}:` value is not a file and is skipped. A
+reference that is absolute, climbs out with `..`, goes through a
+symlink, resolves outside the source, or is missing is never copied:
+it becomes a warning instead, so the caller knows the new project
+won't build as it stands. Files the template holds but nothing
+references (a README, a spare logo) are not copied.
 """
 
 from __future__ import annotations
@@ -87,6 +94,8 @@ GIT_INSTALL_URL = "https://git-scm.com/downloads"
 DEFAULT_GIT_HOST = "github.com"
 
 _HOST_LIKE_RE = re.compile(r"^(localhost(:\d+)?|[^/]+\.[^/]+)$")
+# An absolute path on either platform: `/x`, `\\x` (and UNC), or `C:...`.
+_DRIVE_OR_ROOT_RE = re.compile(r"^([/\\]|[A-Za-z]:)")
 
 
 # --- Repo-spec parsing (remotes/pak-style shorthand) ---------------------
@@ -325,33 +334,135 @@ def _build_minimal_presentation(target: Path, resolved: ResolvedTemplate) -> dic
     }
 
 
-def _scan_asset_warnings(
-    design_data: Any, presentation_data: Any
-) -> list[str]:
-    warnings: list[str] = []
+@dataclass
+class _AssetCopy:
+    source: Path
+    dest: Path
 
-    def _is_local_reference(value: Any) -> bool:
-        return isinstance(value, str) and bool(value) and "://" not in value
+
+def _local_reference(value: Any) -> str | None:
+    """A file path a build would read, or `None` for anything else (unset,
+    a URL, a `{rpfy}:` magic string)."""
+    if not isinstance(value, str) or not value or "://" in value:
+        return None
+    if value.startswith("{rpfy}:"):
+        return None
+    return value
+
+
+def _element_sources(elements: Any, where: str) -> Iterator[tuple[str, str]]:
+    """`(where, path)` for every element `source` in a dict- or list-shaped
+    `elements` block, recursing into `group` children."""
+    if isinstance(elements, dict):
+        items = list(elements.items())
+    elif isinstance(elements, list):
+        items = [
+            (str(e.get("id", i)) if isinstance(e, dict) else str(i), e)
+            for i, e in enumerate(elements)
+        ]
+    else:
+        return
+    for key, element in items:
+        if not isinstance(element, dict):
+            continue
+        here = f"{where}.{key}"
+        value = _local_reference(element.get("source"))
+        if value is not None:
+            yield f"{here}.source", value
+        yield from _element_sources(element.get("elements"), f"{here}.elements")
+
+
+def _referenced_assets(
+    resolved: ResolvedTemplate,
+    design_data: Any,
+    layouts_data: Any,
+    presentation_data: Any,
+) -> list[tuple[str, str]]:
+    """Every local file the template's YAML references, as `(where, path)`,
+    first mention only, in a stable order."""
+    found: list[tuple[str, str]] = []
 
     if isinstance(design_data, dict):
-        background_image = design_data.get("slide", {}).get("background_image")
-        if _is_local_reference(background_image):
-            warnings.append(
-                f"design.yaml's slide.background_image ({background_image!r}) "
-                "was not copied -- bring this asset over manually"
-            )
+        slide = design_data.get("slide")
+        if isinstance(slide, dict):
+            value = _local_reference(slide.get("background_image"))
+            if value is not None:
+                found.append((f"{resolved.design_filename}'s slide.background_image", value))
+
+    if isinstance(layouts_data, dict) and isinstance(layouts_data.get("layouts"), dict):
+        for name, layout in layouts_data["layouts"].items():
+            if isinstance(layout, dict):
+                found.extend(
+                    (f"{resolved.layouts_filename}'s {w}", v)
+                    for w, v in _element_sources(layout.get("elements"), f"layouts.{name}.elements")
+                )
 
     if isinstance(presentation_data, dict):
-        standard_footnotes = (
-            presentation_data.get("build", {}).get("reportifyr", {}).get("standard_footnotes")
-        )
-        if _is_local_reference(standard_footnotes):
-            warnings.append(
-                f"presentation.yaml's build.reportifyr.standard_footnotes "
-                f"({standard_footnotes!r}) was not copied -- bring this file over manually"
-            )
+        build = presentation_data.get("build")
+        reportifyr = build.get("reportifyr") if isinstance(build, dict) else None
+        if isinstance(reportifyr, dict):
+            value = _local_reference(reportifyr.get("standard_footnotes"))
+            if value is not None:
+                found.append(("presentation.yaml's build.reportifyr.standard_footnotes", value))
+        slides = presentation_data.get("slides")
+        if isinstance(slides, list):
+            for i, slide in enumerate(slides):
+                if isinstance(slide, dict):
+                    label = str(slide.get("id", i))
+                    found.extend(
+                        (f"presentation.yaml's {w}", v)
+                        for w, v in _element_sources(slide.get("elements"), f"slides.{label}.elements")
+                    )
 
-    return warnings
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for where, value in found:
+        if value not in seen:
+            seen.add(value)
+            unique.append((where, value))
+    return unique
+
+
+def _plan_asset_copies(
+    references: list[tuple[str, str]], base_dir: Path, target: Path, skip: set[str]
+) -> tuple[list[_AssetCopy], list[str]]:
+    """Check each reference against the template source and return what to
+    copy plus a warning for each reference that can't be copied."""
+    copies: list[_AssetCopy] = []
+    warnings: list[str] = []
+    base_resolved = base_dir.resolve()
+    for where, value in references:
+        rel = Path(value)
+        problem: str | None = None
+        if rel.is_absolute() or rel.anchor or _DRIVE_OR_ROOT_RE.match(value):
+            problem = "an absolute path is never copied"
+        elif ".." in rel.parts or ".." in value.replace("\\", "/").split("/"):
+            problem = "a path with '..' is never copied"
+        else:
+            candidate = base_dir / rel
+            walk = base_dir
+            for part in rel.parts:
+                walk = walk / part
+                if walk.is_symlink():
+                    problem = "a path through a symlink is never copied"
+                    break
+            if problem is None:
+                try:
+                    candidate.resolve().relative_to(base_resolved)
+                except ValueError:
+                    problem = "it resolves outside the template"
+            if problem is None and not candidate.is_file():
+                problem = "it is not a file in the template"
+        if problem is not None:
+            warnings.append(
+                f"{where} ({value!r}) was not copied: {problem} -- "
+                "bring this file over before building"
+            )
+            continue
+        if rel.as_posix() in skip:
+            continue
+        copies.append(_AssetCopy(source=base_dir / rel, dest=target / rel))
+    return copies, warnings
 
 
 def materialize_template(
@@ -363,11 +474,16 @@ def materialize_template(
     minimal starter for that presentation kind). Returns
     `(created_paths, warnings)`.
 
+    Also copies the local files the YAML references (issue #103), to the
+    same relative paths; a reference that can't be copied safely becomes
+    a warning instead (see the module docstring).
+
     Refuses (unless `force`) only on the exact destination paths this
-    call is about to write already existing -- not on `target`'s whole
-    non-emptiness, since pulling a template into an already-populated
-    project directory (one that already has a `.git/`, `README.md`, ...)
-    is this feature's own normal use case.
+    call is about to write already existing -- including the copied
+    assets -- not on `target`'s whole non-emptiness, since pulling a
+    template into an already-populated project directory (one that
+    already has a `.git/`, `README.md`, ...) is this feature's own
+    normal use case. Nothing is written when it refuses.
     """
     design_data = projectio.read_yaml(resolved.design_path)
     layouts_data = projectio.read_yaml(resolved.layouts_path)
@@ -379,12 +495,21 @@ def materialize_template(
 
     if resolved.kind == "typed":
         presentation_data = projectio.read_yaml(resolved.presentation_path)
-        conflicts = [
-            p for p in (design_dest, layouts_dest, presentation_dest) if p.exists()
-        ]
+        yaml_dests = [design_dest, layouts_dest, presentation_dest]
     else:
         presentation_data = None
-        conflicts = [p for p in (design_dest, layouts_dest) if p.exists()]
+        yaml_dests = [design_dest, layouts_dest]
+
+    references = _referenced_assets(resolved, design_data, layouts_data, presentation_data)
+    skip = {
+        Path(resolved.design_filename).as_posix(),
+        Path(resolved.layouts_filename).as_posix(),
+        "presentation.yaml",
+    }
+    assets, warnings = _plan_asset_copies(
+        references, resolved.presentation_path.parent, target, skip
+    )
+    conflicts = [p for p in [*yaml_dests, *(a.dest for a in assets)] if p.exists()]
 
     if conflicts and not force:
         names = ", ".join(str(p) for p in conflicts)
@@ -413,7 +538,11 @@ def materialize_template(
         projectio.write_yaml(presentation_dest, new_presentation)
         created.append(str(presentation_dest))
 
-    warnings = _scan_asset_warnings(design_data, presentation_data)
+    for asset in assets:
+        asset.dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(asset.source, asset.dest)
+        created.append(str(asset.dest))
+
     return created, warnings
 
 

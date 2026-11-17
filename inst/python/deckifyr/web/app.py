@@ -74,6 +74,15 @@ from deckifyr.web.security import HostPolicy, RequestGuard
 # convention one level up.
 FURNITURE_SLIDE_ID = "__furniture__"
 
+# Guidance hook for an embedding host (issue #105, `web/src/guidance.ts`):
+# the controls marked `data-target="<id>"` that a host may ask the editor
+# to highlight, listed on `/api/health` so a host can check the version it
+# embeds. Must match `GUIDANCE_TARGETS` in `web/src/guidance.ts` and the
+# markup; `tests/python/test_web_launcher.py` checks both.
+GUIDANCE_VERSION = 1
+GUIDANCE_TARGETS = ("deckifyr.session.save", "deckifyr.nav.build", "deckifyr.build.run")
+GUIDANCE_CONDITIONS: tuple[str, ...] = ()
+
 # spec section 11.1's own DeckifyrError code -> HTTP status mapping,
 # translated to this web layer: an `E_IO` failure ("file not found") is
 # a 404, every validation-shaped code is a 422 (the request was
@@ -742,6 +751,12 @@ def create_app(
             "active_jobs": job_manager.active_count(),
             "project_loaded": project_error is None,
             "project_error": project_error,
+            # Issue #105: what the in-page guidance hook answers to.
+            "guidance": {
+                "version": GUIDANCE_VERSION,
+                "targets": list(GUIDANCE_TARGETS),
+                "conditions": list(GUIDANCE_CONDITIONS),
+            },
         }
 
     @app.post("/api/shutdown")

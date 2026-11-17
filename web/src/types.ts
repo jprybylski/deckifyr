@@ -137,6 +137,8 @@ export interface HealthResponse {
    * the project is; the reason is in `project_error`. */
   project_loaded?: boolean;
   project_error?: { code: string; message: string } | null;
+  /** The ids the in-page guidance hook answers to (issue #105). */
+  guidance?: { version: number; targets: string[]; conditions: string[] };
   /** Non-null only in a dev checkout whose built `web/static/` bundle is
    * older than `web/src/` (`deckifyr.web.app._frontend_build_warning`) --
    * a real trap this exists to surface instead of leaving a stale-JS

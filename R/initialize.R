@@ -16,6 +16,15 @@
 #' `presentation.yaml` is copied verbatim as a real minimal starter,
 #' not emptied).
 #'
+#' Either way, the local files those YAML files reference are copied to
+#' the same relative paths: the design's `slide.background_image`, each
+#' layout element's `source` (images, tables, Quarto fragments) and a
+#' typed source's `build.reportifyr.standard_footnotes`. Other files in
+#' the source (a README, an unreferenced image) are not copied. A
+#' reference that is missing, absolute, uses `..`, goes through a
+#' symlink or leaves the source is not copied and is reported as a
+#' warning instead.
+#'
 #' @section Offline mode:
 #' Offline mode is on when `options(deckifyr.offline = TRUE)`,
 #' `DECKIFYR_OFFLINE=1` or uv's own `UV_OFFLINE=1` is set, and nothing in

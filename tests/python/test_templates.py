@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -172,7 +173,7 @@ def test_materialize_typed_copies_presentation_verbatim(tmp_path):
     assert len(created) == 3
 
 
-def test_materialize_warns_about_uncopied_local_background_image(tmp_path):
+def test_materialize_warns_about_a_missing_local_background_image(tmp_path):
     source = _write_flat_source(tmp_path / "source")
     (source / "styleguide.yaml").write_text(
         yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": "bg.png"}})
@@ -192,6 +193,157 @@ def test_materialize_does_not_warn_about_a_url_background_image(tmp_path):
     resolved = detect_template(source, type_name=None)
     _created, warnings = materialize_template(resolved, tmp_path / "target", force=False)
     assert warnings == []
+
+
+# --- referenced assets (issue #103) -----------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+
+
+def _with_assets(source: Path) -> Path:
+    """A flat source whose design and layouts reference local files, plus a
+    file nothing references."""
+    (source / "styleguide.yaml").write_text(
+        yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": "img/bg.png"}})
+    )
+    (source / "zones.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "deckifyr": "0.1",
+                "layouts": {
+                    "blank": {"elements": {}},
+                    "title": {
+                        "elements": {
+                            "logo": {"type": "image", "source": "img/logo.png"},
+                            "chart": {"type": "image", "source": "https://example.com/c.png"},
+                            "fn": {"type": "reportifyr", "value": "{rpfy}:x.png"},
+                            "grp": {
+                                "type": "group",
+                                "elements": [
+                                    {"id": "data", "type": "table", "source": "data/t.csv"},
+                                    {"id": "again", "type": "image", "source": "img/logo.png"},
+                                ],
+                            },
+                        }
+                    },
+                },
+            }
+        )
+    )
+    (source / "img").mkdir()
+    (source / "img" / "bg.png").write_bytes(PNG)
+    (source / "img" / "logo.png").write_bytes(PNG)
+    (source / "data").mkdir()
+    (source / "data" / "t.csv").write_text("a,b\n1,2\n")
+    (source / "README.md").write_text("not referenced")
+    (source / "img" / "spare.png").write_bytes(PNG)
+    return source
+
+
+def test_materialize_copies_referenced_assets(tmp_path):
+    source = _with_assets(_write_flat_source(tmp_path / "source"))
+    target = tmp_path / "target"
+    resolved = detect_template(source, type_name=None)
+
+    created, warnings = materialize_template(resolved, target, force=False)
+
+    assert warnings == []
+    for rel in ("img/bg.png", "img/logo.png", "data/t.csv"):
+        assert (target / rel).read_bytes() == (source / rel).read_bytes()
+        assert str(target / rel) in created
+    assert len(created) == 6  # 3 YAML + 3 assets, the repeated logo once
+    assert not (target / "README.md").exists()
+    assert not (target / "img" / "spare.png").exists()
+
+
+def test_materialize_typed_copies_footnotes_and_starter_slide_sources(tmp_path):
+    source = tmp_path / "source"
+    type_dir = _write_flat_source(source / "templates" / "pk")
+    presentation = yaml.safe_load((type_dir / "presentation.yaml").read_text())
+    presentation["build"]["reportifyr"] = {"standard_footnotes": "notes/footnotes.yaml"}
+    presentation["slides"] = [
+        {"id": "s1", "layout": None, "elements": {"pic": {"type": "image", "source": "cover.png"}}}
+    ]
+    (type_dir / "presentation.yaml").write_text(yaml.safe_dump(presentation))
+    (type_dir / "notes").mkdir()
+    (type_dir / "notes" / "footnotes.yaml").write_text("footnotes: {}\n")
+    (type_dir / "cover.png").write_bytes(PNG)
+    target = tmp_path / "target"
+
+    created, warnings = materialize_template(
+        detect_template(source, type_name="pk"), target, force=False
+    )
+
+    assert warnings == []
+    assert (target / "notes" / "footnotes.yaml").is_file()
+    assert (target / "cover.png").read_bytes() == PNG
+    assert str(target / "cover.png") in created
+
+
+@pytest.mark.parametrize(
+    "value, reason",
+    [
+        ("../outside.png", "'..'"),
+        ("img/../../outside.png", "'..'"),
+        ("/etc/hosts", "absolute"),
+        ("C:/x/bg.png", "absolute"),
+        ("missing.png", "not a file"),
+        ("img", "not a file"),
+    ],
+)
+def test_materialize_refuses_unsafe_or_missing_references(tmp_path, value, reason):
+    source = _write_flat_source(tmp_path / "source")
+    (source / "img").mkdir()
+    (tmp_path / "outside.png").write_bytes(PNG)
+    (source / "styleguide.yaml").write_text(
+        yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": value}})
+    )
+    target = tmp_path / "target"
+
+    created, warnings = materialize_template(
+        detect_template(source, type_name=None), target, force=False
+    )
+
+    assert len(warnings) == 1
+    assert repr(value) in warnings[0] and reason in warnings[0]
+    assert len(created) == 3
+    assert not (tmp_path / "target" / "outside.png").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_materialize_never_follows_a_symlinked_reference(tmp_path):
+    source = _write_flat_source(tmp_path / "source")
+    (tmp_path / "secret.png").write_bytes(PNG)
+    (source / "img").mkdir()
+    (source / "img" / "bg.png").symlink_to(tmp_path / "secret.png")
+    (source / "linked").symlink_to(source / "img", target_is_directory=True)
+    (source / "styleguide.yaml").write_text(
+        yaml.safe_dump({"deckifyr": "0.1", "slide": {"background_image": "img/bg.png"}})
+    )
+    target = tmp_path / "target"
+
+    _created, warnings = materialize_template(
+        detect_template(source, type_name=None), target, force=False
+    )
+
+    assert any("symlink" in w for w in warnings)
+    assert not (target / "img" / "bg.png").exists()
+
+
+def test_materialize_counts_an_existing_asset_as_a_conflict(tmp_path):
+    source = _with_assets(_write_flat_source(tmp_path / "source"))
+    target = tmp_path / "target"
+    (target / "img").mkdir(parents=True)
+    (target / "img" / "logo.png").write_text("sentinel")
+    resolved = detect_template(source, type_name=None)
+
+    with pytest.raises(DeckifyrError, match="logo.png"):
+        materialize_template(resolved, target, force=False)
+    assert (target / "img" / "logo.png").read_text() == "sentinel"
+    assert not (target / "styleguide.yaml").exists()  # nothing written on refusal
+
+    materialize_template(resolved, target, force=True)
+    assert (target / "img" / "logo.png").read_bytes() == PNG
 
 
 def test_materialize_refuses_conflicting_file_without_force(tmp_path):
@@ -246,6 +398,31 @@ def test_fetch_git_template_clones_and_checks_out_a_tag(tmp_path):
     repo = _make_upstream_repo(tmp_path)
     with fetch_git_template(str(repo), ref="v1", subdir=None) as source_dir:
         assert (source_dir / "presentation.yaml").is_file()
+
+
+@requires_git
+def test_init_from_repo_copies_referenced_assets(tmp_path):
+    repo = tmp_path / "upstream"
+    repo.mkdir()
+    _git("init", cwd=repo)
+    _with_assets(_write_flat_source(repo))
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    target = tmp_path / "target"
+
+    result = templates.init_from_template(
+        target,
+        from_dir=None,
+        from_repo=repo.resolve().as_uri(),
+        ref=None,
+        subdir=None,
+        type_name=None,
+        force=False,
+    )
+
+    assert result["warnings"] == []
+    assert (target / "img" / "bg.png").read_bytes() == PNG
+    assert (target / "data" / "t.csv").is_file()
 
 
 @requires_git

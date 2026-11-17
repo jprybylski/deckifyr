@@ -11,7 +11,10 @@ source (its own `design.base`/`layouts` files copied under their
 original names, with a fresh minimal `presentation.yaml` generated) or,
 when it has a `templates/` subdirectory, a "typed" source selected via
 `--type NAME` (that type's `presentation.yaml` copied verbatim, as a
-real starter). `validate` loads
+real starter). Either way the local files those YAML files reference
+(background image, layout element sources, standard footnotes) are
+copied too, and a reference that can't be copied is a warning (issue
+#103). `validate` loads
 and pydantic-validates a project (design + layouts + presentation,
 cross-checking layout references and box unit strings), `build` plans
 (`deckifyr.plan`) and composes (`deckifyr.pptx`) a `.pptx` and manifest

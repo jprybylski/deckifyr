@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,6 +57,36 @@ def test_health_reports_clean_state_and_no_jobs(stoppable):
     assert body["status"] == "ok"
     assert body["dirty"] is False
     assert body["active_jobs"] == 0
+
+
+def test_health_lists_the_guidance_ids(stoppable):
+    client, _, _ = stoppable
+    body = client.get("/api/health").json()
+    assert body["guidance"] == {
+        "version": 1,
+        "targets": ["deckifyr.session.save", "deckifyr.nav.build", "deckifyr.build.run"],
+        "conditions": [],
+    }
+
+
+def test_guidance_ids_match_the_markup_and_the_hook():
+    # Issue #105: health, the hook's own list and the data-target attributes
+    # in the editor's source must name the same ids.
+    from deckifyr.web.app import GUIDANCE_TARGETS
+
+    web_src = Path(__file__).resolve().parents[2] / "web" / "src"
+    if not web_src.is_dir():
+        pytest.skip("web/src not present (installed package)")
+    marked = set()
+    for path in web_src.rglob("*.tsx"):
+        if path.name.endswith(".test.tsx"):
+            continue
+        marked |= set(re.findall(r'data-target="([a-z0-9.-]+)"', path.read_text(encoding="utf-8")))
+    hook = (web_src / "guidance.ts").read_text(encoding="utf-8")
+    listed = re.search(r"GUIDANCE_TARGETS: readonly string\[\] = \[(.*?)\];", hook, re.S)
+    assert listed is not None
+    assert set(re.findall(r'"([a-z0-9.-]+)"', listed.group(1))) == set(GUIDANCE_TARGETS)
+    assert marked == set(GUIDANCE_TARGETS)
 
 
 def test_health_dirty_flips_on_edit_and_clears_on_save(stoppable):

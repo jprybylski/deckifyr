@@ -68,6 +68,15 @@ case) or "typed" (a directory with a \verb{templates/} subdirectory, each
 holding its own named flat template -- select one with \code{type}; its
 \code{presentation.yaml} is copied verbatim as a real minimal starter,
 not emptied).
+
+Either way, the local files those YAML files reference are copied to
+the same relative paths: the design's \code{slide.background_image}, each
+layout element's \code{source} (images, tables, Quarto fragments) and a
+typed source's \code{build.reportifyr.standard_footnotes}. Other files in
+the source (a README, an unreferenced image) are not copied. A
+reference that is missing, absolute, uses \code{..}, goes through a
+symlink or leaves the source is not copied and is reported as a
+warning instead.
 }
 \section{Offline mode}{
 

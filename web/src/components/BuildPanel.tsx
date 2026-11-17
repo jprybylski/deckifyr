@@ -345,6 +345,7 @@ export default function BuildPanel() {
 
       <button
         type="button"
+        data-target="deckifyr.build.run"
         onClick={() => void handleBuild()}
         disabled={build.status === "running" || build.status === "queued" || state.dirty}
       >

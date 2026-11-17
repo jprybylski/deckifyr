@@ -142,7 +142,12 @@ export default function SessionControls() {
       >
         {state.dirty ? "Unsaved changes" : "All changes saved"}
       </span>
-      <button type="button" disabled={!state.dirty || saving} onClick={() => void handleSave()}>
+      <button
+        type="button"
+        data-target="deckifyr.session.save"
+        disabled={!state.dirty || saving}
+        onClick={() => void handleSave()}
+      >
         {saving ? "Saving…" : "Save"}
       </button>
       <button
